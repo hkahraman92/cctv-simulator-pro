@@ -1,0 +1,39 @@
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ── Sanal ortamlar ───────────────────────────────────────────────────────────
+.venv/
+.venv-build/
+venv/
+env/
+
+# ── PyInstaller çıktıları ────────────────────────────────────────────────────
+build/
+dist/
+*.manifest
+%TEMP%/
+
+# ── Uygulama tarafından üretilenler ──────────────────────────────────────────
+cctv-simulator-error.log
+tile-cache/
+scratch/
+optimized/
+
+# ── IDE ──────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+
+# ── Büyük / türetilmiş dosyalar ──────────────────────────────────────────────
+project-skills.zip
+*.png
+!assets/*.png
+!assets/*.ico
+
+# ── İşletim sistemi ──────────────────────────────────────────────────────────
+Thumbs.db
+desktop.ini
+.DS_Store
