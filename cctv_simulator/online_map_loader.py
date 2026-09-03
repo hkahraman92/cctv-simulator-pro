@@ -219,7 +219,31 @@ def clear_tile_cache() -> int:
                 removed += 1
             except OSError:
                 pass
+    # Drop the now-empty source/zoom/x directory tree, deepest first.
+    for path in sorted(base.rglob("*"), key=lambda p: len(p.parts), reverse=True):
+        if path.is_dir():
+            try:
+                path.rmdir()
+            except OSError:
+                pass
     return removed
+
+
+def tile_cache_usage() -> Tuple[int, int]:
+    """Returns ``(file_count, total_bytes)`` for the on-disk tile cache."""
+    base = tile_cache_dir()
+    if base is None:
+        return 0, 0
+    files = 0
+    total = 0
+    for path in base.rglob("*"):
+        if path.is_file():
+            files += 1
+            try:
+                total += path.stat().st_size
+            except OSError:
+                pass
+    return files, total
 
 
 def _cache_path(source: str, zoom: int, x: int, y: int, ext: str) -> Optional[Path]:

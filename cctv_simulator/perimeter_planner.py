@@ -76,6 +76,36 @@ class PerimeterPlanResult:
     estimated_storage_30days_tb: float = 0.0
 
 
+def point_along_polyline(points: List[Tuple[float, float]],
+                         dist_m: float) -> Tuple[float, float, int]:
+    """World point at ``dist_m`` measured along the fence polyline.
+
+    Returns ``(x, y, segment_index)``. ``dist_m`` is clamped to
+    ``[0, total_length]``. Used to map a cross-section-profile mouse position
+    back to a location on the map.
+    """
+    if not points:
+        return 0.0, 0.0, 0
+    if len(points) == 1:
+        return points[0][0], points[0][1], 0
+
+    if dist_m <= 0.0:
+        return points[0][0], points[0][1], 0
+
+    walked = 0.0
+    for i in range(len(points) - 1):
+        (x0, y0), (x1, y1) = points[i], points[i + 1]
+        seg = math.hypot(x1 - x0, y1 - y0)
+        if seg <= 1e-9:
+            continue
+        if walked + seg >= dist_m:
+            t = (dist_m - walked) / seg
+            return x0 + t * (x1 - x0), y0 + t * (y1 - y0), i
+        walked += seg
+
+    return points[-1][0], points[-1][1], len(points) - 2
+
+
 def calculate_optimal_spacing(camera: CameraConfig,
                               target_ppm: float = 40.0,
                               mast_height_m: float = 5.0,

@@ -34,9 +34,11 @@ from ..models import CameraConfig
 from ..online_map_loader import (
     PRESET_LOCATIONS,
     TILE_SERVERS,
+    clear_tile_cache,
     describe_quality,
     download_satellite_mosaic,
     fetch_online_elevation_grid,
+    tile_cache_usage,
 )
 from ..perimeter_planner import (
     FenceGap,
@@ -44,6 +46,7 @@ from ..perimeter_planner import (
     PlacedCamera,
     calculate_optimal_spacing,
     generate_perimeter_plan,
+    point_along_polyline,
 )
 from ..terrain_loader import TerrainData, generate_procedural_terrain, load_geotiff_or_dem
 from ..theme import COLORS, StyledButton, fit_and_center_window
@@ -168,6 +171,12 @@ class TerrainViewshedWindow:
         self.result: Optional[ViewshedResult] = None
         self._map_photo = None
         self._render_job = None
+
+        # Cross-section profile <-> map hover linkage.
+        # _profile_plot is stashed by _render_profile_canvas so the hover handler
+        # can map a mouse-x back to a distance without recomputing the layout.
+        self._profile_plot: Optional[dict] = None
+        self._profile_hover: Optional[dict] = None
 
         self._build_ui()
         self._sync_active_camera()
@@ -325,6 +334,8 @@ class TerrainViewshedWindow:
 
         self.profile_canvas = tk.Canvas(profile_container, bg="#121519", highlightthickness=0, height=140)
         self.profile_canvas.pack(fill=tk.BOTH, expand=True)
+        self.profile_canvas.bind("<Motion>", self._on_profile_hover)
+        self.profile_canvas.bind("<Leave>", self._on_profile_leave)
 
     def _build_single_camera_tab(self, parent):
         # Satellite & Layer Settings
@@ -340,6 +351,13 @@ class TerrainViewshedWindow:
 
         StyledButton(grp_layer, text="🌐 Çevrimiçi Uydu İndir (Koordinat/Bölge)", command=self._open_online_map_downloader_dialog, bootstyle="success").pack(fill=tk.X, pady=(4, 2))
         StyledButton(grp_layer, text="📁 Yerel Uydu / Ortofoto Yükle (.png/.jpg/.tif)", command=self._load_local_satellite, bootstyle="info-outline").pack(fill=tk.X, pady=(0, 2))
+
+        frame_cache = ttk.Frame(grp_layer)
+        frame_cache.pack(fill=tk.X, pady=(2, 0))
+        self.lbl_tile_cache = ttk.Label(frame_cache, text="", font=("Segoe UI", 8), foreground=ACCENT_CYAN)
+        self.lbl_tile_cache.pack(side=tk.LEFT)
+        StyledButton(frame_cache, text="🗑️ Önbelleği Temizle", command=self._clear_tile_cache, bootstyle="secondary-outline").pack(side=tk.RIGHT)
+        self._refresh_tile_cache_label()
 
         # Satellite Opacity Slider
         frame_op = ttk.Frame(grp_layer)
@@ -492,6 +510,31 @@ class TerrainViewshedWindow:
         self._create_stat_row(grp_bom, "30 Günlük RAID Depolama:", self.bom_storage_var, ACCENT_PURPLE)
 
         StyledButton(parent, text="💾 Kamera Listesi & BOM İndir (.xlsx / .csv)", command=self._export_perimeter_bom, bootstyle="primary-outline").pack(fill=tk.X, pady=(4, 0))
+
+    # ── TILE CACHE ──
+    def _refresh_tile_cache_label(self):
+        if not hasattr(self, "lbl_tile_cache"):
+            return
+        try:
+            files, total = tile_cache_usage()
+        except Exception:
+            files, total = 0, 0
+        if files == 0:
+            self.lbl_tile_cache.configure(text="Karo önbelleği boş")
+        else:
+            self.lbl_tile_cache.configure(text=f"Karo önbelleği: {files} kare · {total / 1_048_576:.1f} MB")
+
+    def _clear_tile_cache(self):
+        try:
+            removed = clear_tile_cache()
+        except Exception as exc:
+            messagebox.showerror("Önbellek", f"Önbellek temizlenemedi:\n{exc}", parent=self.window)
+            return
+        self._refresh_tile_cache_label()
+        if removed == 0:
+            messagebox.showinfo("Önbellek", "Silinecek karo bulunamadı.", parent=self.window)
+        else:
+            messagebox.showinfo("Önbellek", f"{removed} önbelleklenmiş karo silindi.", parent=self.window)
 
     # ── SATELLITE & OPACITY HANDLERS ──
     def _load_local_satellite(self):
@@ -750,6 +793,7 @@ class TerrainViewshedWindow:
                     )
                     self._sync_active_camera()
                     self._init_default_fence_sample()
+                    self._refresh_tile_cache_label()
                     if self.planner_mode_var.get() == "perimeter":
                         self.distribute_perimeter_cameras()
                     else:
@@ -990,9 +1034,14 @@ class TerrainViewshedWindow:
         if not file_path:
             return
 
+        measured = bool(getattr(self.terrain, "is_measured", False))
         try:
             with open(file_path, "w", newline="", encoding="utf-8-sig") as f:
                 writer = csv.writer(f)
+                writer.writerow(["# Arazi kaynağı", self.terrain.name])
+                writer.writerow(["# Yükselti verisi", "ÖLÇÜLMÜŞ DEM" if measured else "TEMSİLİ — ölçüm değil, sonuçlar bağlayıcı değildir"])
+                writer.writerow(["# Not", getattr(self.terrain, "source_note", "").replace("\n", " ")])
+                writer.writerow([])
                 writer.writerow(["Direk No", "Kamera Modeli", "Sensör", "Çözünürlük", "Konum X (m)", "Konum Y (m)", "Zemin Rakımı (m)", "Direk Boyu (m)", "Toplam İrtifa (m)", "Pan Açısı (°)", "Tilt Açısı (°)", "Odak (mm)", "HFOV (°)", "Etkin Menzil (m)", "Kör Nokta (m)"])
                 for cam in self.perimeter_plan.placed_cameras:
                     writer.writerow([
@@ -1012,7 +1061,11 @@ class TerrainViewshedWindow:
                         cam.effective_range_m,
                         cam.dead_zone_m,
                     ])
-            messagebox.showinfo("BOM Aktarıldı", f"Toplam {len(self.perimeter_plan.placed_cameras)} kameralık perimetre listesi başarıyla kaydedildi:\n{file_path}")
+            note = "" if measured else (
+                "\n\n⚠ Arazi yükseltisi TEMSİLİ (ölçülmüş DEM değil). "
+                "Zemin rakımı, toplam irtifa ve kör nokta değerleri bağlayıcı değildir."
+            )
+            messagebox.showinfo("BOM Aktarıldı", f"Toplam {len(self.perimeter_plan.placed_cameras)} kameralık perimetre listesi başarıyla kaydedildi:\n{file_path}{note}")
         except Exception as exc:
             messagebox.showerror("Kayıt Hatası", f"Dosya kaydedilemedi:\n{exc}")
 
@@ -1344,7 +1397,9 @@ class TerrainViewshedWindow:
                     cv.create_oval(px - 5, py - 5, px + 5, py + 5, fill="#FF6D00", outline="#FFFFFF", width=2)
 
             if self.perimeter_plan and self.perimeter_plan.placed_cameras:
-                for cam in self.perimeter_plan.placed_cameras:
+                _pcams = self.perimeter_plan.placed_cameras
+                _plabel_step = 1 if len(_pcams) <= 25 else max(2, len(_pcams) // 18)
+                for _pi, cam in enumerate(_pcams):
                     c_px, c_py = self.world_to_screen_px(cam.x_m, cam.y_m)
                     pan_r = math.radians(cam.pan_deg)
                     half_h_r = math.radians(cam.hfov_deg / 2.0)
@@ -1355,14 +1410,23 @@ class TerrainViewshedWindow:
                     rx, ry = self.world_to_screen_px(cam.x_m + reach * math.sin(pan_r + half_h_r),
                                                       cam.y_m + reach * math.cos(pan_r + half_h_r))
 
+                    hover_id = self._profile_hover.get("pole_id") if self._profile_hover else None
                     is_sel = (cam.pole_id == self.selected_pole_id)
-                    cone_color = ACCENT_CYAN if is_sel else "#00E676"
+                    is_hover = (cam.pole_id == hover_id)
+                    cone_color = ACCENT_CYAN if is_sel else ("#FFD600" if is_hover else "#00E676")
                     cv.create_line(c_px, c_py, lx, ly, fill=cone_color, width=1, dash=(3, 3))
                     cv.create_line(c_px, c_py, rx, ry, fill=cone_color, width=1, dash=(3, 3))
                     cv.create_line(lx, ly, rx, ry, fill=cone_color, width=1)
 
-                    pole_bg = ACCENT_CYAN if is_sel else "#2979FF"
-                    cv.create_oval(c_px - 4, c_py - 4, c_px + 4, c_py + 4, fill=pole_bg, outline="#FFFFFF", width=1)
+                    pole_bg = ACCENT_CYAN if is_sel else ("#FFD600" if is_hover else "#2979FF")
+                    rad = 6 if (is_sel or is_hover) else 4
+                    cv.create_oval(c_px - rad, c_py - rad, c_px + rad, c_py + rad, fill=pole_bg, outline="#FFFFFF", width=1)
+                    # Pole number, thinned out so it stays readable on a long fence.
+                    if is_sel or is_hover or (_pi % _plabel_step == 0) or _pi == len(_pcams) - 1:
+                        big = is_sel or is_hover
+                        cv.create_text(c_px, c_py - rad - 5, text=str(cam.pole_id), anchor="s",
+                                       fill="#FFFFFF" if big else "#9FB3C8",
+                                       font=("Segoe UI", 8 if big else 7, "bold" if big else "normal"))
 
                 leg_x, leg_y = 30, h - 85
                 cv.create_rectangle(leg_x - 6, leg_y - 6, leg_x + 250, leg_y + 68, fill="#16191E", outline=PANEL_BORDER)
@@ -1412,6 +1476,7 @@ class TerrainViewshedWindow:
     def _render_profile_canvas(self):
         cv = self.profile_canvas
         cv.delete("all")
+        self._profile_plot = None   # invalidated until a branch below rebuilds it
         w = cv.winfo_width()
         h = cv.winfo_height()
         if w < 50 or h < 30:
@@ -1448,6 +1513,11 @@ class TerrainViewshedWindow:
 
             cv.create_polygon(pts, fill="#2A313C", outline="#4C566A", width=2)
 
+            # Label every pole when there is room; thin out when the fence is
+            # crowded, but always keep the selected/hovered ones legible.
+            hover_pole_id = self._profile_hover.get("pole_id") if self._profile_hover else None
+            label_step = 1 if len(cams) <= 20 else max(2, len(cams) // 15)
+
             cum_d = 0.0
             for i, cam in enumerate(cams):
                 if i > 0:
@@ -1457,11 +1527,24 @@ class TerrainViewshedWindow:
                 by = to_y(cam.ground_z_m)
                 ty = to_y(cam.total_z_m)
                 is_sel = (cam.pole_id == self.selected_pole_id)
-                col = ACCENT_CYAN if is_sel else "#2979FF"
-                cv.create_line(px, by, px, ty, fill=col, width=2)
+                is_hover = (cam.pole_id == hover_pole_id)
+                col = ACCENT_CYAN if is_sel else ("#FFD600" if is_hover else "#2979FF")
+                cv.create_line(px, by, px, ty, fill=col, width=3 if (is_sel or is_hover) else 2)
                 cv.create_oval(px - 3, ty - 3, px + 3, ty + 3, fill=col, outline="#FFFFFF")
+                if is_sel or is_hover or (i % label_step == 0) or i == len(cams) - 1:
+                    cv.create_text(
+                        px, ty - 9, text=f"#{cam.pole_id}", anchor="s",
+                        fill=col if (is_sel or is_hover) else TEXT_MUTED,
+                        font=("Segoe UI", 7, "bold" if (is_sel or is_hover) else "normal"),
+                    )
 
-            cv.create_text(pad_l + 10, pad_t + 10, text=f"ÇEVRE ÇİTİ BOYUNCA {len(cams)} ADET DİREK VE RAKIM PROFİLİ", anchor="w", fill=ACCENT_CYAN, font=("Segoe UI", 8, "bold"))
+            cv.create_text(pad_l + 6, pad_t - 10, text=f"ÇEVRE ÇİTİ · {len(cams)} DİREK · #=direk no · fareyle gez → haritada göster", anchor="w", fill=ACCENT_CYAN, font=("Segoe UI", 8, "bold"))
+
+            self._profile_plot = {
+                "mode": "perimeter", "pad_l": pad_l, "pad_t": pad_t,
+                "plot_w": plot_w, "plot_h": plot_h, "total_len": max(total_len, 1.0),
+            }
+            self._draw_profile_hover_overlay()
 
         else:
             if self.result is None:
@@ -1508,3 +1591,103 @@ class TerrainViewshedWindow:
                 color = ACCENT_GREEN if vis[i] else ACCENT_RED
                 dash = () if vis[i] else (4, 3)
                 cv.create_line(pts_ray[i][0], pts_ray[i][1], pts_ray[i + 1][0], pts_ray[i + 1][1], fill=color, width=2, dash=dash)
+
+            self._profile_plot = {
+                "mode": "single", "pad_l": pad_l, "pad_t": pad_t,
+                "plot_w": plot_w, "plot_h": plot_h, "max_d": float(max_d),
+                "cam_xy": (self.cam_x_var.get(), self.cam_y_var.get()),
+                "pan_deg": self.pan_deg_var.get(),
+            }
+            self._draw_profile_hover_overlay()
+
+    # ── CROSS-SECTION PROFILE <-> MAP HOVER LINKAGE ──
+    def _on_profile_hover(self, event):
+        """Mouse over the bottom profile -> pin the matching spot on the map."""
+        pp = self._profile_plot
+        if not pp:
+            return
+        frac = (event.x - pp["pad_l"]) / max(pp["plot_w"], 1.0)
+        frac = min(max(frac, 0.0), 1.0)
+        try:
+            if pp["mode"] == "perimeter" and self.perimeter_plan:
+                dist = frac * pp["total_len"]
+                wx, wy, _seg = point_along_polyline(self.perimeter_plan.fence_points, dist)
+                cams = self.perimeter_plan.placed_cameras
+                pole = min(cams, key=lambda c: math.hypot(c.x_m - wx, c.y_m - wy)) if cams else None
+                elev = self.terrain.get_elevation_at(wx, wy)
+                label = f"Çit {dist:.0f} m · {elev:.0f} m rakım"
+                if pole is not None:
+                    label += f"  →  en yakın direk #{pole.pole_id}"
+                self._profile_hover = {
+                    "wx": wx, "wy": wy, "sx": event.x, "elev": elev,
+                    "pole_id": pole.pole_id if pole else None, "label": label,
+                }
+            elif pp["mode"] == "single" and self.result is not None:
+                dist = frac * pp["max_d"]
+                pan = math.radians(pp["pan_deg"])
+                cx, cy = pp["cam_xy"]
+                wx = cx + dist * math.sin(pan)
+                wy = cy + dist * math.cos(pan)
+                elev = self.terrain.get_elevation_at(wx, wy)
+                self._profile_hover = {
+                    "wx": wx, "wy": wy, "sx": event.x, "elev": elev,
+                    "pole_id": None, "label": f"Optik eksen {dist:.0f} m · {elev:.0f} m rakım",
+                }
+            else:
+                return
+        except Exception:
+            self._profile_hover = None
+            return
+        self._draw_profile_hover_overlay()
+
+    def _on_profile_leave(self, _event=None):
+        self._profile_hover = None
+        for cv in (self.profile_canvas, self.map_canvas):
+            try:
+                cv.delete("phover")
+            except Exception:
+                pass
+
+    def _draw_profile_hover_overlay(self):
+        hv = self._profile_hover
+        pp = self._profile_plot
+        if not hv or not pp:
+            return
+
+        def _boxed_text(canvas, x, y, text, anchor):
+            item = canvas.create_text(x, y, text=text, anchor=anchor, fill="#FFD600",
+                                      font=("Segoe UI", 8, "bold"), tags="phover")
+            bx = canvas.bbox(item)
+            if bx:
+                canvas.create_rectangle(bx[0] - 3, bx[1] - 2, bx[2] + 3, bx[3] + 2,
+                                        fill="#12151A", outline="#FFD600", width=1, tags="phover")
+                canvas.tag_raise(item)
+
+        cv = self.profile_canvas
+        try:
+            cv.delete("phover")
+            top = pp["pad_t"]
+            bot = pp["pad_t"] + pp["plot_h"]
+            sx = max(pp["pad_l"], min(hv["sx"], pp["pad_l"] + pp["plot_w"]))
+            cv.create_line(sx, top, sx, bot, fill="#FFD600", width=1, dash=(3, 2), tags="phover")
+            near_right = sx > pp["pad_l"] + pp["plot_w"] * 0.55
+            _boxed_text(cv, sx + (-6 if near_right else 6), bot - 6, hv["label"],
+                        "se" if near_right else "sw")
+        except Exception:
+            pass
+
+        mc = self.map_canvas
+        try:
+            mc.delete("phover")
+            mx, my = self.world_to_screen_px(hv["wx"], hv["wy"])
+            mc.create_line(mx - 10, my, mx + 10, my, fill="#FFD600", width=2, tags="phover")
+            mc.create_line(mx, my - 10, mx, my + 10, fill="#FFD600", width=2, tags="phover")
+            mc.create_oval(mx - 6, my - 6, mx + 6, my + 6, outline="#FFD600", width=2, tags="phover")
+            lx, ly, anc = mx + 13, my + 16, "w"
+            if mx > mc.winfo_width() * 0.6:
+                lx, anc = mx - 13, "e"
+            if my < 30:
+                ly = my + 20
+            _boxed_text(mc, lx, ly, hv["label"], anc)
+        except Exception:
+            pass
