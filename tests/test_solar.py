@@ -5,7 +5,12 @@ import datetime as dt
 
 import pytest
 
-from cctv_simulator.solar import assess_glare, sun_position, worst_glare_over_day
+from cctv_simulator.solar import (
+    assess_glare,
+    sun_position,
+    utc_offset_for_lon,
+    worst_glare_over_day,
+)
 
 
 def test_noon_sun_is_due_south_northern_hemisphere():
@@ -53,3 +58,18 @@ def test_naive_datetime_treated_as_utc():
     a = sun_position(39.93, 32.86, dt.datetime(2026, 6, 21, 9, 0))
     b = sun_position(39.93, 32.86, dt.datetime(2026, 6, 21, 9, 0, tzinfo=dt.timezone.utc))
     assert a == pytest.approx(b)
+
+
+def test_utc_offset_from_longitude():
+    assert utc_offset_for_lon(32.86) == 2         # Turkey ~ +2/+3
+    assert utc_offset_for_lon(-0.13) == 0         # London
+    assert utc_offset_for_lon(-74.0) == -5        # New York
+
+
+def test_worst_glare_time_is_local_and_within_the_day():
+    # east-facing camera near Ankara at equinox -> worst at local sunrise, not 03:xx UTC
+    d = dt.date(2026, 9, 21)
+    level, when, _az, _el = worst_glare_over_day(39.93, 32.86, d, 90.0, 45.0)
+    assert level in ("orta", "yüksek")
+    assert when is not None and when.date() == d
+    assert 5 <= when.hour <= 9              # local morning, not a UTC-shifted hour

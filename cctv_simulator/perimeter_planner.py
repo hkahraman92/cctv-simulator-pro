@@ -344,8 +344,11 @@ def compute_coverage_grid(plan: PerimeterPlanResult, camera: CameraConfig,
 
     do_occ = terrain is not None and len(cams) <= 250
     if do_occ:
-        n_samp = 12 if len(cams) <= 40 else (8 if len(cams) <= 120 else 5)
-        ts = np.linspace(0.06, 0.97, n_samp)[:, None, None]
+        # ~1 sample per terrain cell along the ray, so a one-cell-wide ridge
+        # cannot slip between samples; scaled down when there are many cameras.
+        base = int(np.clip(reach / max(terrain.cell_size_m, 1.0), 12, 40))
+        n_samp = base if len(cams) <= 40 else (max(base // 2, 10) if len(cams) <= 120 else max(base // 3, 8))
+        ts = np.linspace(0.04, 0.985, n_samp)[:, None, None]
         cell_z = _sample_terrain(terrain, mx, my)
 
     for c in cams:

@@ -1179,7 +1179,8 @@ class TerrainViewshedWindow:
         if glare_ready:
             import datetime as _dt
 
-            from ..solar import worst_glare_over_day
+            from ..solar import utc_offset_for_lon, worst_glare_over_day
+            _tz = utc_offset_for_lon(lon)
             try:
                 _sel = _dt.date.fromisoformat(self.glare_date_var.get().strip())
             except ValueError:
@@ -1192,7 +1193,7 @@ class TerrainViewshedWindow:
                 writer.writerow(["# Yükselti verisi", "ÖLÇÜLMÜŞ DEM" if measured else "TEMSİLİ — ölçüm değil, sonuçlar bağlayıcı değildir"])
                 writer.writerow(["# Hava koşulu", self.weather_var.get()])
                 if glare_ready:
-                    writer.writerow(["# Güneş/parlama analizi", f"{lat:.4f}, {lon:.4f} · seçili {_sel} + yaz gündönümü {_summer} (UTC gün taraması)"])
+                    writer.writerow(["# Güneş/parlama analizi", f"{lat:.4f}, {lon:.4f} · seçili {_sel} + yaz gündönümü {_summer} · saatler yerel (UTC{_tz:+.0f})"])
                 writer.writerow(["# Not", getattr(self.terrain, "source_note", "").replace("\n", " ")])
                 writer.writerow([])
                 header = ["Direk No", "Kamera Modeli", "Sensör", "Çözünürlük", "Konum X (m)", "Konum Y (m)", "Zemin Rakımı (m)", "Direk Boyu (m)", "Toplam İrtifa (m)", "Pan Açısı (°)", "Tilt Açısı (°)", "Odak (mm)", "HFOV (°)", "Etkin Menzil (m)", "Kör Nokta (m)"]
@@ -1201,7 +1202,7 @@ class TerrainViewshedWindow:
                 writer.writerow(header)
 
                 def _fmt_glare(res):
-                    return res[0] + (f" ~{res[1].hour:02d}:{res[1].minute:02d}Z" if res[1] else "")
+                    return res[0] + (f" ~{res[1].hour:02d}:{res[1].minute:02d}" if res[1] else "")
 
                 for cam in self.perimeter_plan.placed_cameras:
                     row = [

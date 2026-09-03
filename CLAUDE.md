@@ -236,10 +236,12 @@ veya `--json` ile stdout'a sonuç. Tk yok, ekran yok.
 
 ## Açık işler
 
-- Kapsama occlusion ışın örneklemesi (`compute_coverage_grid` `n_samp`) 5–12
-  arası; keskin dar sırtlar birkaç örnek arasında kaçabilir. Occlusion asıl
-  otorite tekil `calculate_3d_viewshed`.
-- Güneş taraması UTC. Yerel saat/dilim gösterimi yok (BOM sütunları `~HH:MMZ`).
+- Klasik arayüzde (`main_window`) hava/atmosfer girişi yok (yalnız `k`); DORI
+  tablosu berrak hava, atmosfer 3B/harita pencerelerinde. Bilinçli — DORI
+  berrak-hava standardı.
+- `modern_window` tezgâhında hava girişi yok.
+- `viewshed_3d` için doğrudan test yok; içinde ışın×adım Python döngüsü var
+  (büyük grid'de yavaş, vektörleştirilebilir).
 
 ## cctv_iq — görüntü kalitesi ölçüm çekirdeği
 
@@ -263,11 +265,12 @@ kalsın diye).
 
 `synthetic_edge()` test/kalibrasyon için analitik erf kenarı üretir (scipy yok).
 
-**Tezgâh GUI** (`modern_window` "Ölçülen Kalite" bölümü): `k` slider'ı +
-"Eğik kenar → k ölç" düğmesi (`cctv_iq.measure_file`) + "etiket X MP → etkin
-Y MP" okuması. `_render` her turda `camera.effective_px_ratio = f_k.get()`.
-Kamera veritabanında `effective_px_ratio` alanı (model başına ölçülen k),
-`apply_camera_model` / `_apply_library_model` / `seed_from` üçü de okur.
+**GUI girişleri:** `modern_window` "Ölçülen Kalite" bölümü (`k` slider + "Eğik
+kenar → k ölç" `cctv_iq.measure_file` + "etiket X MP → etkin Y MP"); `main_window`
+kamera sekmesinde "Etkin piksel oranı k" alanı + aynı ölç düğmesi
+(`_measure_edge_k`); kamera veritabanında `effective_px_ratio` alanı. Üçü de
+`apply_camera_model` / `_apply_library_model` / `seed_from` ile kütüphaneden okur.
+`main_window` `_read_float` min'i **0.05** (1.0 değil — o minimum olurdu).
 
 ## Atmosferik zayıflama (`atmosphere.py`)
 
@@ -308,7 +311,9 @@ grid satır 0 = güney → `np.flipud`) + seviye yüzdeleri + "arazi engeli dahi
 ## Güneş / parlama (`solar.py`)
 
 NOAA düşük-hassasiyet algoritması (`sun_position(lat, lon, utc) -> (az, el)`).
-Naif datetime = UTC. `assess_glare(view_az, hfov, sun_az, sun_el) -> (seviye, not)`:
+Naif datetime = UTC. `utc_offset_for_lon(lon)` = `round(lon/15)` (DST/sınır yok).
+`worst_glare_over_day` yerel takvim gününü tarar, **yerel naif** datetime döner
+(BOM sütunları `~HH:MM`, UTC değil). `assess_glare(view_az, hfov, sun_az, sun_el) -> (seviye, not)`:
 güneş ufkun altında → "yok"; kadraj dışında → "düşük"; alçak güneş (≤12°) kadrajda
 → "yüksek" (arkadan ışık). `worst_glare_over_day` bütün UTC gününü tarar. **Ekinoksa yakın tarihler D/B bakan
 kameralar için en kötü** (gündoğumu/batımı azimutu tam doğu/batı).

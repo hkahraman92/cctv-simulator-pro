@@ -319,6 +319,12 @@ class DualViewCCTVDesignApp:
         row += 1
         self.entry_min_lux = self._add_entry(self.tab_camera, row, "Minimum lux:", "0.01")
         row += 1
+        self.entry_eff_px = self._add_entry(self.tab_camera, row, "Etkin piksel oranı k (cctv_iq):", "1.0")
+        row += 1
+        StyledButton(self.tab_camera, text="📷 Eğik kenar → k ölç",
+                     command=self._measure_edge_k, bootstyle="secondary-outline").grid(
+            row=row, column=0, columnspan=2, sticky=tk.EW, pady=(0, 4))
+        row += 1
 
         mode_frame = ttk.LabelFrame(self.tab_camera, text=" Analiz Modu ", padding=6)
         mode_frame.grid(row=row, column=0, columnspan=2, sticky=tk.EW, pady=(8, 6))
@@ -771,6 +777,30 @@ class DualViewCCTVDesignApp:
         self._load_camera_to_form()
         self.calculate()
 
+    def _measure_edge_k(self):
+        path = filedialog.askopenfilename(
+            title="Eğik kenar fotoğrafı (yüksek kontrast, ~5° eğik kenar)",
+            filetypes=[("Görsel", "*.png *.jpg *.jpeg *.tif *.tiff *.bmp"), ("Tümü", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            from ..cctv_iq import measure_file
+            res = measure_file(path)
+        except Exception as exc:
+            messagebox.showerror("Ölçüm başarısız",
+                                 f"Eğik kenar MTF ölçülemedi:\n{exc}\n\n"
+                                 "Kenar dikey/yatay ve ~2–15° eğik olmalı.")
+            return
+        self._set_entry(self.entry_eff_px, round(res["k"], 3))
+        self.calculate(show_errors=True)
+        messagebox.showinfo(
+            "cctv_iq ölçümü",
+            f"Kenar açısı : {res['edge_angle_deg']:.1f}°\n"
+            f"MTF50       : {res['mtf50_cy_px']:.3f} çevrim/piksel\n"
+            f"k           : {res['k']:.3f}\n\n"
+            "Etkin piksel oranı optik motora uygulandı.")
+
     def _load_camera_to_form(self):
         self.suspend_calculate = True
         camera = self.cameras[self.selected_camera_index]
@@ -792,6 +822,7 @@ class DualViewCCTVDesignApp:
         self._set_entry(self.entry_heading, camera.heading_deg)
         self._set_entry(self.entry_ir_range, camera.ir_range_m)
         self._set_entry(self.entry_min_lux, camera.min_lux)
+        self._set_entry(self.entry_eff_px, getattr(camera, "effective_px_ratio", 1.0))
         self.suspend_calculate = False
 
     def _commit_form_to_selected(self, show_errors=False) -> bool:
@@ -814,6 +845,7 @@ class DualViewCCTVDesignApp:
             heading_deg = self._read_float(self.entry_heading, "Yön açısı") % 360
             ir_range_m = self._read_float(self.entry_ir_range, "IR mesafesi", 0.0)
             min_lux = self._read_float(self.entry_min_lux, "Minimum lux", 0.0)
+            effective_px_ratio = min(max(self._read_float(self.entry_eff_px, "Etkin piksel oranı", 0.05), 0.05), 1.0)
 
             if target_height_m >= pole_height_m:
                 raise ValueError("Hedef yüksekliği direk yüksekliğinden küçük olmalıdır.")
@@ -832,6 +864,7 @@ class DualViewCCTVDesignApp:
             camera.heading_deg = heading_deg
             camera.ir_range_m = ir_range_m
             camera.min_lux = min_lux
+            camera.effective_px_ratio = effective_px_ratio
 
             self.combo_camera.configure(values=[f"{i + 1}. {c.name}" for i, c in enumerate(self.cameras)])
             self.combo_camera.current(self.selected_camera_index)

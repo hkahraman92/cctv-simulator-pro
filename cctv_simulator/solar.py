@@ -54,6 +54,11 @@ def sun_position(lat_deg: float, lon_deg: float, when: _dt.datetime) -> Tuple[fl
     return az, elevation
 
 
+def utc_offset_for_lon(lon_deg: float) -> float:
+    """Rough local-time offset from longitude (no DST, no political borders)."""
+    return round(lon_deg / 15.0)
+
+
 def _ang_diff(a: float, b: float) -> float:
     return abs((a - b + 180.0) % 360.0 - 180.0)
 
@@ -76,16 +81,25 @@ def assess_glare(view_azimuth_deg: float, hfov_deg: float,
 
 def worst_glare_over_day(lat_deg: float, lon_deg: float, date: _dt.date,
                          view_azimuth_deg: float, hfov_deg: float,
-                         step_min: int = 20) -> Tuple[str, Optional[_dt.datetime], float, float]:
-    """Sweeps a whole UTC day. Returns ``(worst_level, worst_time_utc, sun_az, sun_el)``."""
+                         step_min: int = 20,
+                         tz_offset_hours: Optional[float] = None
+                         ) -> Tuple[str, Optional[_dt.datetime], float, float]:
+    """Sweeps a whole local day. Returns ``(worst_level, worst_time, sun_az, sun_el)``.
+
+    ``worst_time`` is a naive datetime in local time (offset from longitude, or
+    the given ``tz_offset_hours``). The sweep covers the local calendar day.
+    """
+    if tz_offset_hours is None:
+        tz_offset_hours = utc_offset_for_lon(lon_deg)
     order = {"yok": 0, "düşük": 1, "orta": 2, "yüksek": 3}
     worst = ("yok", None, 0.0, -90.0)
-    t = _dt.datetime(date.year, date.month, date.day, tzinfo=_dt.timezone.utc)
-    end = t + _dt.timedelta(days=1)
-    while t < end:
-        az, el = sun_position(lat_deg, lon_deg, t)
+    local0 = _dt.datetime(date.year, date.month, date.day)
+    utc0 = local0 - _dt.timedelta(hours=tz_offset_hours)
+    steps = int(24 * 60 / step_min)
+    for i in range(steps):
+        t_utc = utc0.replace(tzinfo=_dt.timezone.utc) + _dt.timedelta(minutes=i * step_min)
+        az, el = sun_position(lat_deg, lon_deg, t_utc)
         level, _note = assess_glare(view_azimuth_deg, hfov_deg, az, el)
         if order[level] > order[worst[0]]:
-            worst = (level, t, az, el)
-        t += _dt.timedelta(minutes=step_min)
+            worst = (level, local0 + _dt.timedelta(minutes=i * step_min), az, el)
     return worst
