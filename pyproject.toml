@@ -1,0 +1,48 @@
+# Tooling config only. The app is not packaged/installed as a wheel; it runs
+# from source (py -3.13 cctv_dual_view_simulator.py) or as a PyInstaller exe.
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+addopts = "-q"
+# tests that need the network are opt-in
+markers = [
+    "network: hits real tile/DEM servers (deselected by default in CI)",
+]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 120
+extend-exclude = ["build", "dist", ".venv-build", "scratch", "optimized"]
+
+[tool.ruff.lint]
+# Conservative on purpose: this is an 11k-line codebase with a deliberate
+# lazy-__init__ (PEP 562) pattern and broad try/except around optional deps.
+# CI enforces only the rules that catch real defects and currently pass clean.
+# For a full cleanup pass run:  ruff check --select E,F,I,UP,B,SIM
+select = [
+    "E9",    # syntax errors
+    "F63",   # invalid comparisons / assert on tuple
+    "F7",    # syntax (break/continue/return outside scope, etc.)
+    "F82",   # undefined name
+    "F706",  # return outside function
+    "F811",  # redefinition of unused name
+    "F501", "F502", "F503", "F504", "F506", "F507",
+    "F508", "F509", "F521", "F522", "F523", "F524", "F525",  # % / .format errors
+    "PLE",   # pylint errors
+]
+
+[tool.ruff.lint.per-file-ignores]
+"cctv_simulator/__init__.py" = ["F401"]
+"cctv_simulator/**/__init__.py" = ["F401"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["cctv_simulator"]
+ignore_missing_imports = true
+# Lenient: the codebase is not typed end-to-end yet. This just flags the
+# obvious (calling a missing attribute, wrong arg count) without noise.
+check_untyped_defs = false
+disallow_untyped_defs = false
+warn_unused_ignores = true
+warn_redundant_casts = true
