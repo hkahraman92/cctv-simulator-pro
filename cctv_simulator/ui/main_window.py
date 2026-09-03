@@ -122,13 +122,28 @@ class DualViewCCTVDesignApp:
         self.left_notebook = ttk.Notebook(left_frame)
         self.left_notebook.pack(fill=tk.BOTH, expand=True)
 
-        self.tab_camera = ttk.Frame(self.left_notebook, padding=8)
+        # The camera tab grew past a min-height window; wrap it in a scroller.
+        _cam_outer = ttk.Frame(self.left_notebook)
+        _cam_canvas = tk.Canvas(_cam_outer, highlightthickness=0, borderwidth=0)
+        _cam_sb = ttk.Scrollbar(_cam_outer, orient="vertical", command=_cam_canvas.yview)
+        _cam_canvas.configure(yscrollcommand=_cam_sb.set)
+        _cam_canvas.pack(side="left", fill="both", expand=True)
+        _cam_sb.pack(side="right", fill="y")
+        self.tab_camera = ttk.Frame(_cam_canvas, padding=8)
+        _cam_win = _cam_canvas.create_window((0, 0), window=self.tab_camera, anchor="nw")
+        self.tab_camera.bind("<Configure>",
+                             lambda e: _cam_canvas.configure(scrollregion=_cam_canvas.bbox("all")))
+        _cam_canvas.bind("<Configure>", lambda e: _cam_canvas.itemconfigure(_cam_win, width=e.width))
+        _cam_canvas.bind("<Enter>", lambda e: _cam_canvas.bind_all(
+            "<MouseWheel>", lambda ev: _cam_canvas.yview_scroll(int(-ev.delta / 120), "units")))
+        _cam_canvas.bind("<Leave>", lambda e: _cam_canvas.unbind_all("<MouseWheel>"))
+
         self.tab_project = ttk.Frame(self.left_notebook, padding=8)
         self.tab_assistant = ttk.Frame(self.left_notebook, padding=8)
         self.tab_levels = ttk.Frame(self.left_notebook, padding=8)
         self.tab_export = ttk.Frame(self.left_notebook, padding=8)
 
-        self.left_notebook.add(self.tab_camera, text="Kamera")
+        self.left_notebook.add(_cam_outer, text="Kamera")
         self.left_notebook.add(self.tab_project, text="Proje")
         self.left_notebook.add(self.tab_assistant, text="Asistan")
         self.left_notebook.add(self.tab_levels, text="PPM")

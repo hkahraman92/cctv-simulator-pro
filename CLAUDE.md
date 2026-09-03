@@ -22,7 +22,7 @@ cctv_dual_view_simulator.py          giriş noktası
   calculations.py                    OPTİK MOTOR - tek doğruluk kaynağı
   perspective_3d.py                  3B izdüşüm
   terrain_loader.py                  TerrainData, prosedürel arazi, GeoTIFF/DEM
-  viewshed_3d.py                     ışın yürütmeli görüş alanı, dünya eğriliği
+  viewshed_3d.py                     vektörel ışın yürütme, dünya eğriliği, atmosfer
   perimeter_planner.py               çevre çiti kamera dizilimi, BOM
   online_map_loader.py               karo indirme, ortofoto mozaik, GERÇEK DEM
   compliance.py                      Gemini + kural tabanlı şartname analizi
@@ -215,6 +215,10 @@ Her derleme `build/tkinter-diagnostic.txt` yazar. Tahmin etmeden önce onu oku.
   `flipud` sözleşmesi, bilinear yükselti.
 - `test_perimeter.py` — EN 62676-4 aralık formülü, BOM sayıları.
 - `test_cli_headless.py` — başsız CLI + `project_io` roundtrip.
+- `test_viewshed.py` — LOS occlusion (duvar gölgesi), FOV konisi, DORI düşüşü,
+  atmosferik menzil, `effective_px_ratio` optik limiti.
+- `test_atmosphere.py` / `test_solar.py` — Koschmieder, bant, güneş konumu,
+  parlama seviyeleri, yerel saat.
 
 `network` işaretli test yok (hepsi monkeypatch'li). Canlı sunucu denemesi
 istersen elle: `py -3.13 -c "from cctv_simulator.online_map_loader import _fetch_tile; ..."`.
@@ -236,12 +240,10 @@ veya `--json` ile stdout'a sonuç. Tk yok, ekran yok.
 
 ## Açık işler
 
-- Klasik arayüzde (`main_window`) hava/atmosfer girişi yok (yalnız `k`); DORI
-  tablosu berrak hava, atmosfer 3B/harita pencerelerinde. Bilinçli — DORI
-  berrak-hava standardı.
-- `modern_window` tezgâhında hava girişi yok.
-- `viewshed_3d` için doğrudan test yok; içinde ışın×adım Python döngüsü var
-  (büyük grid'de yavaş, vektörleştirilebilir).
+- Klasik `main_window` DORI tablosu hâlâ berrak hava (bilinçli — DORI berrak-hava
+  standardı; atmosfer 3B/harita/tezgâh pencerelerinde). `k` orada var.
+- Kapsama occlusion ışın örneklemesi arazi hücre boyutuna göre; çok keskin dar
+  sırtlar hâlâ kaçabilir. Otorite tekil `calculate_3d_viewshed`.
 
 ## cctv_iq — görüntü kalitesi ölçüm çekirdeği
 
@@ -293,7 +295,17 @@ DORI rozeti kırmızı + "⚠️ ATMOSFER".
 `visibility_km` / `weather` alır: `usable_range_m` optik menzili berrak havadaki
 değerin altına indirir, `effective_max_range` bununla kapanır. İkisi de artık
 `camera.effective_px_ratio`'yu `res_w`'ye uyguluyor. `map_3d_window` "Hava
-(Görüş)" combobox'ı hem tekil viewshed'i hem perimetre dizilimini besler.
+(Görüş)" combobox'ı hem tekil viewshed'i hem perimetre dizilimini besler;
+`modern_window` tezgâhında da "Hava" seçici var (verdict + ppm kartında
+"atm. menzil" notu).
+
+**Viewshed vektörel.** Eski `for ray: for step:` çift döngüsü (200×200 grid'de
+~50–150 ms) tek (R,S) numpy bloğuna çevrildi (~4 ms). Ufuk açısı
+`np.maximum.accumulate` ile kümülatif; ışın grid'den çıkınca
+`np.logical_and.accumulate` durdurur; hücreye scatter ray-major sırada
+(son yazan kazanır — eski döngüyle aynı). 3 arazi × 3 pan/tilt'te `dori_grid` /
+`visibility_mask` **bit-aynı** çıktı (`tests/test_viewshed.py` invariyantları
+sabitler). PPM/slant `math.hypot` → `np.hypot` yüzünden ~1 ULP oynar.
 
 ## Çok kameralı birleşik kapsama (`perimeter_planner.compute_coverage_grid`)
 

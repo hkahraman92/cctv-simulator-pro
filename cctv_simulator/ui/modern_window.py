@@ -29,6 +29,7 @@ from ..config import SENSOR_DIMS_MM, RESOLUTIONS
 from ..database import load_camera_library
 from ..models import CameraConfig, OpticResult
 from ..calculations import calculate_for_camera, ppm_at_distance
+from ..atmosphere import WEATHER_PRESETS, band_for_camera, usable_range_m
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -691,6 +692,12 @@ class _WorkbenchBody:
                            self.font_ui, self.font_mono)
         add(self.f_lux)
 
+        self.sel_weather = Select(rail, "Hava (atmosferik zayıflama)",
+                                  list(WEATHER_PRESETS.keys()),
+                                  next(iter(WEATHER_PRESETS)),
+                                  self.request_render, self.font_ui)
+        add(self.sel_weather, pad=(0, 12))
+
         section("Ölçülen Kalite (cctv_iq)")
         self.f_k = Field(rail, "Etkin piksel oranı  k = MTF50 / Nyquist", "", 0.05, 1.0,
                          getattr(self.camera, "effective_px_ratio", 1.0), 0.01,
@@ -930,9 +937,22 @@ class _WorkbenchBody:
             f"{req_dist:.1f} m · gereken {req_ppm:g}",
             C_IDENT if achieved >= req_ppm else C_DETECT)
 
+        weather = self.sel_weather.get()
+        vis_km = WEATHER_PRESETS.get(weather, 40.0)
+        atm_limit = float("inf")
+        if vis_km < 20.0:
+            band = band_for_camera(self.camera.sensor_name, self.camera.model_name)
+            atm_limit = usable_range_m(ground_distance_for_ppm(r, req_ppm), vis_km, band, weather)
+            self.card_ppm.update_values(
+                f"{achieved:.0f} px/m",
+                f"{req_dist:.1f} m · {weather} · atm. menzil {atm_limit:.0f} m",
+                C_IDENT if (achieved >= req_ppm and req_dist <= atm_limit) else C_DETECT)
+
         reasons = []
         if achieved < req_ppm:
             reasons.append("piksel yoğunluğu yetersiz")
+        if req_dist > atm_limit:
+            reasons.append(f"atmosferik menzil aşıldı ({weather})")
         if req_dist < r.dead_zone_m:
             reasons.append("kör noktada")
         if req_dist > r.max_geom_dist_m:
