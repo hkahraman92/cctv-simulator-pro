@@ -347,6 +347,8 @@ class CameraDatabaseWindow:
         row += 1
         self._db_entry(tab, row, "min_lux", "Minimum lux:")
         row += 1
+        self._db_entry(tab, row, "effective_px_ratio", "Ölçülen etkin piksel oranı k (0-1, boş=1):")
+        row += 1
         self._db_combo(
             tab,
             row,
@@ -706,6 +708,8 @@ class CameraDatabaseWindow:
         self._set_form_value("focal_max_mm", f"{camera.focal_max_mm:g}")
         self._set_form_value("ir_range_m", f"{camera.ir_range_m:g}")
         self._set_form_value("min_lux", f"{camera.min_lux:g}")
+        _k = getattr(camera, "effective_px_ratio", 1.0)
+        self._set_form_value("effective_px_ratio", "" if _k >= 0.999 else f"{_k:g}")
         self._set_form_value("source_sheet", "Manuel veri girişi")
         self.status_var.set("Aktif kamera değerleri forma aktarıldı; kaydetmeden kütüphaneye eklenmez.")
 
@@ -755,6 +759,7 @@ class CameraDatabaseWindow:
             "focal_max_mm",
             "ir_range_m",
             "min_lux",
+            "effective_px_ratio",
             "horizontal_fov_deg",
             "vertical_fov_deg",
             "diagonal_fov_deg",

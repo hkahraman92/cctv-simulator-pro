@@ -767,6 +767,7 @@ class DualViewCCTVDesignApp:
             camera.ir_range_m = float(model["ir_range_m"])
         if "min_lux" in model:
             camera.min_lux = float(model["min_lux"])
+        camera.effective_px_ratio = float(model.get("effective_px_ratio", 1.0) or 1.0)
         self._load_camera_to_form()
         self.calculate()
 

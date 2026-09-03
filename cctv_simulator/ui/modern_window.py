@@ -576,9 +576,11 @@ class _WorkbenchBody:
                              (camera.tilt_deg, self.f_tilt),
                              (camera.target_height_m, self.f_target),
                              (camera.ir_range_m, self.f_ir),
-                             (camera.min_lux, self.f_lux)):
+                             (camera.min_lux, self.f_lux),
+                             (getattr(camera, "effective_px_ratio", 1.0), self.f_k)):
             lo, hi = field.slider.cget("from_"), field.slider.cget("to")
             field.set(min(max(float(value), lo), hi))
+        self._update_iq_readout()
         self.title(f"CCTV Optics Workbench — {camera.name}")
         self.request_render()
 
@@ -687,7 +689,23 @@ class _WorkbenchBody:
         self.f_lux = Field(rail, "Minimum aydınlatma", "lux", 0.0, 1.0,
                            self.camera.min_lux, 0.01, self.request_render,
                            self.font_ui, self.font_mono)
-        add(self.f_lux, pad=(0, 16))
+        add(self.f_lux)
+
+        section("Ölçülen Kalite (cctv_iq)")
+        self.f_k = Field(rail, "Etkin piksel oranı  k = MTF50 / Nyquist", "", 0.05, 1.0,
+                         getattr(self.camera, "effective_px_ratio", 1.0), 0.01,
+                         self.request_render, self.font_ui, self.font_mono)
+        add(self.f_k, pad=(0, 4))
+        self.btn_measure = ctk.CTkButton(
+            rail, text="📷  Eğik kenar fotoğrafı → k ölç", command=self._measure_edge,
+            fg_color=FIELD, hover_color=PANEL_HI, text_color=TEXT,
+            font=(self.font_ui, 11), height=30, corner_radius=6,
+        )
+        add(self.btn_measure, pad=(0, 4))
+        self.lbl_iq = ctk.CTkLabel(rail, text="", text_color=TEXT_DIM,
+                                   font=(self.font_mono, 10), anchor="w", justify="left")
+        add(self.lbl_iq, pad=(0, 16))
+        self._update_iq_readout()
 
     def _build_viewport(self):
         holder = ctk.CTkFrame(self, fg_color=BG, corner_radius=0)
@@ -794,10 +812,61 @@ class _WorkbenchBody:
                            ("focal_max_mm", self.f_focal_max),
                            ("pole_height_m", self.f_pole),
                            ("tilt_deg", self.f_tilt),
-                           ("ir_range_m", self.f_ir)):
+                           ("ir_range_m", self.f_ir),
+                           ("effective_px_ratio", self.f_k)):
             if isinstance(entry.get(key), (int, float)):
                 field.set(float(entry[key]))
+        if not isinstance(entry.get("effective_px_ratio"), (int, float)):
+            self.f_k.set(1.0)      # unknown for this model -> trust the label
+        self._update_iq_readout()
         self.request_render()
+
+    def _res_megapixels(self) -> float:
+        rw, rh = RESOLUTIONS.get(self.sel_res.get(), (0, 0))
+        return rw * rh / 1_000_000.0
+
+    def _update_iq_readout(self):
+        if not hasattr(self, "lbl_iq"):
+            return
+        k = self.f_k.get()
+        nominal_mp = self._res_megapixels()
+        rw, _rh = RESOLUTIONS.get(self.sel_res.get(), (0, 0))
+        eff_lines = rw * k
+        eff_mp = nominal_mp * k * k
+        if k >= 0.995:
+            self.lbl_iq.configure(text=f"etiket {nominal_mp:.1f} MP · ölçüm yok (k = 1.00)")
+        else:
+            self.lbl_iq.configure(
+                text=(f"etiket {nominal_mp:.1f} MP / {rw} çizgi\n"
+                      f"etkin {eff_mp:.1f} MP / {eff_lines:.0f} çizgi  (k = {k:.2f})"))
+
+    def _measure_edge(self):
+        from tkinter import filedialog, messagebox
+        path = filedialog.askopenfilename(
+            title="Eğik kenar fotoğrafı seç (yüksek kontrastlı, ~5° eğik kenar)",
+            filetypes=[("Görsel", "*.png *.jpg *.jpeg *.tif *.tiff *.bmp"), ("Tümü", "*.*")],
+            parent=self,
+        )
+        if not path:
+            return
+        try:
+            from ..cctv_iq import measure_file
+            res = measure_file(path)
+        except Exception as exc:
+            messagebox.showerror("Ölçüm başarısız",
+                                 f"Eğik kenar MTF ölçülemedi:\n{exc}\n\n"
+                                 "Kenar dikey/yatay ve ~2–15° eğik olmalı.", parent=self)
+            return
+        self.f_k.set(round(res["k"], 3))
+        self._update_iq_readout()
+        self.request_render()
+        messagebox.showinfo(
+            "cctv_iq ölçümü",
+            f"Kenar açısı : {res['edge_angle_deg']:.1f}°\n"
+            f"MTF50       : {res['mtf50_cy_px']:.3f} çevrim/piksel\n"
+            f"Nyquist'te  : {res['mtf_at_nyquist']:.2f}\n"
+            f"k           : {res['k']:.3f}\n\n"
+            "Etkin piksel oranı optik motora uygulandı.", parent=self)
 
     def request_render(self, delay: int = None):
         """Coalesce a burst of parameter changes into a single repaint."""
@@ -823,6 +892,8 @@ class _WorkbenchBody:
         self.camera.target_height_m = self.f_target.get()
         self.camera.ir_range_m = self.f_ir.get()
         self.camera.min_lux = self.f_lux.get()
+        self.camera.effective_px_ratio = self.f_k.get()
+        self._update_iq_readout()
 
         mode = "min" if self.lens_mode.get() == "GENİŞ" else "max"
         self.result = calculate_for_camera(self.camera, mode, [])
