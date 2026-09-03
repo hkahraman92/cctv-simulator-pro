@@ -1,8 +1,11 @@
 """
 3D Camera View (Camera Eye View) & Live DORI Simulation Window.
-Provides an interactive 3D perspective viewport simulating what the camera sensor
-and security operator see, with real-time PPM degradation/pixelation filters,
-mannequin/vehicle targets, IR night vision, and live optics HUD overlay.
+
+The scene is a PIL frame from ``scene_render.render_camera_frame`` — true field
+of view, a silhouette target, MTF blur from the measured ``effective_px_ratio``,
+day / IR-night / thermal palettes, and a digital-zoom inset that reveals the
+sensor's pixel budget at range. The grid, distance labels, reticle and HUD are
+drawn crisp on top as Tk canvas items.
 """
 import math
 import tkinter as tk
@@ -15,10 +18,16 @@ from ..theme import is_themed, COLORS, StyledButton, fit_and_center_window, set_
 from ..perspective_3d import (
     Perspective3DEngine,
     Point3D,
-    ProjectedPoint,
     generate_ground_grid_lines,
     generate_dori_ground_polygons,
 )
+
+try:
+    from PIL import Image, ImageTk
+    from ..scene_render import render_camera_frame
+    _PIL_OK = True
+except Exception:  # pragma: no cover - PIL is a hard dep, this is belt-and-braces
+    _PIL_OK = False
 
 
 class Camera3DViewWindow:
@@ -53,6 +62,8 @@ class Camera3DViewWindow:
         # <Configure> arrives in bursts; each call rebuilds a Perspective3DEngine,
         # does canvas.delete("all") and issues ~47 create_* calls. Coalesce them.
         self._render_job = None
+        self._settle_job = None      # full-quality redraw after a fast drag settles
+        self._frame_photo = None
 
         from ..errors import guarded_build
         self.build_ok = guarded_build(self.window, self._build_ui,
@@ -63,31 +74,50 @@ class Camera3DViewWindow:
         self.render_3d_view()
 
     _RENDER_INTERVAL_MS = 33        # ~30 fps ceiling
+    _SETTLE_MS = 180               # full-quality redraw this long after the last drag event
 
-    def schedule_render(self, delay_ms: int = None):
-        """Collapse a burst of render requests into one frame."""
+    def schedule_render(self, delay_ms: int = None, fast: bool = False):
+        """Collapse a burst of render requests into one frame.
+
+        ``fast=True`` (slider / canvas drag) renders a cheap low-res frame now
+        and queues one full-quality redraw once the drag stops.
+        """
+        if self._settle_job is not None:
+            try:
+                self.window.after_cancel(self._settle_job)
+            except Exception:
+                pass
+            self._settle_job = None
+        if fast:
+            self._settle_job = self.window.after(self._SETTLE_MS, lambda: self._safe_render(fast=False))
         if self._render_job is not None:
             return
         if delay_ms is None:
             delay_ms = self._RENDER_INTERVAL_MS
+        self._pending_fast = fast
         self._render_job = self.window.after(delay_ms, self._run_scheduled_render)
 
     def _run_scheduled_render(self):
         self._render_job = None
+        self._safe_render(fast=getattr(self, "_pending_fast", False))
+
+    def _safe_render(self, fast: bool = False):
         try:
             if not self.window.winfo_exists():
                 return
         except tk.TclError:
             return
-        self.render_3d_view()
+        self.render_3d_view(fast=fast)
 
     def close(self):
-        if self._render_job is not None:
-            try:
-                self.window.after_cancel(self._render_job)
-            except Exception:
-                pass
-            self._render_job = None
+        for attr in ("_render_job", "_settle_job"):
+            job = getattr(self, attr, None)
+            if job is not None:
+                try:
+                    self.window.after_cancel(job)
+                except Exception:
+                    pass
+                setattr(self, attr, None)
         if self.app.view_3d_window == self:
             self.app.view_3d_window = None
         self.window.destroy()
@@ -155,7 +185,7 @@ class Camera3DViewWindow:
             variable=self.target_lateral_offset_var,
             orient=tk.HORIZONTAL,
             length=90,
-            command=lambda v: self.schedule_render(),   # PERF: per-pixel -> per-frame
+            command=lambda v: self.schedule_render(fast=True),   # PERF: per-pixel -> per-frame
         )
         scale_lateral.pack(side=tk.LEFT, padx=(0, 12))
 
@@ -256,7 +286,7 @@ class Camera3DViewWindow:
     def _on_dist_slider_changed(self, val):
         dist = float(val)
         self.lbl_dist_val.configure(text=f"{dist:.1f} m")
-        self.schedule_render()          # PERF: per-pixel -> per-frame
+        self.schedule_render(fast=True)
 
     def _on_target_type_selected(self, event=None):
         val = self.target_type_var.get()
@@ -303,9 +333,9 @@ class Camera3DViewWindow:
         dist = 1.0 + (1.0 - norm_y) * (max_d - 1.0)
         self.target_dist_var.set(round(dist, 1))
         self.lbl_dist_val.configure(text=f"{dist:.1f} m")
-        self.schedule_render()          # PERF: canvas drag -> per-frame
+        self.schedule_render(fast=True)
 
-    def render_3d_view(self):
+    def render_3d_view(self, fast: bool = False):
         """Main rendering pipeline for 3D Camera Eye View."""
         if not self.window.winfo_exists():
             return
@@ -333,92 +363,63 @@ class Camera3DViewWindow:
         is_thermal = p_mode in ["thermal_white", "thermal_black", "thermal_ironbow"]
         is_night = p_mode == "ir"
 
-        # Theme Styling based on active palette
-        if p_mode == "thermal_white":
-            sky_bg = "#0B0E11"
-            ground_bg = "#1B2227"
-            grid_color = "#37474F"
-            text_color = "#FFFFFF"
-            target_tint = "thermal_white"
-        elif p_mode == "thermal_black":
-            sky_bg = "#E0E0E0"
-            ground_bg = "#ECEFF1"
-            grid_color = "#90A4AE"
-            text_color = "#000000"
-            target_tint = "thermal_black"
-        elif p_mode == "thermal_ironbow":
-            sky_bg = "#0B0014"
-            ground_bg = "#1A237E"
-            grid_color = "#283593"
-            text_color = "#FFD600"
-            target_tint = "thermal_ironbow"
+        # Grid overlay tint that reads over the rendered frame.
+        if p_mode == "thermal_black":
+            grid_color, ground_bg = "#90A4AE", "#ECEFF1"
+        elif is_thermal:
+            grid_color, ground_bg = "#5A6B78", "#1B2227"
         elif is_night:
-            sky_bg = "#0B0E11"
-            ground_bg = "#161B1E"
-            grid_color = "#2D373D"
-            text_color = "#00E676"
-            target_tint = "ir"
-        else:  # Day
-            sky_bg = "#90CAF9"
-            ground_bg = "#CFD8DC"
-            grid_color = "#90A4AE"
-            text_color = "#FFFFFF"
-            target_tint = "day"
+            grid_color, ground_bg = "#2E4A3A", "#161B1E"
+        else:
+            grid_color, ground_bg = "#B0BEC5", "#CFD8DC"
 
         horizon_y = engine.get_horizon_y()
+        target_h = 1.8 if self.target_type_var.get() == "human" else (2.3 if self.target_type_var.get() == "vehicle" else 1.0)
+        ppm = engine.calculate_ppm_at_distance(target_dist, target_h_m=target_h)
 
-        # 3. Draw Sky and Ground Background
-        if horizon_y <= 0:
-            self.canvas.create_rectangle(0, 0, w, h, fill=ground_bg, outline="")
-        elif horizon_y >= h:
-            self.canvas.create_rectangle(0, 0, w, h, fill=sky_bg, outline="")
+        # 3+4. Render the degraded camera frame (sky/ground, DORI bands, targets,
+        # sensor+MTF resolution loss, palette) as one PIL image and blit it.
+        dori_polygons = generate_dori_ground_polygons(engine, self.app.ppm_levels)
+        if _PIL_OK:
+            frame, _inset_zoom = render_camera_frame(
+                engine, w=w, h=h,
+                target_type=self.target_type_var.get(),
+                target_dist=target_dist, lateral_offset=lateral_offset,
+                ppm=ppm, palette=p_mode, k=max(getattr(camera, "effective_px_ratio", 1.0), 0.05),
+                show_dori=self.show_dori_zones_var.get(),
+                dori_polys=dori_polygons,
+                ir_range_m=camera.ir_range_m if is_night else 0.0,
+                fast=fast,
+            )
+            self._frame_photo = ImageTk.PhotoImage(frame, master=self.canvas)
+            self.canvas.create_image(0, 0, anchor=tk.NW, image=self._frame_photo)
         else:
-            self.canvas.create_rectangle(0, 0, w, horizon_y, fill=sky_bg, outline="")
-            self.canvas.create_rectangle(0, horizon_y, w, h, fill=ground_bg, outline="")
-            self.canvas.create_line(0, horizon_y, w, horizon_y, fill="#78909C", width=1, dash=(4, 4))
-            self.canvas.create_text(w - 60, max(horizon_y - 12, 14), text="UFUK ÇİZGİSİ", fill="#546E7A", font=("Segoe UI", 7, "bold"))
+            self.canvas.create_rectangle(0, 0, w, h, fill=ground_bg, outline="")
 
-        # 4. Draw DORI/DRI Color Zones on Ground (if enabled)
-        if self.show_dori_zones_var.get():
-            dori_polygons = generate_dori_ground_polygons(engine, self.app.ppm_levels)
-            for dori in dori_polygons:
-                pts = dori["points"]
-                poly_coords = []
-                all_visible = True
-                for pt in pts:
-                    if not pt.visible or pt.depth <= 0.05:
-                        all_visible = False
-                        break
-                    poly_coords.extend([pt.u, pt.v])
-
-                if all_visible and len(poly_coords) == 8:
-                    color = dori["color"]
-                    stipple_val = "gray12" if (is_night or is_thermal) else "gray25"
-                    self.canvas.create_polygon(poly_coords, fill=color, outline=color, stipple=stipple_val, width=1)
+        if 0 < horizon_y < h:
+            self.canvas.create_line(0, horizon_y, w, horizon_y, fill="#B0BEC5", width=1, dash=(4, 4))
+            self.canvas.create_text(w - 54, max(horizon_y - 12, 14), text="UFUK", fill="#CFD8DC", font=("Segoe UI", 7, "bold"))
 
         # 5. Draw 3D Ground Perspective Grid & Distance Markers
         if self.show_grid_var.get():
             grid_lines = generate_ground_grid_lines(engine, max_dist_m=max(target_dist * 1.4, 40.0))
+            center_col = "#455A64" if p_mode == "day" else "#5A6B78"
+            lbl_color = "#1A2327" if p_mode == "day" else ("#00E676" if is_night else "#ECEFF1")
+            last_label_v = -999.0
             for line in grid_lines:
                 p1 = line["p1"]
                 p2 = line["p2"]
                 if p1.visible and p2.visible and p1.depth > 0.05 and p2.depth > 0.05:
                     width = 2 if line.get("is_center") or line.get("is_major") else 1
-                    color = "#37474F" if line.get("is_center") else grid_color
+                    color = center_col if line.get("is_center") else grid_color
                     self.canvas.create_line(p1.u, p1.v, p2.u, p2.v, fill=color, width=width)
 
-                    if line["type"] == "transverse" and line.get("p_mid"):
+                    if (line["type"] == "transverse" and line.get("p_mid") and line.get("is_major")):
                         pm = line["p_mid"]
-                        if 0 <= pm.u <= w and 0 <= pm.v <= h:
-                            dist_txt = f"{line['distance']:.0f}m"
-                            lbl_color = "#263238" if p_mode == "day" else ("#00E676" if is_night else "#ECEFF1")
-                            self.canvas.create_text(
-                                pm.u + 14,
-                                pm.v,
-                                text=dist_txt,
-                                fill=lbl_color,
-                                font=("Segoe UI", 7, "bold"),
-                            )
+                        if 0 <= pm.u <= w and 0 <= pm.v <= h and abs(pm.v - last_label_v) > 13:
+                            last_label_v = pm.v
+                            self.canvas.create_text(pm.u + 14, pm.v, text=f"{line['distance']:.0f} m",
+                                                    fill=lbl_color, font=("Segoe UI", 7, "bold"))
 
         # 6. Night Vision IR Illuminator Spotlight Cone
         if is_night and camera.ir_range_m > 0:
@@ -445,8 +446,6 @@ class Camera3DViewWindow:
                 )
 
         # 7. Calculate PPM, DRI and Target Telemetry
-        target_h = 1.8 if self.target_type_var.get() == "human" else (2.3 if self.target_type_var.get() == "vehicle" else 1.0)
-        ppm = engine.calculate_ppm_at_distance(target_dist, target_h_m=target_h)
         dori_name, badge_color, dori_desc = engine.get_dori_status(ppm, target_h_m=target_h)
 
         target_px = ppm * target_h
@@ -471,14 +470,15 @@ class Camera3DViewWindow:
                 f"HFOV: {engine.hfov_deg:.1f}° | Direk: {camera.pole_height_m:.1f}m | Hedef: {target_dist:.1f}m | {res_str}"
             )
 
-        # 8. Render Selected 3D Target (with Thermal or Optical Signatures)
-        target_type = self.target_type_var.get()
-        if target_type == "human":
-            self._render_3d_human_mannequin(engine, lateral_offset, target_dist, ppm, target_tint)
-        elif target_type == "vehicle":
-            self._render_3d_vehicle(engine, lateral_offset, target_dist, ppm, target_tint)
-        else:
-            self._render_3d_test_chart(engine, lateral_offset, target_dist, ppm, target_tint)
+        # 8. Crisp floating tag over the (degraded) target
+        p_head = engine.project_point(Point3D(lateral_offset, target_dist, target_h))
+        if p_head.visible and p_head.depth > 0.05 and 0 <= p_head.u <= w:
+            tag_y = max(p_head.v - 16, 12)
+            icon = "🚗" if self.target_type_var.get() == "vehicle" else ("🎯" if self.target_type_var.get() == "chart" else "🧍")
+            tag_txt = f"{icon} {target_dist:.0f} m · {target_px:.0f} px"
+            self.canvas.create_rectangle(p_head.u - 52, tag_y - 9, p_head.u + 52, tag_y + 9,
+                                         fill="#12151A", outline=badge_color)
+            self.canvas.create_text(p_head.u, tag_y, text=tag_txt, fill="#FFFFFF", font=("Segoe UI", 8, "bold"))
 
         # 9. Optical Center Crosshair (Reticle)
         cx, cy = w / 2.0, h / 2.0
@@ -490,190 +490,6 @@ class Camera3DViewWindow:
 
         # 10. Top HUD On-Screen Overlay Card
         self._render_hud_overlay(w, h, camera, focal_mm, target_dist, ppm, target_px, pct_h, dori_name, badge_color, p_mode, engine.is_thermal)
-
-    def _render_3d_human_mannequin(self, engine: Perspective3DEngine, x_m: float, y_m: float, ppm: float, target_tint: Optional[str]):
-        """Renders an optically-accurate 1.8m human mannequin with live PPM degradation and thermal heat modeling."""
-        p_feet = engine.project_point(Point3D(x_m, y_m, 0.0))
-        p_knees = engine.project_point(Point3D(x_m, y_m, 0.5))
-        p_waist = engine.project_point(Point3D(x_m, y_m, 0.9))
-        p_chest = engine.project_point(Point3D(x_m, y_m, 1.4))
-        p_neck = engine.project_point(Point3D(x_m, y_m, 1.5))
-        p_head_top = engine.project_point(Point3D(x_m, y_m, 1.8))
-
-        if not p_feet.visible or p_feet.depth <= 0.05:
-            return
-
-        mannequin_h = max(abs(p_feet.v - p_head_top.v), 3.0)
-        mannequin_w = max(mannequin_h * 0.28, 1.5)
-        cx = p_feet.u
-
-        # Ground shadow / footprint
-        shadow_rx = mannequin_w * 0.8
-        shadow_ry = max(shadow_rx * 0.25, 2.0)
-        shadow_col = "#000000" if target_tint in ["day", "ir", "thermal_white"] else "#CFD8DC"
-        self.canvas.create_oval(
-            cx - shadow_rx, p_feet.v - shadow_ry,
-            cx + shadow_rx, p_feet.v + shadow_ry,
-            fill=shadow_col, outline="", stipple="gray50"
-        )
-
-        # ── Thermal Signature Modes ──
-        if target_tint == "thermal_white":
-            body_col = "#FFFFFF"
-            core_col = "#FFFDE7"
-            head_col = "#FFFFFF"
-            out_col = "#FFF9C4"
-        elif target_tint == "thermal_black":
-            body_col = "#000000"
-            core_col = "#121212"
-            head_col = "#000000"
-            out_col = "#212121"
-        elif target_tint == "thermal_ironbow":
-            body_col = "#FF3D00"
-            core_col = "#FFEB3B"
-            head_col = "#FFC107"
-            out_col = "#D50000"
-        elif target_tint == "ir":
-            body_col = "#78909C"
-            core_col = "#90A4AE"
-            head_col = "#B0BEC5"
-            out_col = "#00E676"
-        else:  # Day
-            body_col = "#1565C0"
-            core_col = "#ECEFF1"
-            head_col = "#FFCC80"
-            out_col = "#0D47A1"
-
-        # ── Draw Body & Head with PPM/Resolution Level ──
-        target_px = ppm * 1.8
-        if ppm >= 250.0 or target_px >= 40:
-            self.canvas.create_rectangle(cx - mannequin_w * 0.35, p_knees.v, cx - mannequin_w * 0.08, p_feet.v, fill=body_col, outline=out_col)
-            self.canvas.create_rectangle(cx + mannequin_w * 0.08, p_knees.v, cx + mannequin_w * 0.35, p_feet.v, fill=body_col, outline=out_col)
-            self.canvas.create_polygon(
-                cx - mannequin_w * 0.5, p_chest.v,
-                cx + mannequin_w * 0.5, p_chest.v,
-                cx + mannequin_w * 0.38, p_waist.v,
-                cx - mannequin_w * 0.38, p_waist.v,
-                fill=body_col, outline=out_col, width=1.5
-            )
-            self.canvas.create_oval(cx - mannequin_w * 0.2, p_chest.v + 2, cx + mannequin_w * 0.2, p_waist.v - 2, fill=core_col, outline="")
-            head_rx = mannequin_w * 0.26
-            head_ry = (p_neck.v - p_head_top.v) * 0.55
-            head_cy = (p_neck.v + p_head_top.v) * 0.5
-            self.canvas.create_oval(cx - head_rx, head_cy - head_ry, cx + head_rx, head_cy + head_ry, fill=head_col, outline=out_col, width=1)
-        elif ppm >= 80.0 or target_px >= 12:
-            self.canvas.create_rectangle(cx - mannequin_w * 0.35, p_waist.v, cx + mannequin_w * 0.35, p_feet.v, fill=body_col, outline="")
-            self.canvas.create_rectangle(cx - mannequin_w * 0.45, p_neck.v, cx + mannequin_w * 0.45, p_waist.v, fill=body_col, outline="")
-            head_rx = mannequin_w * 0.25
-            head_ry = (p_neck.v - p_head_top.v) * 0.55
-            head_cy = (p_neck.v + p_head_top.v) * 0.5
-            self.canvas.create_oval(cx - head_rx, head_cy - head_ry, cx + head_rx, head_cy + head_ry, fill=head_col, outline="")
-        elif target_px >= 3.0:
-            block_w = max(mannequin_w * 0.4, 2.5)
-            self.canvas.create_rectangle(cx - block_w, p_neck.v, cx + block_w, p_feet.v, fill=body_col, outline="")
-            head_r = max(mannequin_w * 0.25, 2.0)
-            head_cy = (p_neck.v + p_head_top.v) * 0.5
-            self.canvas.create_oval(cx - head_r, head_cy - head_r, cx + head_r, head_cy + head_r, fill=head_col, outline="")
-        else:
-            self.canvas.create_rectangle(cx - 1.5, p_head_top.v, cx + 1.5, p_feet.v, fill=body_col, outline="")
-
-        # Floating Distance Tag
-        tag_y = max(p_head_top.v - 18, 12)
-        tag_txt = f"🧍 {y_m:.0f}m | {target_px:.1f} px"
-        self.canvas.create_rectangle(cx - 45, tag_y - 8, cx + 45, tag_y + 8, fill="#212529", outline="#DEE2E6")
-        self.canvas.create_text(cx, tag_y, text=tag_txt, fill="#FFFFFF", font=("Segoe UI", 8, "bold"))
-
-    def _render_3d_vehicle(self, engine: Perspective3DEngine, x_m: float, y_m: float, ppm: float, target_tint: Optional[str]):
-        """Renders an optically/thermally-modeled vehicle (2.3m wide, 1.6m tall) with engine & tire heat signatures."""
-        p_fl = engine.project_point(Point3D(x_m - 1.15, y_m, 0.0))
-        p_fr = engine.project_point(Point3D(x_m + 1.15, y_m, 0.0))
-        p_hood_l = engine.project_point(Point3D(x_m - 1.15, y_m, 0.8))
-        p_hood_r = engine.project_point(Point3D(x_m + 1.15, y_m, 0.8))
-        p_roof_l = engine.project_point(Point3D(x_m - 0.95, y_m + 0.8, 1.55))
-        p_roof_r = engine.project_point(Point3D(x_m + 0.95, y_m + 0.8, 1.55))
-        p_plate = engine.project_point(Point3D(x_m, y_m, 0.4))
-
-        if not p_fl.visible or p_fl.depth <= 0.05:
-            return
-
-        if target_tint == "thermal_white":
-            body_col = "#78909C"
-            engine_col = "#FFFFFF"
-            tire_col = "#FFF59D"
-            glass_col = "#37474F"
-        elif target_tint == "thermal_black":
-            body_col = "#424242"
-            engine_col = "#000000"
-            tire_col = "#000000"
-            glass_col = "#ECEFF1"
-        elif target_tint == "thermal_ironbow":
-            body_col = "#283593"
-            engine_col = "#FFEB3B"
-            tire_col = "#FF5722"
-            glass_col = "#1A237E"
-        elif target_tint == "ir":
-            body_col = "#37474F"
-            engine_col = "#78909C"
-            tire_col = "#546E7A"
-            glass_col = "#263238"
-        else:  # Day
-            body_col = "#C62828"
-            engine_col = "#B71C1C"
-            tire_col = "#212121"
-            glass_col = "#90CAF9"
-
-        # Car Body & Windshield
-        self.canvas.create_polygon(
-            p_roof_l.u, p_roof_l.v,
-            p_roof_r.u, p_roof_r.v,
-            p_hood_r.u, p_hood_r.v,
-            p_hood_l.u, p_hood_l.v,
-            fill=glass_col, outline="#1E272C"
-        )
-        self.canvas.create_polygon(
-            p_hood_l.u, p_hood_l.v,
-            p_hood_r.u, p_hood_r.v,
-            p_fr.u, p_fr.v,
-            p_fl.u, p_fl.v,
-            fill=body_col, outline="#212121", width=1.5
-        )
-
-        grid_w = abs(p_fr.u - p_fl.u) * 0.45
-        if grid_w >= 4.0:
-            cx = (p_fl.u + p_fr.u) / 2.0
-            cy = (p_hood_l.v + p_fl.v) / 2.0
-            self.canvas.create_rectangle(cx - grid_w / 2, cy - 4, cx + grid_w / 2, cy + 4, fill=engine_col, outline="")
-
-        if target_tint == "day" and p_plate.visible and p_plate.depth > 0.05:
-            plate_w = max(abs(p_fr.u - p_fl.u) * 0.32, 10.0)
-            plate_h = max(plate_w * 0.24, 4.0)
-            px, py = p_plate.u, p_plate.v
-            self.canvas.create_rectangle(px - plate_w / 2, py - plate_h / 2, px + plate_w / 2, py + plate_h / 2, fill="#FFFFFF", outline="#212121", width=1)
-            self.canvas.create_rectangle(px - plate_w / 2, py - plate_h / 2, px - plate_w / 2 + plate_w * 0.15, py + plate_h / 2, fill="#1565C0", outline="")
-            if ppm >= 145.0 and plate_w >= 36:
-                self.canvas.create_text(px + plate_w * 0.08, py, text="34 CCTV 2026", fill="#000000", font=("Segoe UI", int(max(plate_h * 0.65, 6)), "bold"))
-
-        tag_y = max(p_roof_l.v - 16, 12)
-        target_px = ppm * 2.3
-        tag_txt = f"🚗 Araç | {y_m:.0f}m | {target_px:.1f} px"
-        self.canvas.create_rectangle(p_plate.u - 65, tag_y - 8, p_plate.u + 65, tag_y + 8, fill="#212529", outline="#DEE2E6")
-        self.canvas.create_text(p_plate.u, tag_y, text=tag_txt, fill="#FFFFFF", font=("Segoe UI", 8, "bold"))
-
-    def _render_3d_test_chart(self, engine: Perspective3DEngine, x_m: float, y_m: float, ppm: float, target_tint: Optional[str]):
-        """Renders an optical / thermal calibration chart."""
-        p_c = engine.project_point(Point3D(x_m, y_m, 1.0))
-        if not p_c.visible or p_c.depth <= 0.05:
-            return
-
-        size = max((engine.viewport_h / p_c.depth) * 0.8, 10.0)
-        cx, cy = p_c.u, p_c.v
-
-        chart_bg = "#FFFFFF" if target_tint in ["day", "thermal_white"] else "#212121"
-        self.canvas.create_rectangle(cx - size / 2, cy - size / 2, cx + size / 2, cy + size / 2, fill=chart_bg, outline="#212121", width=2)
-        for r_factor in [0.8, 0.6, 0.4, 0.2]:
-            r = size * 0.5 * r_factor
-            ring_col = "#D50000" if target_tint == "thermal_ironbow" else "#424242"
-            self.canvas.create_oval(cx - r, cy - r, cx + r, cy + r, outline=ring_col, width=1)
 
     def _render_hud_overlay(self, w: int, h: int, camera: CameraConfig, focal_mm: float, dist_m: float, ppm: float, target_px: float, pct_h: float, dori_name: str, badge_color: str, p_mode: str, is_thermal: bool):
         """Draws a semi-transparent HUD telemetry overlay in the top-left corner."""

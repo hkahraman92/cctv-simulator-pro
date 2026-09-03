@@ -28,6 +28,7 @@ cctv_dual_view_simulator.py          giriş noktası
   compliance.py                      Gemini + kural tabanlı şartname analizi
   exporters.py                       CSV / XLSX / PDF / PNG
   cctv_iq.py                         eğik kenar MTF, k oranı, başsız (numpy)
+  scene_render.py                    3B kamera karesi (PIL): FOV + çözünürlük kaybı + palet
   project_io.py                      .json proje şeması, Tk'siz load/save
   __main__.py                        başsız CLI: proje -> optik -> export/JSON
   database.py / config.py / models.py
@@ -258,6 +259,29 @@ değerdir (motor yeniden ifadesi `ppm_at_distance` ve `modern_window` ile tutarl
 kalsın diye).
 
 `synthetic_edge()` test/kalibrasyon için analitik erf kenarı üretir (scipy yok).
+
+## 3B Kamera Bakış Açısı (`view_3d_window` + `scene_render`)
+
+Sahne artık Tk primitifi değil, **PIL karesi**. `scene_render.render_camera_frame`
+gökyüzü/zemin gradyanı + DORI bantları + silüet hedefi çizer, sonra:
+
+- **Gerçek FOV** — 60 m'deki insan gerçekten ~15 px, uydurma detay kademesi yok.
+- **MTF bulanıklığı** = `CameraConfig.effective_px_ratio` (`k`, cctv_iq).
+- **Palet** — gündüz vinyet / gece IR (mesafeye göre kazanç düşüşü + gürültü +
+  tarama çizgisi) / termal LUT (ironbow 256-girişli tablo).
+- **Dijital zoom insetti** (sağ alt) — hedefe kırpıp büyütür; `_degrade` burada
+  koşar (BOX küçültme = gerçek alçak geçiren, NEAREST büyütme + blok blur),
+  menzilde sensör piksel bütçesi (`ppm`) görünür olur. Sahne-içi "hayalet
+  figürler" denendi, zoom ile çakıştı, inset lehine bırakıldı.
+
+Kare **düşük çözünürlükte** render edilir (720 px, `fast=True` sürüklerken 430)
+ve ölçeklenir; sonra `engine.set_viewport_size(out_w, out_h)` ile geri alınır ki
+`view_3d_window`'un tuval üstü çizdiği **net** ızgara/etiket/HUD hizalansın.
+`schedule_render(fast=True)` sürüklerken ucuz kare + `_SETTLE_MS=180` sonra tam
+kalite. Ölçüldü: hızlı ~25 ms, tam ~45 ms.
+
+`ImageTk.PhotoImage(frame, master=self.canvas)` — `master=` zorunlu (Kural 5),
+`self._frame_photo` referansı GC'yi önler.
 
 ## Çözülmüş (geçmiş açık işler)
 
