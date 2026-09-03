@@ -28,6 +28,7 @@ cctv_dual_view_simulator.py          giriş noktası
   compliance.py                      Gemini + kural tabanlı şartname analizi
   exporters.py                       CSV / XLSX / PDF / PNG
   cctv_iq.py                         eğik kenar MTF, k oranı, başsız (numpy)
+  atmosphere.py                      sis/yağmur zayıflaması (Koschmieder + bant faktörü)
   scene_render.py                    3B kamera karesi (PIL): FOV + çözünürlük kaybı + palet
   project_io.py                      .json proje şeması, Tk'siz load/save
   __main__.py                        başsız CLI: proje -> optik -> export/JSON
@@ -234,9 +235,10 @@ veya `--json` ile stdout'a sonuç. Tk yok, ekran yok.
 
 ## Açık işler
 
-- Optik tezgâhta (`modern_window.py`) ölçülen (`cctv_iq`) ve etiket değerinin yan
-  yana gösterilmesi. Motor + CLI + `effective_px_ratio` akışı hazır; kalan yalnız
-  GUI paneli. Windows'ta xvfb yok, bu yüzden ekran görüntüsüyle doğrulanmalı.
+- Atmosferik zayıflamayı `viewshed_3d` / `perimeter_planner` DORI menzillerine de
+  taşı (`atmosphere.usable_range_m`). Şu an yalnız 3B kamera görüşünde.
+- Çok kameralı birleşik kapsama ısı haritası (plan üzerinde "% kaç saha ≥125 PPM").
+- Güneş konumu / parlama analizi (koordinat + tarih/saat haritada var).
 
 ## cctv_iq — görüntü kalitesi ölçüm çekirdeği
 
@@ -259,6 +261,29 @@ değerdir (motor yeniden ifadesi `ppm_at_distance` ve `modern_window` ile tutarl
 kalsın diye).
 
 `synthetic_edge()` test/kalibrasyon için analitik erf kenarı üretir (scipy yok).
+
+**Tezgâh GUI** (`modern_window` "Ölçülen Kalite" bölümü): `k` slider'ı +
+"Eğik kenar → k ölç" düğmesi (`cctv_iq.measure_file`) + "etiket X MP → etkin
+Y MP" okuması. `_render` her turda `camera.effective_px_ratio = f_k.get()`.
+Kamera veritabanında `effective_px_ratio` alanı (model başına ölçülen k),
+`apply_camera_model` / `_apply_library_model` / `seed_from` üçü de okur.
+
+## Atmosferik zayıflama (`atmosphere.py`)
+
+Johnson/NATO ve DORI menzilleri berrak hava varsayar. `atmosphere` Koschmieder
+(`σ_vis = 3.912 / V`) + banda göre faktör (`visible` 1.0, `nir` 0.85, `mwir`
+0.55, `lwir` 0.40; damla rejiminde — kar/sis/kuvvetli yağmur — termal ×2.2).
+
+- `transmittance(dist, vis_km, band, weather)` — yol iletimi (0,1].
+- `usable_range_m(clear, ...)` — berrak menzili iletim `tau_min`'e düştüğü
+  mesafeyle sınırlar.
+- `band_for_camera(sensor, model, night_ir=)` — banda çözer.
+
+`view_3d_window`'da "Hava" combobox'ı `WEATHER_PRESETS`'ten görüş mesafesi seçer
+→ `render_camera_frame(visibility_km, weather)`. Termal palette hedef ΔT'yi
+`grad + (hf-grad)·tau` ile söndürür; IR luma kazancı `×tau`; gündüz sahnesi
+`vis < 20 km` altında pusa harmanlanır. HUD "iletim %N" gösterir, `tau < 0.30`'da
+DORI rozeti kırmızı + "⚠️ ATMOSFER".
 
 ## 3B Kamera Bakış Açısı (`view_3d_window` + `scene_render`)
 

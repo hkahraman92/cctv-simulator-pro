@@ -22,6 +22,8 @@ from ..perspective_3d import (
     generate_dori_ground_polygons,
 )
 
+from ..atmosphere import WEATHER_PRESETS, band_for_camera, transmittance
+
 try:
     from PIL import Image, ImageTk
     from ..scene_render import render_camera_frame
@@ -49,6 +51,7 @@ class Camera3DViewWindow:
         self.palette_mode_var = tk.StringVar(value="auto")  # 'auto', 'day', 'ir', 'thermal_white', 'thermal_black', 'thermal_ironbow'
         self.show_dori_zones_var = tk.BooleanVar(value=True)
         self.show_grid_var = tk.BooleanVar(value=True)
+        self.weather_var = tk.StringVar(value=next(iter(WEATHER_PRESETS)))
         self.target_lateral_offset_var = tk.DoubleVar(value=0.0)  # Lateral offset left/right (m)
 
         # HUD Info Variables
@@ -234,6 +237,16 @@ class Camera3DViewWindow:
         self.combo_palette.pack(side=tk.LEFT, padx=(0, 10))
         self.combo_palette.bind("<<ComboboxSelected>>", self._on_palette_selected)
 
+        # Weather / atmospheric attenuation
+        ttk.Label(control_bar, text="Hava:").pack(side=tk.LEFT, padx=(0, 4))
+        self.combo_weather = ttk.Combobox(
+            control_bar, textvariable=self.weather_var,
+            values=list(WEATHER_PRESETS.keys()), state="readonly", width=14,
+        )
+        self.combo_weather.current(0)
+        self.combo_weather.pack(side=tk.LEFT, padx=(0, 10))
+        self.combo_weather.bind("<<ComboboxSelected>>", lambda e: self.render_3d_view())
+
         # Options Checkbuttons
         ttk.Checkbutton(control_bar, text="DORI/DRI", variable=self.show_dori_zones_var, command=self.render_3d_view).pack(side=tk.LEFT, padx=(0, 6))
         ttk.Checkbutton(control_bar, text="Izgara", variable=self.show_grid_var, command=self.render_3d_view).pack(side=tk.LEFT, padx=(0, 10))
@@ -380,6 +393,10 @@ class Camera3DViewWindow:
         # 3+4. Render the degraded camera frame (sky/ground, DORI bands, targets,
         # sensor+MTF resolution loss, palette) as one PIL image and blit it.
         dori_polygons = generate_dori_ground_polygons(engine, self.app.ppm_levels)
+        weather = self.weather_var.get()
+        vis_km = WEATHER_PRESETS.get(weather, 40.0)
+        atm_band = band_for_camera(camera.sensor_name, camera.model_name, night_ir=is_night)
+        atm_tau = transmittance(target_dist, vis_km, atm_band, weather)
         if _PIL_OK:
             frame, _inset_zoom = render_camera_frame(
                 engine, w=w, h=h,
@@ -389,7 +406,7 @@ class Camera3DViewWindow:
                 show_dori=self.show_dori_zones_var.get(),
                 dori_polys=dori_polygons,
                 ir_range_m=camera.ir_range_m if is_night else 0.0,
-                fast=fast,
+                fast=fast, visibility_km=vis_km, weather=weather,
             )
             self._frame_photo = ImageTk.PhotoImage(frame, master=self.canvas)
             self.canvas.create_image(0, 0, anchor=tk.NW, image=self._frame_photo)
@@ -451,8 +468,17 @@ class Camera3DViewWindow:
         target_px = ppm * target_h
         pct_h = (target_px / max(engine.res_h, 1)) * 100.0
 
+        atm_txt = ""
+        if vis_km < 20.0:
+            flag = " ⚠️" if atm_tau < 0.5 else ""
+            atm_txt = f" | Hava: {weather} · iletim %{atm_tau * 100:.0f}{flag}"
+
         # Update HUD Bottom Bar
-        self.hud_dori_var.set(f"🎯 {dori_name.split(' (')[0]}")
+        if vis_km < 20.0 and atm_tau < 0.30:
+            self.hud_dori_var.set(f"⚠️ ATMOSFER · {dori_name.split(' (')[0]}")
+            badge_color = "#FF4D6D"
+        else:
+            self.hud_dori_var.set(f"🎯 {dori_name.split(' (')[0]}")
         self.lbl_hud_dori.configure(bg=badge_color)
 
         if engine.is_thermal:
@@ -460,14 +486,14 @@ class Camera3DViewWindow:
             algo_status = "✅ Algoritma %1.5 Eşiği OK" if pct_h >= 1.5 else "⚠️ Algoritma %1.5 Eşiği Altında"
             self.hud_optics_var.set(
                 f"{algo_status}  •  {camera.name} | Lens: {focal_mm:.1f}mm | "
-                f"HFOV: {engine.hfov_deg:.1f}° | Hedef: {target_dist:.1f}m ({lateral_offset:+.1f}m) | {dori_desc}"
+                f"HFOV: {engine.hfov_deg:.1f}° | Hedef: {target_dist:.1f}m ({lateral_offset:+.1f}m){atm_txt} | {dori_desc}"
             )
         else:
             self.hud_ppm_var.set(f"{ppm:.1f} PPM")
             res_str = camera.resolution_name.split(" (")[0]
             self.hud_optics_var.set(
                 f"Kamera: {camera.name} | Lens: {focal_mm:.1f}mm ({'Geniş' if self.lens_mode_var.get() == 'min' else 'Dar'}) | "
-                f"HFOV: {engine.hfov_deg:.1f}° | Direk: {camera.pole_height_m:.1f}m | Hedef: {target_dist:.1f}m | {res_str}"
+                f"HFOV: {engine.hfov_deg:.1f}° | Direk: {camera.pole_height_m:.1f}m | Hedef: {target_dist:.1f}m{atm_txt} | {res_str}"
             )
 
         # 8. Crisp floating tag over the (degraded) target

@@ -21,6 +21,7 @@ from typing import Optional, Sequence, Tuple
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
+from .atmosphere import transmittance
 from .perspective_3d import Perspective3DEngine, Point3D
 
 _SKY_TOP = (104, 158, 206)
@@ -230,15 +231,22 @@ def _noise(w: int, h: int) -> np.ndarray:
     return m
 
 
-def _apply_palette(base, heat, palette, target_dist, ir_range_m, vig=True):
+def _apply_palette(base, heat, palette, target_dist, ir_range_m, vig=True,
+                   visibility_km=40.0, weather=""):
     if palette == "day":
-        return _vignette(base, 0.32) if vig else base
+        img = base
+        if visibility_km < 20.0:                      # haze washes out the scene
+            tau = transmittance(target_dist, visibility_km, "visible", weather)
+            haze = Image.new("RGB", img.size, (205, 212, 218))
+            img = Image.blend(haze, img, max(tau, 0.25))
+        return _vignette(img, 0.32) if vig else img
 
     if palette == "ir":
         luma = np.asarray(base.convert("L"), np.float32)
         gain = 1.05
         if ir_range_m > 1.0:
             gain = float(np.clip(1.1 - 0.42 * (target_dist / ir_range_m), 0.22, 1.1))
+        gain *= transmittance(target_dist, visibility_km, "nir", weather)
         g = np.clip(luma * gain + _noise(luma.shape[1], luma.shape[0]), 0, 255)
         out = np.stack([g * 0.10, g, g * 0.16], axis=-1)
         out[::3] *= 0.85
@@ -247,7 +255,11 @@ def _apply_palette(base, heat, palette, target_dist, ir_range_m, vig=True):
 
     hf = np.asarray(Image.fromarray(np.asarray(heat, np.uint8)).filter(ImageFilter.GaussianBlur(1.5)), np.float32)
     grad = np.linspace(66, 26, hf.shape[0])[:, None]
-    hf = np.maximum(hf, grad).clip(0, 255).astype(np.uint8)
+    hf = np.maximum(hf, grad)
+    # thermal contrast (target ΔT over ambient) decays along the path
+    tau = transmittance(target_dist, visibility_km, "lwir", weather)
+    hf = grad + (hf - grad) * tau
+    hf = hf.clip(0, 255).astype(np.uint8)
 
     if palette == "thermal_black":
         return Image.fromarray(np.repeat((255 - hf)[:, :, None], 3, 2), "RGB")
@@ -257,7 +269,7 @@ def _apply_palette(base, heat, palette, target_dist, ir_range_m, vig=True):
 
 
 def _zoom_inset(scene, heat, engine, x_m, y_m, th, ppm, k, palette, target_dist, ir_range_m,
-                iw, ih):
+                iw, ih, visibility_km=40.0, weather=""):
     feet = _p(engine, x_m, y_m, 0.0)
     head = _p(engine, x_m, y_m, th)
     if not (feet.visible and head.visible) or feet.depth <= 0.05:
@@ -273,7 +285,8 @@ def _zoom_inset(scene, heat, engine, x_m, y_m, th, ppm, k, palette, target_dist,
     ins_heat = heat.resize((iw, ih), Image.Resampling.BICUBIC, box=box)
     ins = _degrade(ins, min(native * zoom, ih), ppm * th * max(k, 0.05))
     ins_heat = _degrade(ins_heat.convert("RGB"), min(native * zoom, ih), ppm * th * max(k, 0.05)).convert("L")
-    return _apply_palette(ins, ins_heat, palette, target_dist, ir_range_m), zoom
+    return _apply_palette(ins, ins_heat, palette, target_dist, ir_range_m,
+                          visibility_km=visibility_km, weather=weather), zoom
 
 
 def render_camera_frame(
@@ -292,6 +305,8 @@ def render_camera_frame(
     ir_range_m: float = 0.0,
     zoom_inset: bool = True,
     fast: bool = False,
+    visibility_km: float = 40.0,
+    weather: str = "",
 ) -> Tuple[Image.Image, float]:
     """Returns ``(frame, inset_zoom)``. ``inset_zoom`` is 1.0 when no inset was drawn.
 
@@ -317,13 +332,15 @@ def render_camera_frame(
     main = base
     if k < 0.985:
         main = main.filter(ImageFilter.GaussianBlur(radius=min((1.0 / max(k, 0.05) - 1.0) * 0.7, 3.0)))
-    frame = _apply_palette(main, heat, palette, target_dist, ir_range_m, vig=not fast)
+    frame = _apply_palette(main, heat, palette, target_dist, ir_range_m, vig=not fast,
+                           visibility_km=visibility_km, weather=weather)
 
     inset_zoom = 1.0
     if zoom_inset:
         iw, ih = int(w * 0.36), int(h * 0.36)
         ins, inset_zoom = _zoom_inset(base, heat, engine, lateral_offset, target_dist, th,
-                                      ppm, k, palette, target_dist, ir_range_m, iw, ih)
+                                      ppm, k, palette, target_dist, ir_range_m, iw, ih,
+                                      visibility_km, weather)
         if ins is not None and inset_zoom > 1.05:
             fr = frame.copy()
             px, py = w - iw - 8, h - ih - 8
