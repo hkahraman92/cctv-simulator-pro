@@ -40,11 +40,13 @@ from ..online_map_loader import (
     fetch_online_elevation_grid,
     tile_cache_usage,
 )
+from ..atmosphere import WEATHER_PRESETS
 from ..perimeter_planner import (
     FenceGap,
     PerimeterPlanResult,
     PlacedCamera,
     calculate_optimal_spacing,
+    compute_coverage_grid,
     generate_perimeter_plan,
     point_along_polyline,
 )
@@ -142,6 +144,10 @@ class TerrainViewshedWindow:
         self.show_contours_var = tk.BooleanVar(value=True)
         self.show_dori_var = tk.BooleanVar(value=True)
         self.earth_curv_var = tk.BooleanVar(value=True)
+        self.weather_var = tk.StringVar(value=next(iter(WEATHER_PRESETS)))
+        self.show_coverage_var = tk.BooleanVar(value=False)
+        self.stat_coverage_map_var = tk.StringVar(value="-")
+        self._coverage_grid = None
 
         # Perimeter Planner Variables
         self.fence_points: List[Tuple[float, float]] = []
@@ -439,6 +445,14 @@ class TerrainViewshedWindow:
         ttk.Radiobutton(frame_lens, text="Geniş (Min)", variable=self.lens_mode_var, value="min", command=self._on_lens_mode_toggled).pack(side=tk.LEFT, padx=6)
         ttk.Radiobutton(frame_lens, text="Dar (Tele)", variable=self.lens_mode_var, value="max", command=self._on_lens_mode_toggled).pack(side=tk.LEFT)
 
+        frame_wx = ttk.Frame(grp_cam)
+        frame_wx.pack(fill=tk.X, pady=2)
+        ttk.Label(frame_wx, text="Hava (Görüş):").pack(side=tk.LEFT)
+        combo_wx = ttk.Combobox(frame_wx, textvariable=self.weather_var,
+                                values=list(WEATHER_PRESETS.keys()), state="readonly", width=14)
+        combo_wx.pack(side=tk.RIGHT)
+        combo_wx.bind("<<ComboboxSelected>>", lambda e: self._on_weather_changed())
+
         # Stats
         grp_stats = ttk.LabelFrame(parent, text="Görüş & Kapsama İstatistikleri", padding=6)
         grp_stats.pack(fill=tk.X, pady=(0, 4))
@@ -499,6 +513,13 @@ class TerrainViewshedWindow:
         self.lbl_perim_mast.pack(side=tk.RIGHT)
         scale_ph = ttk.Scale(grp_params, from_=3.0, to=12.0, variable=self.mast_height_var, orient=tk.HORIZONTAL, command=self._on_slider_changed)
         scale_ph.pack(fill=tk.X, pady=(0, 4))
+
+        grp_cov = ttk.LabelFrame(parent, text="🗺️ Birleşik Kapsama (çok kameralı)", padding=6)
+        grp_cov.pack(fill=tk.X, pady=(0, 6))
+        ttk.Checkbutton(grp_cov, text="Kapsama ısı haritasını göster",
+                        variable=self.show_coverage_var,
+                        command=self._on_coverage_toggled).pack(anchor="w")
+        self._create_stat_row(grp_cov, "Örtüşen alanda:", self.stat_coverage_map_var, ACCENT_GREEN)
 
         grp_bom = ttk.LabelFrame(parent, text="📊 Keşif & Malzeme Listesi (BOM)", padding=6)
         grp_bom.pack(fill=tk.X, pady=(0, 6))
@@ -978,6 +999,61 @@ class TerrainViewshedWindow:
         self.lbl_overlap_val.configure(text=f"%{self.overlap_pct_var.get():.0f}")
         self.distribute_perimeter_cameras()
 
+    def _draw_coverage_overlay(self, cv, w, h):
+        """Blit the multi-camera coverage grid as a translucent DORI heatmap."""
+        cov = self._coverage_grid
+        try:
+            g = cov.ppm
+            gh, gw = g.shape
+            rgba = np.zeros((gh, gw, 4), np.uint8)
+            for lo, col in ((PPM_DETECT, (255, 77, 109)), (PPM_OBSERVE, (255, 179, 0)),
+                            (PPM_RECOG, (120, 220, 90)), (PPM_IDENT, (0, 230, 118))):
+                m = g >= lo
+                rgba[m] = (*col, 150)
+            img = Image.fromarray(np.flipud(rgba), "RGBA")   # grid row 0 = south
+            x0, y0 = self.world_to_screen_px(cov.origin_x, cov.origin_y + gh * cov.cell_m)
+            x1, y1 = self.world_to_screen_px(cov.origin_x + gw * cov.cell_m, cov.origin_y)
+            pw, ph = max(int(x1 - x0), 1), max(int(y1 - y0), 1)
+            if pw < 2 or ph < 2 or pw > 4000 or ph > 4000:
+                return
+            self._coverage_photo = ImageTk.PhotoImage(
+                img.resize((pw, ph), Image.Resampling.NEAREST), master=cv)
+            cv.create_image(x0, y0, image=self._coverage_photo, anchor="nw")
+        except Exception:
+            pass
+
+    def _on_weather_changed(self):
+        if self.planner_mode_var.get() == "perimeter" and self.fence_points:
+            self.distribute_perimeter_cameras()
+        else:
+            self.schedule_recalculate()
+
+    def _on_coverage_toggled(self):
+        if self.show_coverage_var.get() and self._coverage_grid is None:
+            self._recompute_coverage_grid()
+        self._render_map_canvas()
+
+    def _recompute_coverage_grid(self):
+        self._coverage_grid = None
+        self.stat_coverage_map_var.set("-")
+        if not self.perimeter_plan or not self.perimeter_plan.placed_cameras:
+            return
+        weather = self.weather_var.get()
+        try:
+            cov = compute_coverage_grid(
+                self.perimeter_plan, self.current_camera, cell_m=4.0,
+                visibility_km=WEATHER_PRESETS.get(weather, 40.0), weather=weather,
+            )
+        except Exception:
+            return
+        if cov is None:
+            return
+        self._coverage_grid = cov
+        p = cov.pct_by_level
+        self.stat_coverage_map_var.set(
+            f"Algıla %{p['detect']:.0f} · Gözlem %{p['observe']:.0f} · "
+            f"Tanı %{p['recog']:.0f} · Teşhis %{p['ident']:.0f}")
+
     def distribute_perimeter_cameras(self):
         if len(self.fence_points) < 2:
             return
@@ -997,6 +1073,8 @@ class TerrainViewshedWindow:
         overlap_frac = self.overlap_pct_var.get() / 100.0
         mast_h = self.mast_height_var.get()
 
+        weather = self.weather_var.get()
+        vis_km = WEATHER_PRESETS.get(weather, 40.0)
         self.perimeter_plan = generate_perimeter_plan(
             terrain=self.terrain,
             fence_points=self.fence_points,
@@ -1006,7 +1084,10 @@ class TerrainViewshedWindow:
             mast_height_m=mast_h,
             lens_mode=self.lens_mode_var.get(),
             is_closed_loop=self.fence_closed_var.get(),
+            visibility_km=vis_km,
+            weather=weather,
         )
+        self._recompute_coverage_grid()
 
         p = self.perimeter_plan
         self.bom_cam_count_var.set(f"{p.camera_count} Adet Kamera / Direk")
@@ -1035,32 +1116,44 @@ class TerrainViewshedWindow:
             return
 
         measured = bool(getattr(self.terrain, "is_measured", False))
+        lat = getattr(self.terrain, "lat_center", None)
+        lon = getattr(self.terrain, "lon_center", None)
+        glare_ready = isinstance(lat, (int, float)) and isinstance(lon, (int, float))
+        if glare_ready:
+            import datetime as _dt
+
+            from ..solar import worst_glare_over_day
+            _summer = _dt.date(_dt.date.today().year, 6, 21)
+            _winter = _dt.date(_dt.date.today().year, 12, 21)
         try:
             with open(file_path, "w", newline="", encoding="utf-8-sig") as f:
                 writer = csv.writer(f)
                 writer.writerow(["# Arazi kaynağı", self.terrain.name])
                 writer.writerow(["# Yükselti verisi", "ÖLÇÜLMÜŞ DEM" if measured else "TEMSİLİ — ölçüm değil, sonuçlar bağlayıcı değildir"])
+                writer.writerow(["# Hava koşulu", self.weather_var.get()])
+                if glare_ready:
+                    writer.writerow(["# Güneş/parlama analizi", f"{lat:.4f}, {lon:.4f} · 21 Haz & 21 Ara (UTC gün taraması)"])
                 writer.writerow(["# Not", getattr(self.terrain, "source_note", "").replace("\n", " ")])
                 writer.writerow([])
-                writer.writerow(["Direk No", "Kamera Modeli", "Sensör", "Çözünürlük", "Konum X (m)", "Konum Y (m)", "Zemin Rakımı (m)", "Direk Boyu (m)", "Toplam İrtifa (m)", "Pan Açısı (°)", "Tilt Açısı (°)", "Odak (mm)", "HFOV (°)", "Etkin Menzil (m)", "Kör Nokta (m)"])
+                header = ["Direk No", "Kamera Modeli", "Sensör", "Çözünürlük", "Konum X (m)", "Konum Y (m)", "Zemin Rakımı (m)", "Direk Boyu (m)", "Toplam İrtifa (m)", "Pan Açısı (°)", "Tilt Açısı (°)", "Odak (mm)", "HFOV (°)", "Etkin Menzil (m)", "Kör Nokta (m)"]
+                if glare_ready:
+                    header += ["Yaz parlama", "Kış parlama"]
+                writer.writerow(header)
                 for cam in self.perimeter_plan.placed_cameras:
-                    writer.writerow([
-                        cam.pole_id,
-                        cam.camera_model,
-                        cam.sensor_name,
-                        cam.resolution_name,
-                        cam.x_m,
-                        cam.y_m,
-                        cam.ground_z_m,
-                        cam.mast_height_m,
-                        cam.total_z_m,
-                        cam.pan_deg,
-                        cam.tilt_deg,
-                        cam.focal_mm,
-                        cam.hfov_deg,
-                        cam.effective_range_m,
-                        cam.dead_zone_m,
-                    ])
+                    row = [
+                        cam.pole_id, cam.camera_model, cam.sensor_name, cam.resolution_name,
+                        cam.x_m, cam.y_m, cam.ground_z_m, cam.mast_height_m, cam.total_z_m,
+                        cam.pan_deg, cam.tilt_deg, cam.focal_mm, cam.hfov_deg,
+                        cam.effective_range_m, cam.dead_zone_m,
+                    ]
+                    if glare_ready:
+                        s = worst_glare_over_day(lat, lon, _summer, cam.pan_deg, cam.hfov_deg)
+                        wn = worst_glare_over_day(lat, lon, _winter, cam.pan_deg, cam.hfov_deg)
+                        row += [
+                            s[0] + (f" ~{s[1].hour:02d}:{s[1].minute:02d}Z" if s[1] else ""),
+                            wn[0] + (f" ~{wn[1].hour:02d}:{wn[1].minute:02d}Z" if wn[1] else ""),
+                        ]
+                    writer.writerow(row)
             note = "" if measured else (
                 "\n\n⚠ Arazi yükseltisi TEMSİLİ (ölçülmüş DEM değil). "
                 "Zemin rakımı, toplam irtifa ve kör nokta değerleri bağlayıcı değildir."
@@ -1224,6 +1317,7 @@ class TerrainViewshedWindow:
         max_r = self.max_range_var.get()
         curv = self.earth_curv_var.get()
 
+        weather = self.weather_var.get()
         self.result = calculate_3d_viewshed(
             terrain=self.terrain,
             cam_x_m=cam_x,
@@ -1236,6 +1330,8 @@ class TerrainViewshedWindow:
             max_range_m=max_r,
             earth_curvature=curv,
             ray_step_m=3.5,
+            visibility_km=WEATHER_PRESETS.get(weather, 40.0),
+            weather=weather,
         )
 
         r = self.result
@@ -1381,6 +1477,8 @@ class TerrainViewshedWindow:
 
         # 5. PERIMETER MODE VECTOR OVERLAYS
         if self.planner_mode_var.get() == "perimeter":
+            if self.show_coverage_var.get() and self._coverage_grid is not None:
+                self._draw_coverage_overlay(cv, w, h)
             if len(self.fence_points) >= 2:
                 pts_px = []
                 for pt in self.fence_points:

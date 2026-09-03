@@ -29,6 +29,7 @@ cctv_dual_view_simulator.py          giriş noktası
   exporters.py                       CSV / XLSX / PDF / PNG
   cctv_iq.py                         eğik kenar MTF, k oranı, başsız (numpy)
   atmosphere.py                      sis/yağmur zayıflaması (Koschmieder + bant faktörü)
+  solar.py                           güneş konumu (NOAA) + kamera parlama/arkadan ışık
   scene_render.py                    3B kamera karesi (PIL): FOV + çözünürlük kaybı + palet
   project_io.py                      .json proje şeması, Tk'siz load/save
   __main__.py                        başsız CLI: proje -> optik -> export/JSON
@@ -235,10 +236,10 @@ veya `--json` ile stdout'a sonuç. Tk yok, ekran yok.
 
 ## Açık işler
 
-- Atmosferik zayıflamayı `viewshed_3d` / `perimeter_planner` DORI menzillerine de
-  taşı (`atmosphere.usable_range_m`). Şu an yalnız 3B kamera görüşünde.
-- Çok kameralı birleşik kapsama ısı haritası (plan üzerinde "% kaç saha ≥125 PPM").
-- Güneş konumu / parlama analizi (koordinat + tarih/saat haritada var).
+- `_export_perimeter_bom` güneş taraması UTC gün + 21 Haz/21 Ara sabit; kullanıcı
+  tarih/saat seçimi yok. İstenirse `map_3d` içine küçük bir tarih girişi.
+- Kapsama ısı haritası terrain occlusion uygulamıyor (düz zeminde doğru, tepelikte
+  iyimser). Occlusion için tekil viewshed'i kullan.
 
 ## cctv_iq — görüntü kalitesi ölçüm çekirdeği
 
@@ -284,6 +285,31 @@ Johnson/NATO ve DORI menzilleri berrak hava varsayar. `atmosphere` Koschmieder
 `grad + (hf-grad)·tau` ile söndürür; IR luma kazancı `×tau`; gündüz sahnesi
 `vis < 20 km` altında pusa harmanlanır. HUD "iletim %N" gösterir, `tau < 0.30`'da
 DORI rozeti kırmızı + "⚠️ ATMOSFER".
+
+`calculate_3d_viewshed` ve `perimeter_planner.calculate_optimal_spacing` de
+`visibility_km` / `weather` alır: `usable_range_m` optik menzili berrak havadaki
+değerin altına indirir, `effective_max_range` bununla kapanır. İkisi de artık
+`camera.effective_px_ratio`'yu `res_w`'ye uyguluyor. `map_3d_window` "Hava
+(Görüş)" combobox'ı hem tekil viewshed'i hem perimetre dizilimini besler.
+
+## Çok kameralı birleşik kapsama (`perimeter_planner.compute_coverage_grid`)
+
+Plan kutusu üzerinde grid; her hücre için **herhangi bir** yerleşik kameradan
+ulaşılan en iyi px/m (FOV konisi + kör nokta + optik/atmosferik menzil).
+**Terrain occlusion YOK** — düz zeminde tam, tepelikte iyimser (docstring uyarır).
+Payda = çitin ±40 m bandı (`_fence_band_mask`), böylece kötü hava korunan-bölge
+kapsamasını **düşürür** (pastayı küçültmez). `map_3d_window` "Kapsama ısı
+haritası" onay kutusu → DORI renkli yarı saydam PIL overlay (`_draw_coverage_overlay`,
+grid satır 0 = güney → `np.flipud`) + seviye yüzdeleri.
+
+## Güneş / parlama (`solar.py`)
+
+NOAA düşük-hassasiyet algoritması (`sun_position(lat, lon, utc) -> (az, el)`).
+Naif datetime = UTC. `assess_glare(view_az, hfov, sun_az, sun_el) -> (seviye, not)`:
+güneş ufkun altında → "yok"; kadraj dışında → "düşük"; alçak güneş (≤12°) kadrajda
+→ "yüksek" (arkadan ışık). `worst_glare_over_day` bütün UTC gününü tarar.
+`_export_perimeter_bom` `terrain.lat_center/lon_center` varsa direk başına
+"Yaz parlama" / "Kış parlama" sütunları ekler (21 Haz / 21 Ara).
 
 ## 3B Kamera Bakış Açısı (`view_3d_window` + `scene_render`)
 
