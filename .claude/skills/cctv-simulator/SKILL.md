@@ -137,6 +137,15 @@ second while Tk painted once per frame.
 
 On 4 cameras in "compare" mode: **18.93 ms -> 0.69 ms per drag event (27x)**.
 
+`light=True` skips exactly five things (`main_window.py:914`, `:926`):
+`_populate_table`, `_populate_recommendations`, `update_lens_suggestion`,
+`update_alternative_models`, and the 3D window update. It does **not** skip
+`analyze_dead_zone_coverage`, the dead-zone panel, the target analysis, or
+`_draw_canvas` - those run on every light pass. The dead-zone analysis was left
+in the light path because it was separately sped up 2.66x. Do not describe the
+light pass as "geometry and canvas only"; that reads as though the O(n^2)
+dead-zone work is skipped, and it is not.
+
 ## The three Windows build failures
 
 **1. `ModuleNotFoundError: No module named 'tkinter'`**

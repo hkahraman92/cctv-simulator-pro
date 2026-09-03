@@ -48,11 +48,27 @@ motorun kendi bağıntısını hazır `OpticResult` üzerinden yeniden ifade et
 
 **2. Hareket olayından doğrudan `calculate()` çağırma.**
 `calculate()` fan-in 24; tüm boru hattını çalıştırır. `<B1-Motion>`'a doğrudan
-bağlıyken saniyede 60-120 kez koşuyordu. Ölçüldü: **18.93 ms → 0.69 ms (27x)**.
-Desen: `schedule_calculate(full=False)` → `after(33ms)`; `calculate(light=True)`
-sadece geometri + tuval; `flush_calculate()` `<ButtonRelease-1>`/`<ButtonRelease-3>`
-üzerinde tam geçiş. Sürekli olan her şey (sürükleme, kaydırıcı, `<Configure>`)
-debouncer'dan geçer. Kesikli olanlar (buton, combobox) doğrudan çağırabilir.
+bağlıyken saniyede 60-120 kez koşuyordu, Tk ise kare başına bir kez boyuyordu —
+işin neredeyse tamamı görünmeden çöpe gidiyordu. Ölçüldü: **18.93 ms → 0.69 ms
+(27x)**.
+
+Desen (`main_window.py:844-935`, `:1341-1400`):
+
+- `_set_selected_camera_position/heading` ve `_set_target_point` sürüklerken
+  `calculate()` değil `schedule_calculate()` çağırır. `_calc_job` doluysa yeni
+  istek yutulur; boşsa `root.after(_DRAG_INTERVAL_MS=33, _run_scheduled_calculate)`
+  kurulur (~30 fps tavan).
+- `<ButtonRelease-1>` ve `<ButtonRelease-3>` → `flush_calculate()`: bekleyen light
+  geçiş iptal, bir tam geçiş.
+
+`light=True` **yalnız şunları atlar** (`:914`, `:926`): `_populate_table`,
+`_populate_recommendations`, `update_lens_suggestion`, `update_alternative_models`
+ve 3B pencere güncellemesi. **`analyze_dead_zone_coverage`, ölü bölge paneli, hedef
+analizi ve `_draw_canvas` her light geçişte yine koşar** — ölü bölge analizi 2.66x
+hızlandırıldığı için light yolda bırakıldı. "Sadece geometri + tuval" deme; yanıltıcı.
+
+Sürekli olan her şey (sürükleme, kaydırıcı, `<Configure>`) debouncer'dan geçer.
+Kesikli olanlar (buton, combobox) doğrudan çağırabilir.
 `view_3d_window.schedule_render()` ve `map_3d_window._render_job` aynı deseni kullanır.
 
 **3. `ppm_levels` değişince cache'leri geçersizle.**

@@ -24,6 +24,7 @@ optimized/
 
 # ── IDE ──────────────────────────────────────────────────────────────────────
 # .claude/ ve CLAUDE.md bilerek izlenir: proje bağlamı depoyla birlikte taşınır.
+.claude/worktrees/
 .idea/
 .vscode/
 *.swp
