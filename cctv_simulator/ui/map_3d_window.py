@@ -148,6 +148,9 @@ class TerrainViewshedWindow:
         self.show_coverage_var = tk.BooleanVar(value=False)
         self.stat_coverage_map_var = tk.StringVar(value="-")
         self._coverage_grid = None
+        import datetime as _dtmod
+        self.glare_date_var = tk.StringVar(value=str(_dtmod.date.today()))
+        self.stat_glare_var = tk.StringVar(value="-")
 
         # Perimeter Planner Variables
         self.fence_points: List[Tuple[float, float]] = []
@@ -520,6 +523,16 @@ class TerrainViewshedWindow:
                         variable=self.show_coverage_var,
                         command=self._on_coverage_toggled).pack(anchor="w")
         self._create_stat_row(grp_cov, "Örtüşen alanda:", self.stat_coverage_map_var, ACCENT_GREEN)
+
+        grp_sun = ttk.LabelFrame(parent, text="☀️ Güneş / Parlama (Arkadan Işık)", padding=6)
+        grp_sun.pack(fill=tk.X, pady=(0, 6))
+        frame_date = ttk.Frame(grp_sun)
+        frame_date.pack(fill=tk.X, pady=2)
+        ttk.Label(frame_date, text="Tarih (YYYY-AA-GG):").pack(side=tk.LEFT)
+        ttk.Entry(frame_date, textvariable=self.glare_date_var, width=12).pack(side=tk.RIGHT)
+        StyledButton(grp_sun, text="☀️ Direk Bazında Parlama Analizi",
+                     command=self._run_glare_analysis, bootstyle="warning-outline").pack(fill=tk.X, pady=(2, 2))
+        self._create_stat_row(grp_sun, "Sonuç:", self.stat_glare_var, ACCENT_AMBER)
 
         grp_bom = ttk.LabelFrame(parent, text="📊 Keşif & Malzeme Listesi (BOM)", padding=6)
         grp_bom.pack(fill=tk.X, pady=(0, 6))
@@ -1022,6 +1035,49 @@ class TerrainViewshedWindow:
         except Exception:
             pass
 
+    def _site_lat_lon(self):
+        lat = getattr(self.terrain, "lat_center", None)
+        lon = getattr(self.terrain, "lon_center", None)
+        if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+            return float(lat), float(lon)
+        return None, None
+
+    def _run_glare_analysis(self):
+        import datetime as _dt
+
+        from ..solar import worst_glare_over_day
+        if not self.perimeter_plan or not self.perimeter_plan.placed_cameras:
+            messagebox.showinfo("Güneş Analizi", "Önce 'Otomatik Diz' ile bir perimetre planı oluşturun.", parent=self.window)
+            return
+        lat, lon = self._site_lat_lon()
+        if lat is None:
+            messagebox.showwarning(
+                "Konum yok",
+                "Güneş konumu için coğrafi koordinat gerekli.\n"
+                "Çevrimiçi uydu/DEM indirin veya konum bilgili bir GeoTIFF yükleyin.",
+                parent=self.window)
+            return
+        try:
+            d = _dt.date.fromisoformat(self.glare_date_var.get().strip())
+        except ValueError:
+            messagebox.showwarning("Tarih", "Tarih YYYY-AA-GG biçiminde olmalı.", parent=self.window)
+            return
+        counts = {"yok": 0, "düşük": 0, "orta": 0, "yüksek": 0}
+        for cam in self.perimeter_plan.placed_cameras:
+            level = worst_glare_over_day(lat, lon, d, cam.pan_deg, cam.hfov_deg)[0]
+            counts[level] = counts.get(level, 0) + 1
+        self.stat_glare_var.set(
+            f"{d}: yüksek {counts['yüksek']} · orta {counts['orta']} · "
+            f"düşük {counts['düşük']} direk")
+        if counts["yüksek"]:
+            messagebox.showwarning(
+                "Parlama Riski",
+                f"{d} tarihinde {counts['yüksek']} direk gün içinde 'yüksek' arkadan ışık / "
+                f"parlama riski taşıyor (alçak güneş kadrajda).\n\n"
+                "Bu direklerde WDR/HDR, güneşlik, veya pan/tilt revizyonu düşünün.\n"
+                "BOM dışa aktarımı direk bazında ayrıntı verir.",
+                parent=self.window)
+
     def _on_weather_changed(self):
         if self.planner_mode_var.get() == "perimeter" and self.fence_points:
             self.distribute_perimeter_cameras()
@@ -1043,6 +1099,7 @@ class TerrainViewshedWindow:
             cov = compute_coverage_grid(
                 self.perimeter_plan, self.current_camera, cell_m=4.0,
                 visibility_km=WEATHER_PRESETS.get(weather, 40.0), weather=weather,
+                terrain=self.terrain,
             )
         except Exception:
             return
@@ -1050,9 +1107,10 @@ class TerrainViewshedWindow:
             return
         self._coverage_grid = cov
         p = cov.pct_by_level
+        occ = " · arazi engeli dahil" if cov.occlusion_applied else ""
         self.stat_coverage_map_var.set(
             f"Algıla %{p['detect']:.0f} · Gözlem %{p['observe']:.0f} · "
-            f"Tanı %{p['recog']:.0f} · Teşhis %{p['ident']:.0f}")
+            f"Tanı %{p['recog']:.0f} · Teşhis %{p['ident']:.0f}{occ}")
 
     def distribute_perimeter_cameras(self):
         if len(self.fence_points) < 2:
@@ -1116,15 +1174,17 @@ class TerrainViewshedWindow:
             return
 
         measured = bool(getattr(self.terrain, "is_measured", False))
-        lat = getattr(self.terrain, "lat_center", None)
-        lon = getattr(self.terrain, "lon_center", None)
-        glare_ready = isinstance(lat, (int, float)) and isinstance(lon, (int, float))
+        lat, lon = self._site_lat_lon()
+        glare_ready = lat is not None
         if glare_ready:
             import datetime as _dt
 
             from ..solar import worst_glare_over_day
-            _summer = _dt.date(_dt.date.today().year, 6, 21)
-            _winter = _dt.date(_dt.date.today().year, 12, 21)
+            try:
+                _sel = _dt.date.fromisoformat(self.glare_date_var.get().strip())
+            except ValueError:
+                _sel = _dt.date.today()
+            _summer = _dt.date(_sel.year, 6, 21)
         try:
             with open(file_path, "w", newline="", encoding="utf-8-sig") as f:
                 writer = csv.writer(f)
@@ -1132,13 +1192,17 @@ class TerrainViewshedWindow:
                 writer.writerow(["# Yükselti verisi", "ÖLÇÜLMÜŞ DEM" if measured else "TEMSİLİ — ölçüm değil, sonuçlar bağlayıcı değildir"])
                 writer.writerow(["# Hava koşulu", self.weather_var.get()])
                 if glare_ready:
-                    writer.writerow(["# Güneş/parlama analizi", f"{lat:.4f}, {lon:.4f} · 21 Haz & 21 Ara (UTC gün taraması)"])
+                    writer.writerow(["# Güneş/parlama analizi", f"{lat:.4f}, {lon:.4f} · seçili {_sel} + yaz gündönümü {_summer} (UTC gün taraması)"])
                 writer.writerow(["# Not", getattr(self.terrain, "source_note", "").replace("\n", " ")])
                 writer.writerow([])
                 header = ["Direk No", "Kamera Modeli", "Sensör", "Çözünürlük", "Konum X (m)", "Konum Y (m)", "Zemin Rakımı (m)", "Direk Boyu (m)", "Toplam İrtifa (m)", "Pan Açısı (°)", "Tilt Açısı (°)", "Odak (mm)", "HFOV (°)", "Etkin Menzil (m)", "Kör Nokta (m)"]
                 if glare_ready:
-                    header += ["Yaz parlama", "Kış parlama"]
+                    header += [f"Parlama {_sel}", "En kötü (yaz g.dönümü)"]
                 writer.writerow(header)
+
+                def _fmt_glare(res):
+                    return res[0] + (f" ~{res[1].hour:02d}:{res[1].minute:02d}Z" if res[1] else "")
+
                 for cam in self.perimeter_plan.placed_cameras:
                     row = [
                         cam.pole_id, cam.camera_model, cam.sensor_name, cam.resolution_name,
@@ -1147,11 +1211,9 @@ class TerrainViewshedWindow:
                         cam.effective_range_m, cam.dead_zone_m,
                     ]
                     if glare_ready:
-                        s = worst_glare_over_day(lat, lon, _summer, cam.pan_deg, cam.hfov_deg)
-                        wn = worst_glare_over_day(lat, lon, _winter, cam.pan_deg, cam.hfov_deg)
                         row += [
-                            s[0] + (f" ~{s[1].hour:02d}:{s[1].minute:02d}Z" if s[1] else ""),
-                            wn[0] + (f" ~{wn[1].hour:02d}:{wn[1].minute:02d}Z" if wn[1] else ""),
+                            _fmt_glare(worst_glare_over_day(lat, lon, _sel, cam.pan_deg, cam.hfov_deg)),
+                            _fmt_glare(worst_glare_over_day(lat, lon, _summer, cam.pan_deg, cam.hfov_deg)),
                         ]
                     writer.writerow(row)
             note = "" if measured else (

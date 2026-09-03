@@ -128,3 +128,31 @@ def test_coverage_grid_none_without_cameras(cam):
     empty = PerimeterPlanResult(fence_points=[], total_fence_length_m=0.0,
                                 segment_lengths_m=[], placed_cameras=[])
     assert compute_coverage_grid(empty, cam) is None
+
+
+def test_terrain_occlusion_reduces_coverage(cam):
+    import numpy as np
+
+    from cctv_simulator.terrain_loader import TerrainData
+    flat = TerrainData(z_grid=np.zeros((80, 80), np.float32), cell_size_m=6.0)
+    ridged = TerrainData(z_grid=np.zeros((80, 80), np.float32), cell_size_m=6.0)
+    # a tall wall across the middle of the site
+    ridged.z_grid[38:42, :] = 60.0
+
+    tele = CameraConfig(name="T", sensor_name='1/2.8"',
+                        resolution_name="4 MP (2K - 2688x1520)",
+                        focal_min_mm=12.0, focal_max_mm=40.0)
+    square = [(60.0, 60.0), (420.0, 60.0), (420.0, 420.0), (60.0, 420.0)]
+    plan = generate_perimeter_plan(flat, square, tele, target_ppm=40.0, lens_mode="max")
+
+    open_cov = compute_coverage_grid(plan, tele, cell_m=6.0, terrain=flat)
+    blocked = compute_coverage_grid(plan, tele, cell_m=6.0, terrain=ridged)
+    assert open_cov.occlusion_applied and blocked.occlusion_applied
+    assert blocked.pct_by_level["detect"] < open_cov.pct_by_level["detect"]
+
+
+def test_coverage_grid_no_occlusion_flag_without_terrain(cam):
+    terr = generate_procedural_terrain("rolling_hills", grid_size=40, cell_size_m=10.0)
+    square = [(50.0, 50.0), (200.0, 50.0), (200.0, 200.0), (50.0, 200.0)]
+    plan = generate_perimeter_plan(terr, square, cam)
+    assert compute_coverage_grid(plan, cam).occlusion_applied is False

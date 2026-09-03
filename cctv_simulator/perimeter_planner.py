@@ -281,9 +281,9 @@ def generate_perimeter_plan(terrain: TerrainData,
 class CoverageGrid:
     """Best pixels/metre reachable at each ground cell from ANY placed camera.
 
-    First-order: FOV cone + dead zone + optical/atmospheric range. Terrain
-    occlusion is NOT applied here (use the single-camera viewshed for that), so
-    on flat ground it is exact and on hilly ground it is optimistic.
+    FOV cone + dead zone + optical/atmospheric range, and — when a ``terrain``
+    is passed — line-of-sight over the DEM (ridge occlusion). Without terrain it
+    is exact on flat ground and optimistic on hills.
     """
     ppm: "np.ndarray"
     origin_x: float
@@ -291,15 +291,33 @@ class CoverageGrid:
     cell_m: float
     pct_by_level: Dict[str, float]      # ident / recog / observe / detect -> % of analysed area
     analysed_cells: int
+    occlusion_applied: bool = False
 
     @property
     def covered_pct(self) -> float:
         return self.pct_by_level.get("detect", 0.0)
 
 
+def _sample_terrain(terrain: TerrainData, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
+    """Vectorised bilinear elevation lookup. ``z_grid`` row 0 = south."""
+    rows, cols = terrain.z_grid.shape
+    col = np.clip((xs - terrain.origin_x) / terrain.cell_size_m, 0, cols - 1.001)
+    row = np.clip((ys - terrain.origin_y) / terrain.cell_size_m, 0, rows - 1.001)
+    c0 = col.astype(np.intp)
+    r0 = row.astype(np.intp)
+    c1 = np.minimum(c0 + 1, cols - 1)
+    r1 = np.minimum(r0 + 1, rows - 1)
+    fx = col - c0
+    fy = row - r0
+    z = terrain.z_grid
+    return (z[r0, c0] * (1 - fx) * (1 - fy) + z[r0, c1] * fx * (1 - fy)
+            + z[r1, c0] * (1 - fx) * fy + z[r1, c1] * fx * fy)
+
+
 def compute_coverage_grid(plan: PerimeterPlanResult, camera: CameraConfig,
                           cell_m: float = 4.0, margin_m: float = 25.0,
-                          visibility_km: float = 40.0, weather: str = "") -> Optional[CoverageGrid]:
+                          visibility_km: float = 40.0, weather: str = "",
+                          terrain: Optional[TerrainData] = None) -> Optional[CoverageGrid]:
     cams = plan.placed_cameras
     if not cams:
         return None
@@ -324,6 +342,12 @@ def compute_coverage_grid(plan: PerimeterPlanResult, camera: CameraConfig,
     res_w = res_w * max(getattr(camera, "effective_px_ratio", 1.0), 0.05)
     band = _atm.band_for_camera(camera.sensor_name, camera.model_name)
 
+    do_occ = terrain is not None and len(cams) <= 250
+    if do_occ:
+        n_samp = 12 if len(cams) <= 40 else (8 if len(cams) <= 120 else 5)
+        ts = np.linspace(0.06, 0.97, n_samp)[:, None, None]
+        cell_z = _sample_terrain(terrain, mx, my)
+
     for c in cams:
         dx = mx - c.x_m
         dy = my - c.y_m
@@ -332,6 +356,16 @@ def compute_coverage_grid(plan: PerimeterPlanResult, camera: CameraConfig,
         off = np.abs((az - c.pan_deg + 180.0) % 360.0 - 180.0)
         atm_reach = _atm.usable_range_m(c.effective_range_m, visibility_km, band, weather)
         in_cone = (off <= c.hfov_deg / 2.0) & (dist >= c.dead_zone_m) & (dist <= atm_reach)
+
+        if do_occ:
+            eye_z = c.ground_z_m + c.mast_height_m
+            sx = c.x_m + ts * dx
+            sy = c.y_m + ts * dy
+            terr = _sample_terrain(terrain, sx, sy)
+            line = eye_z + ts * (cell_z - eye_z)
+            visible = ~np.any(terr > line + 0.5, axis=0)
+            in_cone &= visible
+
         slant = np.hypot(dist, c.mast_height_m)
         ppm = (c.focal_mm * res_w) / (sw * np.maximum(slant, 1.0))
         best = np.where(in_cone, np.maximum(best, ppm), best)
@@ -353,7 +387,8 @@ def compute_coverage_grid(plan: PerimeterPlanResult, camera: CameraConfig,
         "detect": 100.0 * np.count_nonzero(best_in >= PPM_DETECT) / denom,
     }
     return CoverageGrid(ppm=best, origin_x=float(gx[0]), origin_y=float(gy[0]),
-                        cell_m=float(cell_m), pct_by_level=pct, analysed_cells=analysed)
+                        cell_m=float(cell_m), pct_by_level=pct, analysed_cells=analysed,
+                        occlusion_applied=bool(do_occ))
 
 
 def _fence_band_mask(mx, my, fence_points, band_m):

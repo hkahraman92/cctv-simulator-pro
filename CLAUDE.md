@@ -236,10 +236,10 @@ veya `--json` ile stdout'a sonuç. Tk yok, ekran yok.
 
 ## Açık işler
 
-- `_export_perimeter_bom` güneş taraması UTC gün + 21 Haz/21 Ara sabit; kullanıcı
-  tarih/saat seçimi yok. İstenirse `map_3d` içine küçük bir tarih girişi.
-- Kapsama ısı haritası terrain occlusion uygulamıyor (düz zeminde doğru, tepelikte
-  iyimser). Occlusion için tekil viewshed'i kullan.
+- Kapsama occlusion ışın örneklemesi (`compute_coverage_grid` `n_samp`) 5–12
+  arası; keskin dar sırtlar birkaç örnek arasında kaçabilir. Occlusion asıl
+  otorite tekil `calculate_3d_viewshed`.
+- Güneş taraması UTC. Yerel saat/dilim gösterimi yok (BOM sütunları `~HH:MMZ`).
 
 ## cctv_iq — görüntü kalitesi ölçüm çekirdeği
 
@@ -296,20 +296,27 @@ değerin altına indirir, `effective_max_range` bununla kapanır. İkisi de art�
 
 Plan kutusu üzerinde grid; her hücre için **herhangi bir** yerleşik kameradan
 ulaşılan en iyi px/m (FOV konisi + kör nokta + optik/atmosferik menzil).
-**Terrain occlusion YOK** — düz zeminde tam, tepelikte iyimser (docstring uyarır).
+`terrain` verilirse **DEM üzerinden görüş hattı** (sırt engellemesi) de uygulanır:
+kamera gözünden hücre zeminine düz çizgi, `n_samp` (5–12, kamera sayısına göre)
+noktada `_sample_terrain` vektörel bilinear ile DEM örneklenir, herhangi biri
+çizgiyi 0.5 m aşarsa hücre o kamera için kapalı. `occlusion_applied` bayrağı.
 Payda = çitin ±40 m bandı (`_fence_band_mask`), böylece kötü hava korunan-bölge
 kapsamasını **düşürür** (pastayı küçültmez). `map_3d_window` "Kapsama ısı
 haritası" onay kutusu → DORI renkli yarı saydam PIL overlay (`_draw_coverage_overlay`,
-grid satır 0 = güney → `np.flipud`) + seviye yüzdeleri.
+grid satır 0 = güney → `np.flipud`) + seviye yüzdeleri + "arazi engeli dahil".
 
 ## Güneş / parlama (`solar.py`)
 
 NOAA düşük-hassasiyet algoritması (`sun_position(lat, lon, utc) -> (az, el)`).
 Naif datetime = UTC. `assess_glare(view_az, hfov, sun_az, sun_el) -> (seviye, not)`:
 güneş ufkun altında → "yok"; kadraj dışında → "düşük"; alçak güneş (≤12°) kadrajda
-→ "yüksek" (arkadan ışık). `worst_glare_over_day` bütün UTC gününü tarar.
-`_export_perimeter_bom` `terrain.lat_center/lon_center` varsa direk başına
-"Yaz parlama" / "Kış parlama" sütunları ekler (21 Haz / 21 Ara).
+→ "yüksek" (arkadan ışık). `worst_glare_over_day` bütün UTC gününü tarar. **Ekinoksa yakın tarihler D/B bakan
+kameralar için en kötü** (gündoğumu/batımı azimutu tam doğu/batı).
+
+`map_3d` perimetre sekmesinde "☀️ Güneş / Parlama" bölümü: tarih girişi +
+"Direk Bazında Parlama Analizi" → seçili günde direk başına en kötü seviye,
+seviye başına direk sayısı. `_export_perimeter_bom` `lat_center/lon_center` varsa
+"Parlama <seçili gün>" + "En kötü (yaz g.dönümü)" sütunları ekler (`~HH:MMZ`).
 
 ## 3B Kamera Bakış Açısı (`view_3d_window` + `scene_render`)
 
