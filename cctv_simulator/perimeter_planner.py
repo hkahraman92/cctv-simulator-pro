@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
+from . import atmosphere as _atm
 from .terrain_loader import TerrainData
 from .models import CameraConfig
 from .config import SENSOR_DIMS_MM, RESOLUTIONS
@@ -110,15 +111,21 @@ def calculate_optimal_spacing(camera: CameraConfig,
                               target_ppm: float = 40.0,
                               mast_height_m: float = 5.0,
                               overlap_pct: float = 0.15,
-                              lens_mode: str = "min") -> Tuple[float, float, float]:
+                              lens_mode: str = "min",
+                              visibility_km: float = 40.0,
+                              weather: str = "") -> Tuple[float, float, float]:
     """Calculates effective range, dead zone, and recommended pole spacing (meters)."""
     focal_mm = camera.focal_min_mm if lens_mode == "min" else camera.focal_max_mm
     sw, sh = SENSOR_DIMS_MM.get(camera.sensor_name, (5.6, 4.2))
     res_w, res_h = RESOLUTIONS.get(camera.resolution_name, (2688, 1520))
+    res_w = res_w * max(getattr(camera, "effective_px_ratio", 1.0), 0.05)
 
     # Optical slant range where resolution equals target PPM (EN 62676-4)
     # PPM = (f * res_w) / (sw * slant_dist) -> slant_dist = (f * res_w) / (sw * PPM)
     max_slant_dist = (focal_mm * res_w) / (sw * max(target_ppm, 1.0))
+    # Fog / rain / haze cap the range where target contrast survives the path.
+    band = _atm.band_for_camera(camera.sensor_name, camera.model_name)
+    max_slant_dist = _atm.usable_range_m(max_slant_dist, visibility_km, band, weather)
     # Ground reach (Pythagoras with mast height)
     ground_reach = math.sqrt(max(max_slant_dist**2 - mast_height_m**2, 100.0))
 
@@ -150,7 +157,9 @@ def generate_perimeter_plan(terrain: TerrainData,
                             overlap_pct: float = 0.15,
                             mast_height_m: float = 5.0,
                             lens_mode: str = "min",
-                            is_closed_loop: bool = True) -> PerimeterPlanResult:
+                            is_closed_loop: bool = True,
+                            visibility_km: float = 40.0,
+                            weather: str = "") -> PerimeterPlanResult:
     """Places cameras along fence line ensuring continuous dead-zone overlapping coverage."""
     if len(fence_points) < 2:
         return PerimeterPlanResult(
@@ -178,7 +187,9 @@ def generate_perimeter_plan(terrain: TerrainData,
         target_ppm=target_ppm,
         mast_height_m=mast_height_m,
         overlap_pct=overlap_pct,
-        lens_mode=lens_mode
+        lens_mode=lens_mode,
+        visibility_km=visibility_km,
+        weather=weather,
     )
 
     focal_mm = camera.focal_min_mm if lens_mode == "min" else camera.focal_max_mm
@@ -264,3 +275,98 @@ def generate_perimeter_plan(terrain: TerrainData,
         estimated_bandwidth_mbps=round(total_bandwidth_mbps, 1),
         estimated_storage_30days_tb=round(storage_30days_tb, 1),
     )
+
+
+@dataclass
+class CoverageGrid:
+    """Best pixels/metre reachable at each ground cell from ANY placed camera.
+
+    First-order: FOV cone + dead zone + optical/atmospheric range. Terrain
+    occlusion is NOT applied here (use the single-camera viewshed for that), so
+    on flat ground it is exact and on hilly ground it is optimistic.
+    """
+    ppm: "np.ndarray"
+    origin_x: float
+    origin_y: float
+    cell_m: float
+    pct_by_level: Dict[str, float]      # ident / recog / observe / detect -> % of analysed area
+    analysed_cells: int
+
+    @property
+    def covered_pct(self) -> float:
+        return self.pct_by_level.get("detect", 0.0)
+
+
+def compute_coverage_grid(plan: PerimeterPlanResult, camera: CameraConfig,
+                          cell_m: float = 4.0, margin_m: float = 25.0,
+                          visibility_km: float = 40.0, weather: str = "") -> Optional[CoverageGrid]:
+    cams = plan.placed_cameras
+    if not cams:
+        return None
+
+    xs = [c.x_m for c in cams]
+    ys = [c.y_m for c in cams]
+    reach = max((c.effective_range_m for c in cams), default=100.0)
+    x0, x1 = min(xs) - margin_m, max(xs) + margin_m
+    y0, y1 = min(ys) - margin_m, max(ys) + margin_m
+    # bound the box to a sane size
+    gx = np.arange(x0, x1 + cell_m, cell_m)
+    gy = np.arange(y0, y1 + cell_m, cell_m)
+    if gx.size * gy.size > 900_000 or gx.size < 2 or gy.size < 2:
+        cell_m = max(cell_m, math.sqrt((x1 - x0) * (y1 - y0) / 400_000.0))
+        gx = np.arange(x0, x1 + cell_m, cell_m)
+        gy = np.arange(y0, y1 + cell_m, cell_m)
+    mx, my = np.meshgrid(gx, gy)
+    best = np.zeros_like(mx, dtype=np.float32)
+
+    sw, _sh = SENSOR_DIMS_MM.get(camera.sensor_name, (5.6, 4.2))
+    res_w, _rh = RESOLUTIONS.get(camera.resolution_name, (2688, 1520))
+    res_w = res_w * max(getattr(camera, "effective_px_ratio", 1.0), 0.05)
+    band = _atm.band_for_camera(camera.sensor_name, camera.model_name)
+
+    for c in cams:
+        dx = mx - c.x_m
+        dy = my - c.y_m
+        dist = np.hypot(dx, dy)
+        az = np.degrees(np.arctan2(dx, dy))
+        off = np.abs((az - c.pan_deg + 180.0) % 360.0 - 180.0)
+        atm_reach = _atm.usable_range_m(c.effective_range_m, visibility_km, band, weather)
+        in_cone = (off <= c.hfov_deg / 2.0) & (dist >= c.dead_zone_m) & (dist <= atm_reach)
+        slant = np.hypot(dist, c.mast_height_m)
+        ppm = (c.focal_mm * res_w) / (sw * np.maximum(slant, 1.0))
+        best = np.where(in_cone, np.maximum(best, ppm), best)
+
+    # Denominator = the band we are meant to protect (within band_m of the
+    # fence), so degraded weather reads as WORSE protected-zone coverage, not a
+    # smaller pie. Falls back to the covered cells when no fence is available.
+    band_m = 40.0
+    protect = _fence_band_mask(mx, my, plan.fence_points, band_m)
+    if protect is None or not protect.any():
+        protect = best > 0.0
+    analysed = int(np.count_nonzero(protect))
+    denom = float(max(analysed, 1))
+    best_in = np.where(protect, best, 0.0)
+    pct = {
+        "ident": 100.0 * np.count_nonzero(best_in >= PPM_IDENT) / denom,
+        "recog": 100.0 * np.count_nonzero(best_in >= PPM_RECOG) / denom,
+        "observe": 100.0 * np.count_nonzero(best_in >= PPM_OBSERVE) / denom,
+        "detect": 100.0 * np.count_nonzero(best_in >= PPM_DETECT) / denom,
+    }
+    return CoverageGrid(ppm=best, origin_x=float(gx[0]), origin_y=float(gy[0]),
+                        cell_m=float(cell_m), pct_by_level=pct, analysed_cells=analysed)
+
+
+def _fence_band_mask(mx, my, fence_points, band_m):
+    if not fence_points or len(fence_points) < 2:
+        return None
+    d2 = np.full(mx.shape, np.inf, dtype=np.float32)
+    pts = fence_points
+    for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]):
+        vx, vy = x1 - x0, y1 - y0
+        seg2 = vx * vx + vy * vy
+        if seg2 < 1e-6:
+            continue
+        t = np.clip(((mx - x0) * vx + (my - y0) * vy) / seg2, 0.0, 1.0)
+        px, py = x0 + t * vx, y0 + t * vy
+        d2 = np.minimum(d2, (mx - px) ** 2 + (my - py) ** 2)
+    return d2 <= band_m * band_m

@@ -19,6 +19,7 @@ import numpy as np
 from .terrain_loader import TerrainData
 from .models import CameraConfig
 from .config import SENSOR_DIMS_MM, RESOLUTIONS
+from .atmosphere import band_for_camera, usable_range_m
 
 
 # DORI PPM Thresholds (EN 62676-4)
@@ -71,6 +72,10 @@ class ViewshedResult:
     coverage_pct: float
     max_los_reach_m: float
 
+    # Atmosphere
+    atmospheric_limit_m: float = 0.0     # range where path transmission hits tau_min
+    visibility_km: float = 40.0
+
 
 def calculate_3d_viewshed(terrain: TerrainData,
                           cam_x_m: float,
@@ -82,7 +87,9 @@ def calculate_3d_viewshed(terrain: TerrainData,
                           tilt_deg: float = -5.0,
                           max_range_m: float = 2000.0,
                           earth_curvature: bool = True,
-                          ray_step_m: float = 3.0) -> ViewshedResult:
+                          ray_step_m: float = 3.0,
+                          visibility_km: float = 40.0,
+                          weather: str = "") -> ViewshedResult:
     """Computes comprehensive 3D viewshed, terrain occlusion, and DORI mapping."""
     rows, cols = terrain.rows, terrain.cols
     cell_size = terrain.cell_size_m
@@ -96,16 +103,24 @@ def calculate_3d_viewshed(terrain: TerrainData,
     sw, sh = SENSOR_DIMS_MM.get(camera.sensor_name, (5.6, 4.2))
     res_w, res_h = RESOLUTIONS.get(camera.resolution_name, (1920, 1080))
 
-    is_thermal = ("LWIR" in camera.sensor_name.upper() or 
-                  "MWIR" in camera.sensor_name.upper() or 
+    is_thermal = ("LWIR" in camera.sensor_name.upper() or
+                  "MWIR" in camera.sensor_name.upper() or
                   "TERMAL" in camera.model_name.upper())
+
+    # Effective horizontal pixels: label resolution narrowed by the measured
+    # MTF50/Nyquist ratio (cctv_iq). Default 1.0 keeps output unchanged.
+    res_w = res_w * max(getattr(camera, "effective_px_ratio", 1.0), 0.05)
 
     # Minimum PPM threshold for detection
     min_detect_ppm = 1.3 if is_thermal else PPM_OVERVIEW
     optical_limit_m = (focal_mm * res_w) / (sw * min_detect_ppm)
 
-    # Effective raymarching range cannot exceed optical detection capability
-    effective_max_range = min(max_range_m, optical_limit_m * 1.15)
+    # Fog / rain / haze cap the range where target contrast survives the path.
+    atm_band = band_for_camera(camera.sensor_name, camera.model_name)
+    atmospheric_limit_m = usable_range_m(optical_limit_m, visibility_km, atm_band, weather)
+
+    # Effective raymarching range cannot exceed optical or atmospheric limits
+    effective_max_range = min(max_range_m, optical_limit_m * 1.15, atmospheric_limit_m)
 
     hfov_deg = math.degrees(2.0 * math.atan((sw / 2.0) / focal_mm))
     vfov_deg = math.degrees(2.0 * math.atan((sh / 2.0) / focal_mm))
@@ -272,4 +287,6 @@ def calculate_3d_viewshed(terrain: TerrainData,
         occluded_area_m2=occluded_area_m2,
         coverage_pct=coverage_pct,
         max_los_reach_m=max_los_reach_m,
+        atmospheric_limit_m=atmospheric_limit_m,
+        visibility_km=visibility_km,
     )

@@ -8,6 +8,7 @@ import pytest
 from cctv_simulator.models import CameraConfig
 from cctv_simulator.perimeter_planner import (
     calculate_optimal_spacing,
+    compute_coverage_grid,
     generate_perimeter_plan,
     point_along_polyline,
 )
@@ -90,3 +91,40 @@ def test_closed_loop_fence_length(cam):
     square = [(0.0, 0.0), (100.0, 0.0), (100.0, 100.0), (0.0, 100.0)]
     plan = generate_perimeter_plan(terr, square, cam, is_closed_loop=True)
     assert plan.total_fence_length_m == pytest.approx(400.0, rel=1e-6)
+
+
+def test_fog_shortens_long_range_pole_reach():
+    # a tele lens reaches ~450 m optically; dense fog caps it well below that
+    tele = CameraConfig(name="Tele", sensor_name='1/2.8"',
+                        resolution_name="4 MP (2K - 2688x1520)",
+                        focal_min_mm=12.0, focal_max_mm=36.0)
+    clear = calculate_optimal_spacing(tele, target_ppm=40.0, lens_mode="max", visibility_km=40.0)
+    fog = calculate_optimal_spacing(tele, target_ppm=40.0, lens_mode="max",
+                                    visibility_km=0.3, weather="Yoğun sis")
+    assert fog[0] < clear[0] - 1.0      # ground reach
+    assert fog[2] < clear[2]            # spacing
+
+
+def test_measured_k_shortens_reach(cam):
+    import dataclasses
+    soft = dataclasses.replace(cam, effective_px_ratio=0.5)
+    assert calculate_optimal_spacing(soft, 40.0)[0] < calculate_optimal_spacing(cam, 40.0)[0]
+
+
+def test_coverage_grid_levels_are_nested(cam):
+    terr = generate_procedural_terrain("rolling_hills", grid_size=48, cell_size_m=10.0)
+    square = [(60.0, 60.0), (260.0, 60.0), (260.0, 260.0), (60.0, 260.0)]
+    plan = generate_perimeter_plan(terr, square, cam, target_ppm=40.0)
+    cov = compute_coverage_grid(plan, cam, cell_m=6.0)
+    assert cov is not None
+    p = cov.pct_by_level
+    assert p["detect"] >= p["observe"] >= p["recog"] >= p["ident"] - 1e-9
+    assert 0.0 <= cov.covered_pct <= 100.0
+    assert cov.ppm.shape[0] > 2 and cov.ppm.shape[1] > 2
+
+
+def test_coverage_grid_none_without_cameras(cam):
+    from cctv_simulator.perimeter_planner import PerimeterPlanResult
+    empty = PerimeterPlanResult(fence_points=[], total_fence_length_m=0.0,
+                                segment_lengths_m=[], placed_cameras=[])
+    assert compute_coverage_grid(empty, cam) is None
