@@ -10,6 +10,8 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Dict, Any, List, Tuple, Optional
 from .database import camera_db_extended_field_specs, has_camera_db_value
+from .compliance_optics import evaluate_dori_requirement, extract_dori_requirements
+from .compliance_standards import clause_for, find_ambiguities
 
 
 def build_compliance_prompt(spec_text: str, camera_library: Dict[str, Any]) -> str:
@@ -649,6 +651,18 @@ def rule_based_compliance(spec_text: str, camera_library: Dict[str, Any]) -> Dic
             requirements = extract_rule_requirements(
                 spec_text, profile["id"], profile["name"], profile.get("expected_type")
             )
+        # Physics-backed DORI / range requirements from the same profile text.
+        dori_reqs = extract_dori_requirements(profile["text"], profile["id"], profile["name"])
+        if not dori_reqs and len(profiles) > 1:
+            dori_reqs = extract_dori_requirements(spec_text, profile["id"], profile["name"])
+        requirements = list(requirements) + dori_reqs
+
+        for req in requirements:
+            req.setdefault("confidence", 0.85 if _is_quantified(req) else 0.55)
+            if "standard_clause" not in req:
+                ref, desc = clause_for(req.get("category", "other"))
+                req["standard_clause"] = ref
+                req["standard_desc"] = desc
         all_requirements.extend(requirements)
 
         for model_name, model in compliance_cameras:
@@ -661,14 +675,19 @@ def rule_based_compliance(spec_text: str, camera_library: Dict[str, Any]) -> Dic
             total_weight = sum(max(float(req.get("weight", 1)), 0.1) for req in requirements) or 1.0
             for requirement in requirements:
                 weight = max(float(requirement.get("weight", 1)), 0.1)
-                status, evidence = evaluate_rule_requirement(model_name, model, requirement)
+                if requirement.get("category") == "dori":
+                    status, evidence = evaluate_dori_requirement(model_name, model, requirement)
+                    evidence_kind = "optik motor"
+                else:
+                    status, evidence = evaluate_rule_requirement(model_name, model, requirement)
+                    evidence_kind = "broşür"
                 if status == "Uyumlu":
                     passed += weight
                 elif status == "Kısmi":
                     partial += weight
                 elif status == "Bulunamadı":
                     not_found += weight
-                elif status == "Uyumsuz" and requirement.get("category") == "camera_type":
+                elif status == "Uyumsuz" and requirement.get("category") in ("camera_type", "dori"):
                     blocker = True
                 matrix.append(
                     {
@@ -679,6 +698,10 @@ def rule_based_compliance(spec_text: str, camera_library: Dict[str, Any]) -> Dic
                         "camera_model": model_name,
                         "status": status,
                         "evidence": evidence,
+                        "evidence_kind": evidence_kind,
+                        "spec_quote": requirement.get("spec_quote", ""),
+                        "standard_clause": requirement.get("standard_clause", ""),
+                        "confidence": requirement.get("confidence", 0.6),
                     }
                 )
             score = round(((passed + partial * 0.5 + not_found * 0.15) / total_weight) * 100)
@@ -719,13 +742,23 @@ def rule_based_compliance(spec_text: str, camera_library: Dict[str, Any]) -> Dic
     ]
     recommendation = "En yüksek kurallı skorlar: " + ("; ".join(recommendation_parts) if recommendation_parts else "model yok")
 
+    ambiguities = find_ambiguities(spec_text)
+
     return {
         "profiles": [{"id": profile["id"], "name": profile["name"], "description": ""} for profile in profiles],
         "requirements": all_requirements,
         "matrix": matrix,
         "camera_scores": sorted(profile_rows, key=lambda item: item["score"], reverse=True),
         "recommendation": recommendation,
+        "ambiguities": ambiguities,
+        "clarification_questions": [a["clarification"] for a in ambiguities],
     }
+
+
+def _is_quantified(req: Dict[str, Any]) -> bool:
+    if req.get("ranges") or isinstance(req.get("value"), (int, float)) or req.get("required_ppm"):
+        return True
+    return bool(re.search(r"\d", str(req.get("requirement", ""))))
 
 
 def evaluate_rule_requirement(model_name: str, model: Dict[str, Any], requirement: Dict[str, Any]) -> Tuple[str, str]:

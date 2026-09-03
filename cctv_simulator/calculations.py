@@ -84,6 +84,21 @@ def ppm_at_distance(result: OpticResult, distance_m: float) -> float:
     return (result.res_width_px * result.focal_mm) / max(optical_distance * result.sensor_width_mm, 0.01)
 
 
+def ground_distance_for_ppm(result: OpticResult, ppm: float) -> float:
+    """Ground range at which the camera still resolves ``ppm`` px/m.
+
+    The inverse of ``ppm_at_distance`` — restated against the already-computed
+    OpticResult so the two can never drift. Capped at the geometric limit.
+    """
+    if ppm <= 0:
+        return 0.0
+    optical = (result.res_width_px * result.focal_mm) / (ppm * result.sensor_width_mm)
+    drop = result.vertical_drop_m
+    if optical <= drop:
+        return 0.0
+    return min(_sqrt(optical * optical - drop * drop), result.max_geom_dist_m)
+
+
 def mode_label(mode: str) -> str:
     # PERF: dict lookup instead of an if-chain; called once per analysis row.
     return _MODE_LABELS.get(mode, mode)

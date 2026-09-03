@@ -28,7 +28,7 @@ except ImportError:  # pragma: no cover - alpha compositing is optional
 from ..config import SENSOR_DIMS_MM, RESOLUTIONS
 from ..database import load_camera_library
 from ..models import CameraConfig, OpticResult
-from ..calculations import calculate_for_camera, ppm_at_distance
+from ..calculations import calculate_for_camera, ground_distance_for_ppm, ppm_at_distance
 from ..atmosphere import WEATHER_PRESETS, band_for_camera, usable_range_m
 
 
@@ -99,22 +99,6 @@ def _mix(fg: str, bg: str, alpha: float) -> str:
         round(fg_ * alpha + bg_ * (1 - alpha)),
         round(fb * alpha + bb * (1 - alpha)),
     )
-
-
-def ground_distance_for_ppm(result: OpticResult, ppm: float) -> float:
-    """Ground range at which the camera still resolves `ppm` px/m.
-
-    Same relation the engine uses in calculate_for_camera - restated here
-    against the already-computed OpticResult so the two can never drift.
-    """
-    if ppm <= 0:
-        return 0.0
-    optical = (result.res_width_px * result.focal_mm) / (ppm * result.sensor_width_mm)
-    drop = result.vertical_drop_m
-    if optical <= drop:
-        return 0.0
-    ground = math.sqrt(optical * optical - drop * drop)
-    return min(ground, result.max_geom_dist_m)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
