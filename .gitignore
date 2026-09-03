@@ -23,12 +23,14 @@ scratch/
 optimized/
 
 # ── IDE ──────────────────────────────────────────────────────────────────────
+# .claude/ ve CLAUDE.md bilerek izlenir: proje bağlamı depoyla birlikte taşınır.
 .idea/
 .vscode/
 *.swp
 
 # ── Büyük / türetilmiş dosyalar ──────────────────────────────────────────────
 project-skills.zip
+claude-setup/
 *.png
 !assets/*.png
 !assets/*.ico

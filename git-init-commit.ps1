@@ -31,6 +31,9 @@ fix(map): gercek DEM, sessiz indirme hatalarini gorunur kil
 - kare butcesi ve durust m/px etiketi
 - Mercator piksel uzayinda tam kirpma
 - __init__.py'ler tembel (362 ms -> 2.1 ms), requirements.txt'e numpy
+
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_016REg1kTtfQ1nyu4CaAuw87
 "@
 
 git commit -m $msg
