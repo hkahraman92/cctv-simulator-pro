@@ -97,7 +97,11 @@ def calculate_for_camera(
 ) -> OpticResult:
     focal_mm = camera.focal_min_mm if mode == "min" else camera.focal_max_mm
     sensor_w_mm, sensor_h_mm = SENSOR_DIMS_MM[camera.sensor_name]
-    res_w, _ = RESOLUTIONS[camera.resolution_name]
+    nominal_res_w, _ = RESOLUTIONS[camera.resolution_name]
+    # Effective horizontal resolution: the label pixels narrowed by the measured
+    # MTF50/Nyquist ratio (cctv_iq). Default 1.0 keeps output bit-identical.
+    px_ratio = camera.effective_px_ratio if camera.effective_px_ratio > 0 else 1.0
+    res_w = nominal_res_w * px_ratio
 
     hfov_deg = _degrees(2 * _atan(sensor_w_mm / (2 * focal_mm)))
     vfov_deg = _degrees(2 * _atan(sensor_h_mm / (2 * focal_mm)))
@@ -169,6 +173,7 @@ def calculate_for_camera(
         dead_zone_area_m2=dead_zone_area_m2, dead_zone_near_m=dead_zone_near_m,
         dead_zone_left_m=dead_zone_left_m, dead_zone_right_m=dead_zone_right_m,
         dead_zone_covered_by=[],
+        nominal_res_width_px=nominal_res_w, effective_px_ratio=px_ratio,
     )
     if with_recommendations:
         result.recommendations = build_recommendations(result, ppm_levels)

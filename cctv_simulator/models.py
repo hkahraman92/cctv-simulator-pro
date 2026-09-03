@@ -27,6 +27,9 @@ class CameraConfig:
     heading_deg: float = 0.0
     ir_range_m: float = 30.0
     min_lux: float = 0.01
+    # Measured MTF50/Nyquist ratio (cctv_iq). 1.0 = trust the label; < 1.0
+    # shrinks the effective horizontal resolution the optic engine uses.
+    effective_px_ratio: float = 1.0
 
 
 @dataclass
@@ -63,7 +66,7 @@ class OpticResult:
     max_geom_dist_m: float
     vertical_drop_m: float
     sensor_width_mm: float
-    res_width_px: int
+    res_width_px: float          # EFFECTIVE horizontal pixels (nominal x effective_px_ratio)
     ground_distances: Dict[str, float]
     rows: List[AnalysisRow]
     recommendations: List[str] = field(default_factory=list)
@@ -72,6 +75,8 @@ class OpticResult:
     dead_zone_left_m: float = 0.0
     dead_zone_right_m: float = 0.0
     dead_zone_covered_by: Optional[List[str]] = None
+    nominal_res_width_px: int = 0   # sensor label pixels, before effective_px_ratio
+    effective_px_ratio: float = 1.0
 
 
 DEFAULT_LEVELS = [
