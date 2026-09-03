@@ -5,6 +5,7 @@ pillow>=10.0
 numpy>=1.24
 openpyxl>=3.1
 reportlab>=4.0
+pypdf>=4.0        # PDF şartname metin çıkarımı (kural tabanlı analiz). Yoksa yalnız Gemini yolu.
 
 # Optional: real GeoTIFF / DEM file loading in terrain_loader.load_geotiff_or_dem().
 # Without it the app falls back to reading the file as a greyscale heightmap,

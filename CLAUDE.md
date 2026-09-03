@@ -25,7 +25,12 @@ cctv_dual_view_simulator.py          giriş noktası
   viewshed_3d.py                     vektörel ışın yürütme, dünya eğriliği, atmosfer
   perimeter_planner.py               çevre çiti kamera dizilimi, BOM
   online_map_loader.py               karo indirme, ortofoto mozaik, GERÇEK DEM
-  compliance.py                      Gemini + kural tabanlı şartname analizi
+  compliance.py                      Gemini/Ollama + kural tabanlı şartname analizi
+  compliance_optics.py               şartname DORI/menzil isteri → optik motorla doğrula
+  compliance_standards.py            EN 62676-4 madde/DORI bilgi tabanı + belirsizlik tarama
+  compliance_report.py               EN 62676-4 uygunluk beyanı (markdown/PDF)
+  requirement_library.py             firma ister şablonları (JSON, kullanıcı dizini)
+  spec_pdf.py                        PDF şartname → metin (pypdf, opsiyonel)
   exporters.py                       CSV / XLSX / PDF / PNG
   cctv_iq.py                         eğik kenar MTF, k oranı, başsız (numpy)
   atmosphere.py                      sis/yağmur zayıflaması (Koschmieder + bant faktörü)
@@ -184,6 +189,34 @@ Her derleme `build/tkinter-diagnostic.txt` yazar. Tahmin etmeden önce onu oku.
    / "Karantina" → her `CCTV Simulator.exe` → **Geri Yükle ve Hariç Tut**.
    Alternatif: temiz runner'da CI derlemesi (Norton yok).
 
+## Şartname incelemesi
+
+`spec_assistant` penceresi → üç yol: **Yapay Zeka** (Gemini API key ile; "Yerel
+model (Ollama)" kutusu işaretliyse önce `localhost:11434` denenir,
+`analyze_with_ollama` aynı JSON sözleşmesi), **Kurallı + Fizik** (offline),
+**İster şablonu** (kaydedilmiş ister setini mevcut kamera kütüphanesine karşı
+yeniden değerlendir).
+
+`rule_based_compliance` artık iki tür ister çıkarır:
+- Klasik anahtar-kelime (`extract_rule_requirements`, ~30 kalıp) — broşür alanına
+  karşı `evaluate_rule_requirement`.
+- **DORI/menzil** (`compliance_optics.extract_dori_requirements`: "30 m teşhis",
+  "125 PPM @ 40 m", "25 m plaka") — her aday model için **optik motorla**
+  (`calculate_for_camera` + `calculations.ground_distance_for_ppm`, hedefe nişan
+  alan tilt) `evaluate_dori_requirement`. Matris satırında `evidence_kind`
+  ("optik motor" / "broşür"), `standard_clause`, `spec_quote`, `confidence`.
+
+`compliance_standards`: EN 62676-4 DORI tablosu (Detect 25 … Identify 250),
+TR görev→PPM (`teşhis`→identify, `plaka`→143), kategori→madde eşlemesi,
+`find_ambiguities` (madde madde: nicel-olmayan sıfat + sayı yok → RFI sorusu).
+Sonuçta `ambiguities` / `clarification_questions`.
+
+`compliance_report.build_statement(result)` → EN 62676-4 uygunluk beyanı
+(markdown; `write_statement_pdf` ince PDF). `requirement_library` şablonları
+`%APPDATA%\<uygulama>\spec-templates\<slug>.json`.
+
+`pypdf` opsiyonel (requirements.txt); yoksa PDF yalnız Gemini'ye gider.
+
 ## Doğrulama alışkanlıkları
 
 - Tk arayüzünü `xvfb-run` altında başsız çalıştır, ekran görüntüsü al ve **bak**.
@@ -219,6 +252,9 @@ Her derleme `build/tkinter-diagnostic.txt` yazar. Tahmin etmeden önce onu oku.
   atmosferik menzil, `effective_px_ratio` optik limiti.
 - `test_atmosphere.py` / `test_solar.py` — Koschmieder, bant, güneş konumu,
   parlama seviyeleri, yerel saat.
+- `test_compliance.py` / `test_compliance_io.py` — DORI ister çıkarım, optik
+  gecti/kaldi, belirsizlik, EN 62676-4 beyan, ister şablonu roundtrip, Ollama
+  guard.
 
 `network` işaretli test yok (hepsi monkeypatch'li). Canlı sunucu denemesi
 istersen elle: `py -3.13 -c "from cctv_simulator.online_map_loader import _fetch_tile; ..."`.

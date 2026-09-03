@@ -88,6 +88,42 @@ def extract_json_object(text: str) -> str:
     return cleaned[start : end + 1]
 
 
+_OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
+
+
+def ollama_available(timeout: float = 0.8) -> bool:
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def analyze_with_ollama(spec_text: str, camera_library: Dict[str, Any],
+                        model: str = "llama3.1", timeout: float = 180.0) -> Optional[Dict[str, Any]]:
+    """Local-LLM spec analysis via Ollama, same JSON contract as Gemini.
+
+    Returns the parsed dict, or None if Ollama is not reachable / the reply is
+    not valid JSON (caller should fall back to the rule engine).
+    """
+    prompt = build_compliance_prompt(spec_text, camera_library)
+    body = json.dumps({
+        "model": model,
+        "prompt": prompt + "\n\nYalnızca geçerli JSON döndür, açıklama yazma.",
+        "stream": False,
+        "format": "json",
+        "options": {"temperature": 0.1},
+    }).encode("utf-8")
+    req = urllib.request.Request(_OLLAMA_URL, data=body,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        return json.loads(extract_json_object(data.get("response", "")))
+    except Exception:
+        return None
+
+
 def run_gemini_in_thread(
     parent_win: tk.Widget,
     api_request: urllib.request.Request,

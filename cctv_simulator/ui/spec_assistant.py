@@ -84,17 +84,36 @@ class SpecAssistantWindow:
         ttk.Label(control_frame, text="API key:").grid(row=2, column=0, sticky=tk.W, pady=2)
         self.spec_api_key_entry = ttk.Entry(control_frame, show="*")
         self.spec_api_key_entry.grid(row=2, column=1, sticky=tk.EW, pady=2)
-        StyledButton(control_frame, text="Gemini ile Analiz Et", command=self.analyze_spec_with_gemini, bootstyle="warning").grid(
-            row=3, column=0, columnspan=2, sticky=tk.EW, pady=(6, 4)
+        self.use_ollama_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(control_frame, text="Yerel model (Ollama) kullan",
+                        variable=self.use_ollama_var).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(4, 0))
+        StyledButton(control_frame, text="Yapay Zeka ile Analiz Et", command=self.analyze_spec_with_gemini, bootstyle="warning").grid(
+            row=4, column=0, columnspan=2, sticky=tk.EW, pady=(4, 4)
         )
-        StyledButton(control_frame, text="Kurallı Analiz Et", command=self.analyze_spec_rule_based, bootstyle="primary").grid(
-            row=4, column=0, columnspan=2, sticky=tk.EW, pady=(0, 4)
-        )
-        StyledButton(control_frame, text="Matrix CSV Kaydet", command=self.export_compliance_csv, bootstyle="info-outline").grid(
+        StyledButton(control_frame, text="Kurallı + Fizik Analizi", command=self.analyze_spec_rule_based, bootstyle="primary").grid(
             row=5, column=0, columnspan=2, sticky=tk.EW, pady=(0, 4)
         )
+
+        ttk.Separator(control_frame).grid(row=6, column=0, columnspan=2, sticky=tk.EW, pady=4)
+        ttk.Label(control_frame, text="İster şablonu:").grid(row=7, column=0, sticky=tk.W, pady=2)
+        self.template_combo = ttk.Combobox(control_frame, state="readonly", values=[])
+        self.template_combo.grid(row=7, column=1, sticky=tk.EW, pady=2)
+        _tpl_row = ttk.Frame(control_frame)
+        _tpl_row.grid(row=8, column=0, columnspan=2, sticky=tk.EW, pady=(0, 4))
+        StyledButton(_tpl_row, text="Yükle", command=self.load_requirement_template, bootstyle="secondary-outline").pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
+        StyledButton(_tpl_row, text="Kaydet", command=self.save_requirement_template, bootstyle="secondary-outline").pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+        StyledButton(_tpl_row, text="Sil", command=self.delete_requirement_template, bootstyle="danger-outline").pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
+        self._refresh_templates()
+
+        ttk.Separator(control_frame).grid(row=9, column=0, columnspan=2, sticky=tk.EW, pady=4)
+        StyledButton(control_frame, text="Matrix CSV Kaydet", command=self.export_compliance_csv, bootstyle="info-outline").grid(
+            row=10, column=0, columnspan=2, sticky=tk.EW, pady=(0, 4)
+        )
         StyledButton(control_frame, text="Matrix Excel (.xlsx) Kaydet", command=self.export_compliance_excel, bootstyle="success").grid(
-            row=6, column=0, columnspan=2, sticky=tk.EW
+            row=11, column=0, columnspan=2, sticky=tk.EW, pady=(0, 4)
+        )
+        StyledButton(control_frame, text="📄 EN 62676-4 Uygunluk Beyanı", command=self.export_compliance_statement, bootstyle="primary-outline").grid(
+            row=12, column=0, columnspan=2, sticky=tk.EW
         )
         control_frame.columnconfigure(1, weight=1)
 
@@ -178,11 +197,15 @@ class SpecAssistantWindow:
         if suffix == ".docx":
             text = self._extract_docx_text(path)
         elif suffix == ".pdf":
-            text = (
-                f"[PDF yüklendi: {Path(path).name}]\n\n"
-                "PDF dosyaları düz metin gibi gösterilmez. Gemini ile analiz edersen dosya doğrudan modele gönderilir. "
-                "Kurallı analiz için PDF metnini buraya yapıştırman gerekir."
-            )
+            from ..spec_pdf import extract_text as _pdf_text
+            text = _pdf_text(path)
+            if not text:
+                text = (
+                    f"[PDF yüklendi: {Path(path).name}]\n\n"
+                    "PDF metni çıkarılamadı (pypdf kurulu değil veya taranmış PDF). "
+                    "Gemini ile analiz edersen dosya doğrudan modele gönderilir. "
+                    "Kurallı analiz için metni buraya yapıştırın."
+                )
         else:
             text = self._decode_text_bytes(data)
         if not text:
@@ -263,6 +286,26 @@ class SpecAssistantWindow:
             self.analyze_spec_rule_based()
             return
         model = self.spec_model_entry.get().strip() or "gemini-2.0-flash"
+
+        if self.use_ollama_var.get():
+            from ..compliance import analyze_with_ollama, ollama_available
+            if not ollama_available():
+                messagebox.showwarning("Ollama", "Yerel model (localhost:11434) yanıt vermiyor. Gemini/kurallı analize dönülüyor.", parent=self.window)
+            else:
+                self.compliance_summary_text.configure(state=tk.NORMAL)
+                self.compliance_summary_text.delete("1.0", tk.END)
+                self.compliance_summary_text.insert("1.0", "Yerel model analiz ediyor…")
+                self.compliance_summary_text.configure(state=tk.DISABLED)
+                self.window.update_idletasks()
+                local_model = self.spec_model_entry.get().strip() if "gemini" not in self.spec_model_entry.get().lower() else "llama3.1"
+                res = analyze_with_ollama(spec_text, self.app.camera_library, model=local_model)
+                if res and res.get("matrix"):
+                    self.apply_compliance_result(res)
+                    return
+                messagebox.showinfo("Ollama", "Yerel model geçerli JSON döndürmedi. Kurallı + fizik analizine dönülüyor.", parent=self.window)
+                self.analyze_spec_rule_based()
+                return
+
         prompt = build_compliance_prompt(spec_text, self.app.camera_library)
         endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         parts = [{"text": prompt}]
@@ -336,6 +379,13 @@ class SpecAssistantWindow:
             self.compliance_tree.delete(item)
         for row in matrix:
             status = row.get("status", "Kısmi")
+            kind = row.get("evidence_kind", "")
+            clause = row.get("standard_clause", "")
+            conf = row.get("confidence")
+            ev = row.get("evidence", "")
+            prefix = f"[{clause}] " if clause and clause != "—" else ""
+            suffix = f"  ·({kind})" if kind else ""
+            status_disp = status + (f" ·%{conf * 100:.0f}" if isinstance(conf, (int, float)) else "")
             self.compliance_tree.insert(
                 "",
                 tk.END,
@@ -343,8 +393,8 @@ class SpecAssistantWindow:
                     row.get("profile_name", ""),
                     row.get("requirement", ""),
                     row.get("camera_model", ""),
-                    status,
-                    row.get("evidence", ""),
+                    status_disp,
+                    prefix + ev + suffix,
                 ),
                 tags=(status,),
             )
@@ -365,8 +415,129 @@ class SpecAssistantWindow:
             )
         if not scores:
             lines.append("Seçili kamera için skor bilgisi bulunamadı.")
+
+        clar = result.get("clarification_questions", [])
+        if clar:
+            lines.append(f"\nAÇIKLAMA TALEPLERİ ({len(clar)} — nicel olmayan ister):")
+            for q in clar[:8]:
+                lines.append(f"- {q}")
+
         self.compliance_summary_text.insert("1.0", "\n".join(lines))
         self.compliance_summary_text.configure(state=tk.DISABLED)
+
+    # ── requirement templates ──────────────────────────────────────────────
+    def _refresh_templates(self):
+        from .. import requirement_library as RL
+        names = RL.list_templates()
+        self.template_combo["values"] = names
+        if names and not self.template_combo.get():
+            self.template_combo.set(names[0])
+
+    def save_requirement_template(self):
+        from tkinter import simpledialog
+
+        from .. import requirement_library as RL
+        if not self.last_compliance_result or not self.last_compliance_result.get("requirements"):
+            messagebox.showinfo("Şablon", "Önce bir analiz çalıştırın (kaydedilecek ister yok).", parent=self.window)
+            return
+        name = simpledialog.askstring("İster şablonu", "Şablon adı:", parent=self.window)
+        if not name:
+            return
+        ok = RL.save_template(name, self.last_compliance_result["requirements"],
+                              {"kaynak": Path(self.loaded_file_path).name if self.loaded_file_path else "elle"})
+        if ok:
+            self._refresh_templates()
+            self.template_combo.set(name)
+            messagebox.showinfo("Şablon", f"“{name}” kaydedildi.", parent=self.window)
+        else:
+            messagebox.showerror("Şablon", "Şablon kaydedilemedi.", parent=self.window)
+
+    def load_requirement_template(self):
+        from .. import requirement_library as RL
+        from ..compliance import evaluate_dori_requirement, evaluate_rule_requirement
+        name = self.template_combo.get().strip()
+        tpl = RL.load_template(name) if name else None
+        if not tpl:
+            messagebox.showinfo("Şablon", "Yüklenecek şablon seçin.", parent=self.window)
+            return
+        requirements = tpl.get("requirements", [])
+        if not requirements:
+            messagebox.showinfo("Şablon", "Şablonda ister yok.", parent=self.window)
+            return
+        # re-evaluate the template's requirements against the current camera library
+        items = [(n, m) for n, m in self.app.camera_library.items() if m]
+        real = [(n, m) for n, m in items if m.get("stock_code")] or items
+        matrix, rows = [], []
+        for model_name, model in real:
+            passed = total = 0.0
+            for req in requirements:
+                w = max(float(req.get("weight", 1)), 0.1)
+                total += w
+                if req.get("category") == "dori":
+                    status, ev = evaluate_dori_requirement(model_name, model, req)
+                    kind = "optik motor"
+                else:
+                    status, ev = evaluate_rule_requirement(model_name, model, req)
+                    kind = "broşür"
+                if status == "Uyumlu":
+                    passed += w
+                elif status == "Kısmi":
+                    passed += w * 0.5
+                matrix.append({
+                    "profile_name": req.get("profile_name", tpl.get("name", "Şablon")),
+                    "requirement_id": req.get("id", ""), "requirement": req.get("requirement", ""),
+                    "camera_model": model_name, "status": status, "evidence": ev,
+                    "evidence_kind": kind, "standard_clause": req.get("standard_clause", ""),
+                    "confidence": req.get("confidence", 0.7), "spec_quote": req.get("spec_quote", ""),
+                })
+            score = round(passed / max(total, 1) * 100)
+            rows.append({"profile_name": tpl.get("name", "Şablon"), "camera_model": model_name,
+                         "score": score, "verdict": "Uyumlu" if score >= 82 else "Kısmi" if score >= 50 else "Uyumsuz",
+                         "notes": f"{passed:g}/{total:g} ağırlık"})
+        rows.sort(key=lambda r: r["score"], reverse=True)
+        result = {
+            "profiles": [{"id": "T1", "name": tpl.get("name", "Şablon"), "description": ""}],
+            "requirements": requirements, "matrix": matrix, "camera_scores": rows,
+            "recommendation": f"Şablon “{tpl.get('name', name)}” — en yüksek: "
+                              + (f"{rows[0]['camera_model']} ({rows[0]['score']}/100)" if rows else "model yok"),
+            "ambiguities": [], "clarification_questions": [],
+        }
+        self.apply_compliance_result(result)
+
+    def delete_requirement_template(self):
+        from .. import requirement_library as RL
+        name = self.template_combo.get().strip()
+        if not name:
+            return
+        if not messagebox.askyesno("Şablon sil", f"“{name}” silinsin mi?", parent=self.window):
+            return
+        RL.delete_template(name)
+        self.template_combo.set("")
+        self._refresh_templates()
+
+    def export_compliance_statement(self):
+        from ..compliance_report import build_statement
+        if not self.last_compliance_result or not self.last_compliance_result.get("matrix"):
+            messagebox.showinfo("Uygunluk Beyanı", "Önce bir analiz çalıştırın.", parent=self.window)
+            return
+        path = filedialog.asksaveasfilename(
+            parent=self.window, title="EN 62676-4 Uygunluk Beyanı kaydet",
+            defaultextension=".md",
+            filetypes=[("Markdown", "*.md"), ("Metin", "*.txt"), ("Tüm dosyalar", "*.*")],
+        )
+        if not path:
+            return
+        proj = ""
+        try:
+            proj = getattr(self.app, "_project_name", "") or ""
+        except Exception:
+            proj = ""
+        md = build_statement(self.last_compliance_result, project_name=proj)
+        try:
+            Path(path).write_text(md, encoding="utf-8")
+            messagebox.showinfo("Uygunluk Beyanı", f"Kaydedildi:\n{path}", parent=self.window)
+        except OSError as exc:
+            messagebox.showerror("Uygunluk Beyanı", f"Kaydedilemedi:\n{exc}", parent=self.window)
 
     def export_compliance_csv(self):
         if not self.last_compliance_result or not self.last_compliance_result.get("matrix"):
