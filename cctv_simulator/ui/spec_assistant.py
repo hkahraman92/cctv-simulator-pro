@@ -153,6 +153,7 @@ class SpecAssistantWindow:
         matrix_scroll = ttk.Scrollbar(tree_container, orient=tk.VERTICAL, command=self.compliance_tree.yview)
         matrix_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.compliance_tree.configure(yscrollcommand=matrix_scroll.set)
+        self.compliance_tree.bind("<Double-1>", self._on_row_override)
         self.compliance_tree.tag_configure("Uyumlu", background=COLORS["treeview_uyumlu"])
         self.compliance_tree.tag_configure("Kısmi", background=COLORS["treeview_kismi"])
         self.compliance_tree.tag_configure("Uyumsuz", background=COLORS["treeview_uyumsuz"])
@@ -377,16 +378,19 @@ class SpecAssistantWindow:
     def _populate_matrix(self, matrix):
         for item in self.compliance_tree.get_children():
             self.compliance_tree.delete(item)
+        self._row_by_iid = {}
         for row in matrix:
-            status = row.get("status", "Kısmi")
+            eff_status = row.get("user_status") or row.get("status", "Kısmi")
             kind = row.get("evidence_kind", "")
             clause = row.get("standard_clause", "")
             conf = row.get("confidence")
             ev = row.get("evidence", "")
             prefix = f"[{clause}] " if clause and clause != "—" else ""
             suffix = f"  ·({kind})" if kind else ""
-            status_disp = status + (f" ·%{conf * 100:.0f}" if isinstance(conf, (int, float)) else "")
-            self.compliance_tree.insert(
+            if row.get("user_status"):
+                suffix += f"  ✎ {row.get('user_note', 'elle geçersiz kılındı')}"
+            status_disp = eff_status + (f" ·%{conf * 100:.0f}" if isinstance(conf, (int, float)) else "")
+            iid = self.compliance_tree.insert(
                 "",
                 tk.END,
                 values=(
@@ -396,8 +400,87 @@ class SpecAssistantWindow:
                     status_disp,
                     prefix + ev + suffix,
                 ),
-                tags=(status,),
+                tags=(eff_status,),
             )
+            self._row_by_iid[iid] = row
+
+    def _on_row_override(self, _event=None):
+        iid = self.compliance_tree.focus()
+        row = getattr(self, "_row_by_iid", {}).get(iid)
+        if row is None:
+            return
+        dlg = tk.Toplevel(self.window)
+        dlg.title("İster kararını geçersiz kıl")
+        dlg.transient(self.window)
+        dlg.grab_set()
+        ttk.Label(dlg, text=row.get("requirement", "")[:80], font=("Segoe UI", 9, "bold")).pack(anchor="w", padx=10, pady=(10, 2))
+        ttk.Label(dlg, text=f"Motor kararı: {row.get('status', '')} — {row.get('evidence', '')[:120]}",
+                  wraplength=420, foreground="#666").pack(anchor="w", padx=10)
+        vv = tk.StringVar(value=row.get("user_status") or row.get("status", "Kısmi"))
+        vr = ttk.Frame(dlg)
+        vr.pack(anchor="w", padx=10, pady=6)
+        for opt in ("Uyumlu", "Kısmi", "Uyumsuz", "Bulunamadı"):
+            ttk.Radiobutton(vr, text=opt, value=opt, variable=vv).pack(side=tk.LEFT, padx=4)
+        nv = tk.StringVar(value=row.get("user_note", ""))
+        ttk.Label(dlg, text="Gerekçe / not:").pack(anchor="w", padx=10)
+        ttk.Entry(dlg, textvariable=nv, width=60).pack(fill=tk.X, padx=10, pady=(0, 8))
+
+        def apply_override():
+            if vv.get() == row.get("status") and not nv.get().strip():
+                row.pop("user_status", None)
+                row.pop("user_note", None)
+            else:
+                row["user_status"] = vv.get()
+                row["user_note"] = nv.get().strip() or "elle geçersiz kılındı"
+            dlg.destroy()
+            self._recompute_scores()
+            self._on_camera_filter_changed()
+
+        def clear_override():
+            row.pop("user_status", None)
+            row.pop("user_note", None)
+            dlg.destroy()
+            self._recompute_scores()
+            self._on_camera_filter_changed()
+
+        br = ttk.Frame(dlg)
+        br.pack(fill=tk.X, padx=10, pady=(0, 10))
+        StyledButton(br, text="Uygula", command=apply_override, bootstyle="success").pack(side=tk.RIGHT, padx=4)
+        StyledButton(br, text="Geçersiz kılmayı kaldır", command=clear_override, bootstyle="secondary-outline").pack(side=tk.RIGHT, padx=4)
+
+    def _recompute_scores(self):
+        """Re-derive camera_scores from the matrix, honouring manual overrides."""
+        res = self.last_compliance_result
+        if not res:
+            return
+        w_by_id = {r.get("id"): max(float(r.get("weight", 1)), 0.1) for r in res.get("requirements", [])}
+        agg: Dict = {}
+        for m in res.get("matrix", []):
+            key = (m.get("profile_name", ""), m.get("camera_model", ""))
+            w = w_by_id.get(m.get("requirement_id"), 1.0)
+            st = m.get("user_status") or m.get("status", "Kısmi")
+            d = agg.setdefault(key, {"passed": 0.0, "total": 0.0, "blocker": False})
+            d["total"] += w
+            if st == "Uyumlu":
+                d["passed"] += w
+            elif st == "Kısmi":
+                d["passed"] += w * 0.5
+            elif st == "Bulunamadı":
+                d["passed"] += w * 0.15
+            if st == "Uyumsuz" and (m.get("requirement_id", "")[-2:-1] == "D" or "type" in str(m.get("requirement", "")).lower()):
+                d["blocker"] = True
+        rows = []
+        for (pname, model), d in agg.items():
+            score = round(d["passed"] / max(d["total"], 1) * 100)
+            if d["blocker"]:
+                score = min(score, 40)
+                verdict = "Uyumsuz"
+            else:
+                verdict = "Uyumlu" if score >= 82 else "Kısmi" if score >= 50 else "Uyumsuz"
+            rows.append({"profile_name": pname, "camera_model": model, "score": score,
+                         "verdict": verdict, "notes": f"{d['passed']:g}/{d['total']:g} ağırlık"})
+        rows.sort(key=lambda r: r["score"], reverse=True)
+        res["camera_scores"] = rows
 
     def _update_summary(self, result, camera_filter=None):
         self.compliance_summary_text.configure(state=tk.NORMAL)
@@ -553,15 +636,22 @@ class SpecAssistantWindow:
             return
         with open(path, "w", encoding="utf-8-sig", newline="") as file:
             writer = csv.writer(file, delimiter=";")
-            writer.writerow(["Profil", "İster", "Kamera / Model", "Durum", "Kanıt / Not"])
+            writer.writerow(["Profil", "İster", "Standart", "Kamera / Model", "Durum",
+                             "Kanıt türü", "Kanıt / Not", "Güven", "Şartname alıntısı", "Elle geçersiz kılma"])
             for row in self.last_compliance_result.get("matrix", []):
+                conf = row.get("confidence")
                 writer.writerow(
                     [
                         row.get("profile_name", ""),
                         row.get("requirement", ""),
+                        row.get("standard_clause", ""),
                         row.get("camera_model", ""),
-                        row.get("status", ""),
+                        row.get("user_status") or row.get("status", ""),
+                        row.get("evidence_kind", ""),
                         row.get("evidence", ""),
+                        f"%{conf * 100:.0f}" if isinstance(conf, (int, float)) else "",
+                        row.get("spec_quote", ""),
+                        row.get("user_note", "") if row.get("user_status") else "",
                     ]
                 )
         messagebox.showinfo("Matrix CSV", f"CSV kaydedildi:\n{Path(path).name}", parent=self.window)

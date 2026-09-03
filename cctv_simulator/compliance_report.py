@@ -59,14 +59,17 @@ def build_statement(result: Dict[str, Any], *, project_name: str = "",
         L.append("|---|---|---|---|---|---|")
         for m in prows:
             r = req_by_id.get(m.get("requirement_id"), {})
-            mark = _VERDICT_MARK.get(m.get("status", ""), "?")
+            status = m.get("user_status") or m.get("status", "")
+            mark = _VERDICT_MARK.get(status, "?")
             clause = m.get("standard_clause") or r.get("standard_clause") or "—"
             ev = (m.get("evidence") or "").replace("|", "/").replace("\n", " ")
+            if m.get("user_status"):
+                ev += f"  [elle: {m.get('user_note', 'geçersiz kılındı')}]"
             req_txt = (m.get("requirement") or "").replace("|", "/")
             conf = m.get("confidence")
             conf_s = f"%{conf * 100:.0f}" if isinstance(conf, (int, float)) else "—"
             L.append(f"| {m.get('requirement_id', '')} | {req_txt} | {clause} "
-                     f"| **{mark}** {m.get('status', '')} | {ev[:180]} | {conf_s} |")
+                     f"| **{mark}** {status} | {ev[:220]} | {conf_s} |")
             quote = m.get("spec_quote") or r.get("spec_quote")
             if quote:
                 L.append(f"| | _şartname: “{quote[:160]}”_ | | | | |")
