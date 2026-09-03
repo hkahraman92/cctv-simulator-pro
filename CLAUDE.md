@@ -27,6 +27,9 @@ cctv_dual_view_simulator.py          giriş noktası
   online_map_loader.py               karo indirme, ortofoto mozaik, GERÇEK DEM
   compliance.py                      Gemini + kural tabanlı şartname analizi
   exporters.py                       CSV / XLSX / PDF / PNG
+  cctv_iq.py                         eğik kenar MTF, k oranı, başsız (numpy)
+  project_io.py                      .json proje şeması, Tk'siz load/save
+  __main__.py                        başsız CLI: proje -> optik -> export/JSON
   database.py / config.py / models.py
   ui/main_window.py                  DualViewCCTVDesignApp - klasik arayüz
     ui/canvas_drawer.py              yan kesit + kuş bakışı plan
@@ -120,6 +123,17 @@ Esri uç noktası `{z}/{y}/{x}`; OSM ve OpenTopoMap `{z}/{x}/{y}` — karıştı
 **Kırpma global Mercator piksel uzayında.** Enlemde doğrusal interpolasyon yanlış;
 Mercator Y = `asinh(tan(lat))`.
 
+**Kesit profili ↔ harita fare bağlantısı.** `map_3d_window` alt tuval (`profile_canvas`)
+üzerinde gezinince karşılık gelen nokta haritada sarı artı + kutulu etiketle
+gösterilir. `_render_profile_canvas` sonunda düzeni `self._profile_plot` sözlüğüne
+stash'ler (mode: `perimeter` | `single`, pad'ler, `total_len` / `max_d`);
+`_on_profile_hover` fare-x'i bu düzenle mesafeye çevirir. Perimetre modunda mesafe
+`perimeter_planner.point_along_polyline(fence_points, dist)` ile dünya noktasına,
+tekil modda kamera + pan ekseni boyunca. Overlay item'ları `"phover"` etiketli;
+gerçek yeniden çizimde `delete("all")` ile silinir, sonraki fare hareketinde
+yeniden çizilir — tam render tetikleme. Direk numaraları hem profilde hem haritada
+etiketli, kalabalıkta seyreltilir (`label_step`), seçili/hover'daki her zaman.
+
 ## Tk iş parçacığı
 
 Ağ işi arka planda, sonuç `after(0, ...)` ile ana döngüye. İki tuzak, ikisi de
@@ -152,6 +166,21 @@ başına halleder. Üç arıza da gerçekten yaşandı:
 
 Her derleme `build/tkinter-diagnostic.txt` yazar. Tahmin etmeden önce onu oku.
 
+4. **`PermissionError: ...build\cctv_simulator\CCTV Simulator.exe` (copyfile 20 deneme
+   başarısız) VEYA `FileNotFoundError` `set_exe_build_timestamp` adımında** — Tcl/Tk
+   ile ilgisi yok. Bu makinede aktif AV **Norton 360** (Avast/Gen Digital motoru:
+   `aswidsagent.exe`), Defender pasif. Norton PyInstaller bootloader'ını
+   (`runw.exe` türevi, imzasız) tehdit sayıp:
+   - `build\cctv_simulator\CCTV Simulator.exe` yolunu kalıcı bloke ediyor
+     (yeni klasör açsan bile `Access Denied`; ACL temiz, `Test-Path` false),
+   - yeni yollarda dosya yazılıyor ama Norton ~100 ms içinde siliyor.
+   Yol/isim değiştirmek 2. katmanı aşmaz. **Tek çözüm Norton istisnası:**
+   Norton → Ayarlar → Antivirüs → Taramalar ve Riskler → *hem* "Taramalardan Hariç
+   Tut" *hem* "Auto-Protect / SONAR / Download Intelligence'tan Hariç Tut" →
+   proje kökünü ekle. Sonra Norton → Güvenlik Geçmişi → "Çözülen Güvenlik Riskleri"
+   / "Karantina" → her `CCTV Simulator.exe` → **Geri Yükle ve Hariç Tut**.
+   Alternatif: temiz runner'da CI derlemesi (Norton yok).
+
 ## Doğrulama alışkanlıkları
 
 - Tk arayüzünü `xvfb-run` altında başsız çalıştır, ekran görüntüsü al ve **bak**.
@@ -167,13 +196,75 @@ Her derleme `build/tkinter-diagnostic.txt` yazar. Tahmin etmeden önce onu oku.
 - Platform farkları hata saklar. Bir hata yeniden üretilemiyorsa, raporu değil
   platformu şüphe altına al.
 
+## Test paketi ve CI
+
+`tests/` altında pytest. `py -3.13 -m pip install -r requirements-dev.txt`, sonra
+`py -3.13 -m pytest` (veya `/check`).
+
+- `test_optics_golden.py` — `tests/data/optics_golden.json` 150 tohumlu
+  `CameraConfig` için `calculate_for_camera` + `ppm_at_distance` çıktısını
+  donduruyor. Motoru bilerek değiştirdiysen `py -3.13 -m tests.gen_optics_golden`
+  ile yeniden üret, JSON diff'ini **aynı commit'te** incele ve ekle. Bu, elle
+  yapılan "rastgele config diff'i" alışkanlığının otomatik hâli.
+- `test_mosaic_math.py` — `_fetch_tile` monkeypatch'li; Mercator/bbox/karo
+  matematiği ve `_download_mosaic` kırpma + hata yolları.
+- `test_terrain.py` — `is_measured` bayrağı, `download_terrain_dem` kuzey-güney
+  `flipud` sözleşmesi, bilinear yükselti.
+- `test_perimeter.py` — EN 62676-4 aralık formülü, BOM sayıları.
+- `test_cli_headless.py` — başsız CLI + `project_io` roundtrip.
+
+`network` işaretli test yok (hepsi monkeypatch'li). Canlı sunucu denemesi
+istersen elle: `py -3.13 -c "from cctv_simulator.online_map_loader import _fetch_tile; ..."`.
+
+CI: `.github/workflows/ci.yml`, **windows-latest** (Tcl/Tk ve reportlab font
+yolu Windows'a özgü). ruff (yalnız hata yakalayan alt küme, `pyproject.toml`) +
+`compileall` + pytest + başsız CLI duman testi. mypy bloklamıyor.
+
+## Başsız mod (CLI)
+
+`py -3.13 -m cctv_simulator --project plan.json --export csv,xlsx,pdf --out ./rapor`
+veya `--json` ile stdout'a sonuç. Tk yok, ekran yok.
+
+- `project_io.py` disk şemasını (`ui/main_window.save_project` ile aynı) Tk'siz
+  okur/yazar. GUI şemayı sahiplenir; `project_io` onu takip eder.
+- `__main__.py` optik motoru koşturur, `analyze_dead_zone_coverage` çağırır,
+  `exporters.py` yazıcılarını kullanır. Şema değişirse üç yeri de güncelle:
+  `main_window.save_project`, `project_io`, gerekiyorsa `__main__._results_to_json`.
+
 ## Açık işler
 
-- `clear_tile_cache()` var ama hiçbir butona bağlı değil; önbellek sınırsız büyüyor.
-- Canlı karo sunucusu istekleri hiç denenmedi (geliştirme konteynerinde dış ağ
-  kapalıydı). URL şablonları ve eşzamanlılık kâğıt üstünde doğru.
-- Yol haritası kalanı: `cctv_iq` ölçüm çekirdeği (numpy, başsız, eğik kenar MTF,
-  JSON çıktı), `CameraConfig.effective_px_ratio`'nun `calculate_for_camera` içinden
-  akması, tezgâhta ölçülen ve etiket değerinin yan yana gösterilmesi.
-  MTF50/Nyquist oranı `k`, etkin MP = nominal × k².
-- `project-skills.zip` açılmadı. İçindekiler `.claude/skills/` altına çıkarılabilir.
+- Optik tezgâhta (`modern_window.py`) ölçülen (`cctv_iq`) ve etiket değerinin yan
+  yana gösterilmesi. Motor + CLI + `effective_px_ratio` akışı hazır; kalan yalnız
+  GUI paneli. Windows'ta xvfb yok, bu yüzden ekran görüntüsüyle doğrulanmalı.
+
+## cctv_iq — görüntü kalitesi ölçüm çekirdeği
+
+`cctv_simulator/cctv_iq.py`. Başsız, numpy; dosya okumak için Pillow.
+
+    py -3.13 -m cctv_simulator.cctv_iq edge.png --json
+    py -3.13 -m cctv_simulator.cctv_iq edge.png --roi 120,80,220,300 --nominal-mp 8
+
+Eğik kenar (ISO 12233) MTF: near-vertical/horizontal yüksek kontrastlı bir kenar
+fotoğrafından ESF → LSF (Hamming) → FFT → MTF. `k = MTF50 frekansı / Nyquist
+(0.5 cy/px)`, `(0, 1]` aralığına kırpılır. Etkin çizgi = nominal × k, etkin
+MP = nominal × k².
+
+`k` değerini `CameraConfig.effective_px_ratio` olarak geri besle:
+`calculate_for_camera` `res_w`'yi `nominal × px_ratio` yapar. **FOV optik, değişmez;
+yalnız PPM/menzil ölçekler.** `px_ratio = 1.0` (varsayılan) çıktıyı bit-aynı
+bırakır — optics golden testi bunu doğrular. `OpticResult` artık
+`nominal_res_width_px` ve `effective_px_ratio` taşır; `res_width_px` **etkin**
+değerdir (motor yeniden ifadesi `ppm_at_distance` ve `modern_window` ile tutarlı
+kalsın diye).
+
+`synthetic_edge()` test/kalibrasyon için analitik erf kenarı üretir (scipy yok).
+
+## Çözülmüş (geçmiş açık işler)
+
+- `clear_tile_cache()` artık `map_3d_window` "🗑️ Önbelleği Temizle" düğmesine bağlı;
+  yanında `tile_cache_usage()` ile kare sayısı + MB gösteriliyor.
+- Canlı karo sunucuları (esri / osm / opentopo / terrarium) gerçek ağda doğrulandı:
+  tek karo + tam mozaik + Terrarium DEM (`is_measured=True`) çalışıyor.
+- `is_measured` bayrağı perimetre BOM CSV'sine taşındı (başlık satırları + uyarı).
+- `project-skills.zip` içindeki export skill'leri (`docx/pdf/xlsx/pptx`) kullanıcı
+  seviyesine (`~/.claude/skills/`) açıldı.

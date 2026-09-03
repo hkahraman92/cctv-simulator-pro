@@ -152,3 +152,24 @@ Notlar:
 Optik tezgâhı klasik uygulamanın içinden de açılır: üst şeritteki
 **◈ Optik Tezgâhı** düğmesi veya Kamera sekmesindeki aynı düğme. Seçili
 kameranın optiği ve geometrisi pencereye aktarılır.
+
+## Başsız kullanım (CLI)
+
+Tk / ekran gerektirmez:
+
+    py -3.13 -m cctv_simulator --project plan.json --export csv,xlsx,pdf --out ./rapor
+    py -3.13 -m cctv_simulator --project plan.json --json > sonuc.json
+
+Görüntü kalitesi (eğik kenar MTF) ölçümü:
+
+    py -3.13 -m cctv_simulator.cctv_iq kenar.png --nominal-mp 8 --json
+
+## Test
+
+    py -3.13 -m pip install -r requirements-dev.txt
+    py -3.13 -m pytest
+
+CI (`.github/workflows/ci.yml`) windows-latest üzerinde ruff + `compileall` +
+pytest + başsız CLI duman testi çalıştırır. Optik motoru bilerek değiştirdiysen
+`py -3.13 -m tests.gen_optics_golden` ile golden dosyayı yenile ve aynı commit'te
+ekle.
