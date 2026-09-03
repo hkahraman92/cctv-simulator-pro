@@ -3,6 +3,12 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# ── CI / test artefacts ──────────────────────────────────────────────────────
+/ci_out/
+/ci_plan.json
 
 # ── Sanal ortamlar ───────────────────────────────────────────────────────────
 .venv/
@@ -25,6 +31,7 @@ optimized/
 # ── IDE ──────────────────────────────────────────────────────────────────────
 # .claude/ ve CLAUDE.md bilerek izlenir: proje bağlamı depoyla birlikte taşınır.
 .claude/worktrees/
+.claude/settings.local.json
 .idea/
 .vscode/
 *.swp
