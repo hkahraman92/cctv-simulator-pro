@@ -288,34 +288,51 @@ class SpecAssistantWindow:
         spec_text = self._get_spec_text()
         if not spec_text:
             return
+
+        # Local model (Ollama) takes precedence when the box is ticked — it must be
+        # reachable *before* we ever look at the Gemini API key, otherwise a missing
+        # key would short-circuit to the rule engine and the local path never runs.
+        if self.use_ollama_var.get():
+            from ..compliance import OLLAMA_MODELS, analyze_with_ollama, ollama_available
+            if not ollama_available():
+                messagebox.showwarning(
+                    "Yerel model",
+                    "Ollama (localhost:11434) yanıt vermiyor.\n\n"
+                    "Kurulum: ollama.com adresinden indirin, sonra bir terminalde:\n"
+                    "  ollama serve\n"
+                    f"  ollama pull {OLLAMA_MODELS[0]}\n\n"
+                    "Şimdilik kurallı + fizik analizine dönülüyor.",
+                    parent=self.window,
+                )
+                self.analyze_spec_rule_based()
+                return
+            self.compliance_summary_text.configure(state=tk.NORMAL)
+            self.compliance_summary_text.delete("1.0", tk.END)
+            self.compliance_summary_text.insert("1.0", "Yerel model analiz ediyor… (ilk çağrı model yüklenirken uzun sürebilir)")
+            self.compliance_summary_text.configure(state=tk.DISABLED)
+            self.window.update_idletasks()
+            sel = self.spec_model_entry.get().strip()
+            local_model = sel if sel and "gemini" not in sel.lower() else OLLAMA_MODELS[0]
+            res = analyze_with_ollama(spec_text, self.app.camera_library, model=local_model)
+            if res and res.get("matrix"):
+                self._analysis_source = "ollama"
+                self.apply_compliance_result(res)
+                return
+            messagebox.showinfo(
+                "Yerel model",
+                f"'{local_model}' geçerli JSON döndürmedi (model çekili mi? 'ollama list' ile kontrol edin).\n"
+                "Kurallı + fizik analizine dönülüyor.",
+                parent=self.window,
+            )
+            self.analyze_spec_rule_based()
+            return
+
         api_key = self.spec_api_key_entry.get().strip() or os.environ.get("GEMINI_API_KEY", "").strip()
         if not api_key:
             messagebox.showinfo("Gemini API", "API key bulunamadı. Kurallı analiz çalıştırılıyor.", parent=self.window)
             self.analyze_spec_rule_based()
             return
         model = self.spec_model_entry.get().strip() or "gemini-2.0-flash"
-
-        if self.use_ollama_var.get():
-            from ..compliance import analyze_with_ollama, ollama_available
-            if not ollama_available():
-                messagebox.showwarning("Ollama", "Yerel model (localhost:11434) yanıt vermiyor. Gemini/kurallı analize dönülüyor.", parent=self.window)
-            else:
-                self.compliance_summary_text.configure(state=tk.NORMAL)
-                self.compliance_summary_text.delete("1.0", tk.END)
-                self.compliance_summary_text.insert("1.0", "Yerel model analiz ediyor…")
-                self.compliance_summary_text.configure(state=tk.DISABLED)
-                self.window.update_idletasks()
-                from ..compliance import OLLAMA_MODELS
-                sel = self.spec_model_entry.get().strip()
-                local_model = sel if "gemini" not in sel.lower() and sel else OLLAMA_MODELS[0]
-                res = analyze_with_ollama(spec_text, self.app.camera_library, model=local_model)
-                if res and res.get("matrix"):
-                    self._analysis_source = "ollama"
-                    self.apply_compliance_result(res)
-                    return
-                messagebox.showinfo("Ollama", "Yerel model geçerli JSON döndürmedi. Kurallı + fizik analizine dönülüyor.", parent=self.window)
-                self.analyze_spec_rule_based()
-                return
 
         prompt = build_compliance_prompt(spec_text, self.app.camera_library)
         endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
