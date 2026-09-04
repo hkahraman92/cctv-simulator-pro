@@ -12,6 +12,7 @@ from typing import Dict, Any, Optional
 
 from ..compliance import build_compliance_prompt, gemini_response_text, extract_json_object, rule_based_compliance, run_gemini_in_thread
 from ..exporters import export_compliance_excel
+from .. import training_log
 from ..theme import is_themed, COLORS, StyledButton, fit_and_center_window, set_window_icon
 
 
@@ -28,6 +29,7 @@ class SpecAssistantWindow:
         self.loaded_file_mime = ""
         self.loaded_file_bytes = None
         self.last_compliance_result = None
+        self._analysis_source = "rule"
 
         from ..errors import guarded_build
         self.build_ok = guarded_build(self.window, self._build_ui,
@@ -73,10 +75,12 @@ class SpecAssistantWindow:
         StyledButton(control_frame, text="Şartname Dosyası Yükle", command=self.load_spec_file, bootstyle="secondary").grid(
             row=0, column=0, columnspan=2, sticky=tk.EW, pady=(0, 4)
         )
-        ttk.Label(control_frame, text="Gemini model:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        ttk.Label(control_frame, text="Model:").grid(row=1, column=0, sticky=tk.W, pady=2)
+        from ..compliance import OLLAMA_MODELS
         self.spec_model_entry = ttk.Combobox(
             control_frame,
-            values=["gemini-3.6-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-lite"],
+            values=["gemini-3.6-flash", "gemini-1.5-flash", "gemini-1.5-pro",
+                    "gemini-2.0-flash-lite", *OLLAMA_MODELS],
             state="normal",
         )
         self.spec_model_entry.set("gemini-3.6-flash")
@@ -113,7 +117,10 @@ class SpecAssistantWindow:
             row=11, column=0, columnspan=2, sticky=tk.EW, pady=(0, 4)
         )
         StyledButton(control_frame, text="📄 EN 62676-4 Uygunluk Beyanı", command=self.export_compliance_statement, bootstyle="primary-outline").grid(
-            row=12, column=0, columnspan=2, sticky=tk.EW
+            row=12, column=0, columnspan=2, sticky=tk.EW, pady=(0, 4)
+        )
+        StyledButton(control_frame, text="🧠 Eğitim Verisi Dışa Aktar (.jsonl)", command=self.export_training_data, bootstyle="secondary-outline").grid(
+            row=13, column=0, columnspan=2, sticky=tk.EW
         )
         control_frame.columnconfigure(1, weight=1)
 
@@ -298,9 +305,12 @@ class SpecAssistantWindow:
                 self.compliance_summary_text.insert("1.0", "Yerel model analiz ediyor…")
                 self.compliance_summary_text.configure(state=tk.DISABLED)
                 self.window.update_idletasks()
-                local_model = self.spec_model_entry.get().strip() if "gemini" not in self.spec_model_entry.get().lower() else "llama3.1"
+                from ..compliance import OLLAMA_MODELS
+                sel = self.spec_model_entry.get().strip()
+                local_model = sel if "gemini" not in sel.lower() and sel else OLLAMA_MODELS[0]
                 res = analyze_with_ollama(spec_text, self.app.camera_library, model=local_model)
                 if res and res.get("matrix"):
+                    self._analysis_source = "ollama"
                     self.apply_compliance_result(res)
                     return
                 messagebox.showinfo("Ollama", "Yerel model geçerli JSON döndürmedi. Kurallı + fizik analizine dönülüyor.", parent=self.window)
@@ -332,6 +342,7 @@ class SpecAssistantWindow:
             },
             method="POST",
         )
+        self._analysis_source = "gemini"
         run_gemini_in_thread(
             self.window,
             api_request,
@@ -350,11 +361,16 @@ class SpecAssistantWindow:
                 parent=self.window,
             )
             return
+        self._analysis_source = "rule"
         result = rule_based_compliance(spec_text, self.app.camera_library)
         self.apply_compliance_result(result)
 
     def apply_compliance_result(self, result: Dict[str, Any]):
         self.last_compliance_result = result
+        try:
+            training_log.log_analysis(self._get_spec_text(), result, self._analysis_source)
+        except Exception:
+            pass
 
         # Build unique camera list for filter combobox
         matrix = result.get("matrix", [])
@@ -432,6 +448,12 @@ class SpecAssistantWindow:
             else:
                 row["user_status"] = vv.get()
                 row["user_note"] = nv.get().strip() or "elle geçersiz kılındı"
+                try:
+                    training_log.log_override(self._get_spec_text(), row,
+                                              row.get("status", ""), vv.get(),
+                                              row.get("user_note", ""))
+                except Exception:
+                    pass
             dlg.destroy()
             self._recompute_scores()
             self._on_camera_filter_changed()
@@ -585,7 +607,30 @@ class SpecAssistantWindow:
                               + (f"{rows[0]['camera_model']} ({rows[0]['score']}/100)" if rows else "model yok"),
             "ambiguities": [], "clarification_questions": [],
         }
+        self._analysis_source = "template"
         self.apply_compliance_result(result)
+
+    def export_training_data(self):
+        from .. import training_log as TL
+        st = TL.stats()
+        if st.get("records", 0) == 0:
+            messagebox.showinfo("Eğitim verisi", "Henüz kayıt yok. Analiz çalıştırın ve kararları düzeltin.", parent=self.window)
+            return
+        path = filedialog.asksaveasfilename(
+            parent=self.window, title="Eğitim veri seti (instruction JSONL)",
+            defaultextension=".jsonl", initialfile="cctv_compliance_train.jsonl",
+            filetypes=[("JSON Lines", "*.jsonl"), ("Tüm dosyalar", "*.*")],
+        )
+        if not path:
+            return
+        n = TL.build_instruction_dataset(path)
+        messagebox.showinfo(
+            "Eğitim verisi",
+            f"{n} örnek yazıldı.\n\nToplam: {st['analyses']} analiz · {st['overrides']} elle "
+            f"düzeltme · {st['unique_specs']} farklı şartname.\n\n"
+            "Bu dosyayı unsloth/axolotl ile küçük bir yerel modele (qwen2.5:7b) "
+            "LoRA fine-tune için kullanabilirsiniz. ~300+ örnek biriktiğinde anlamlı olur.",
+            parent=self.window)
 
     def delete_requirement_template(self):
         from .. import requirement_library as RL

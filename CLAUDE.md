@@ -30,6 +30,7 @@ cctv_dual_view_simulator.py          giriş noktası
   compliance_standards.py            EN 62676-4 madde/DORI bilgi tabanı + belirsizlik tarama
   compliance_report.py               EN 62676-4 uygunluk beyanı (markdown/PDF)
   requirement_library.py             firma ister şablonları (JSON, kullanıcı dizini)
+  training_log.py                    şartname analiz + override logu → instruction JSONL
   spec_pdf.py                        PDF şartname → metin (pypdf, opsiyonel)
   exporters.py                       CSV / XLSX / PDF / PNG
   cctv_iq.py                         eğik kenar MTF, k oranı, başsız (numpy)
@@ -216,6 +217,17 @@ Sonuçta `ambiguities` / `clarification_questions`.
 `%APPDATA%\<uygulama>\spec-templates\<slug>.json`.
 
 `pypdf` opsiyonel (requirements.txt); yoksa PDF yalnız Gemini'ye gider.
+
+**Yerel model.** `build_compliance_prompt` few-shot örnek + `dori`
+kategori/`required_ppm`/`spec_quote` talimatı içerir; `compact_spec` 32k.
+`analyze_with_ollama` `num_ctx=16384` (varsayılan 2k şartnameyi kesiyordu),
+`num_predict=8192`, `keep_alive=10m`. `OLLAMA_MODELS` = qwen2.5:7b/14b/3b,
+llama3.1:8b, gemma2:9b (Türkçe + JSON). `training_log`: her analiz +
+her override JSONL'e yazılır (`%APPDATA%\<app>\training\compliance.jsonl`);
+`build_instruction_dataset` bunları system/user/assistant çiftlerine çevirir,
+**insan düzeltmelerini assistant hedefine katarak** — yani override UI bir
+etiketleme hattı. Tezgâhta "🧠 Eğitim Verisi Dışa Aktar". Fine-tune reçetesi:
+`docs/yerel-model-egitimi.md`.
 
 ## Doğrulama alışkanlıkları
 

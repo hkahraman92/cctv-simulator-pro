@@ -14,9 +14,43 @@ from .compliance_optics import evaluate_dori_requirement, extract_dori_requireme
 from .compliance_standards import clause_for, find_ambiguities
 
 
+# One worked example — grounds the model on the exact JSON shape and the
+# category vocabulary. DORI/range requirements get category "dori" with
+# required_ppm + distance_m so the optic engine can be pointed at them.
+_FEWSHOT = {
+    "spec": ("Dış ortam sabit bullet kamera. 30 metre mesafede yüz teşhisi "
+             "yapılabilmeli. Otopark girişinde 25 m'de plaka okunmalı. En az "
+             "4K/8MP çözünürlük. IR menzili en az 40 m. IP66 ve IK10."),
+    "json": {
+        "profiles": [{"id": "P1", "name": "Dış ortam sabit bullet", "description": "Bullet, dış ortam"}],
+        "requirements": [
+            {"id": "P1-R1", "profile_id": "P1", "profile_name": "Dış ortam sabit bullet",
+             "category": "dori", "requirement": "30 m mesafede yüz teşhisi (>=250 px/m)",
+             "task": "identify", "required_ppm": 250, "distance_m": 30, "weight": 5,
+             "spec_quote": "30 metre mesafede yüz teşhisi yapılabilmeli"},
+            {"id": "P1-R2", "profile_id": "P1", "profile_name": "Dış ortam sabit bullet",
+             "category": "dori", "requirement": "25 m mesafede plaka okuma (>=143 px/m)",
+             "task": "anpr", "required_ppm": 143, "distance_m": 25, "weight": 5,
+             "spec_quote": "25 m'de plaka okunmalı"},
+            {"id": "P1-R3", "profile_id": "P1", "profile_name": "Dış ortam sabit bullet",
+             "category": "resolution", "requirement": "En az 4K / 8MP çözünürlük", "weight": 3,
+             "spec_quote": "En az 4K/8MP çözünürlük"},
+            {"id": "P1-R4", "profile_id": "P1", "profile_name": "Dış ortam sabit bullet",
+             "category": "ir", "requirement": "IR menzili en az 40 m", "value": 40, "weight": 3,
+             "spec_quote": "IR menzili en az 40 m"},
+            {"id": "P1-R5", "profile_id": "P1", "profile_name": "Dış ortam sabit bullet",
+             "category": "environment", "requirement": "IP66 ve IK10 koruma", "weight": 3,
+             "spec_quote": "IP66 ve IK10"},
+        ],
+        "matrix": [], "camera_scores": [],
+        "recommendation": "Uzun odaklı (>=50 mm), 8MP, IP66/IK10 bir model gerekir.",
+    },
+}
+
+
 def build_compliance_prompt(spec_text: str, camera_library: Dict[str, Any]) -> str:
     camera_summary = camera_library_for_prompt(camera_library)
-    compact_spec = spec_text[:16000]
+    compact_spec = spec_text[:32000]
     return (
         "Sen CCTV teknik şartname analiz uzmanısın. Gelen şartname metninden ölçülebilir kamera "
         "isterlerini çıkar, verilen kamera kütüphanesine göre uygunluk matrisi oluştur ve en uygun "
@@ -24,21 +58,30 @@ def build_compliance_prompt(spec_text: str, camera_library: Dict[str, Any]) -> s
         "ayır: örneğin sabit bullet, dome, PTZ/speed dome, plaka, iç ortam, dış ortam, termal vb. "
         "Kamera tipi yorumunda zoom/focus lens hareketini hareketli kamera sayma; hareketli kamera "
         "pan/tilt/PTZ/speed dome mekanik hareketi olan kameradır. "
+        "Mesafe+görev isterlerini (teşhis/tanıma/gözlem/algılama/plaka @ X m) category='dori' yap ve "
+        "required_ppm (teşhis 250, plaka 143, tanıma 125, gözlem 62.5, algılama 25) + distance_m ver. "
+        "Her ister için spec_quote alanına şartnameden birebir alıntı koy. "
         "Her profil için ayrı ister, ayrı matrix satırları ve ayrı model skorları üret. "
         "Sadece geçerli JSON döndür; markdown kullanma.\n\n"
         "JSON şeması:\n"
         "{\n"
         '  "profiles": [{"id": "P1", "name": "Dış ortam sabit kamera", "description": "..."}],\n'
-        '  "requirements": [{"id": "R1", "profile_id": "P1", "profile_name": "Dış ortam sabit kamera", '
-        '"category": "resolution|ir|lux|lens|analytics|environment|other", "requirement": "...", "weight": 1}],\n'
-        '  "matrix": [{"profile_id": "P1", "profile_name": "Dış ortam sabit kamera", '
+        '  "requirements": [{"id": "R1", "profile_id": "P1", "profile_name": "...", '
+        '"category": "resolution|ir|lux|lens_range|camera_type|wdr|fps|environment|analytics|storage|codec|audio|dori|other", '
+        '"requirement": "...", "weight": 1, "spec_quote": "...", '
+        '"task": "identify|recognize|observe|detect|anpr (yalnız dori)", '
+        '"required_ppm": 0, "distance_m": 0}],\n'
+        '  "matrix": [{"profile_id": "P1", "profile_name": "...", '
         '"requirement_id": "R1", "requirement": "...", "camera_model": "...", '
         '"status": "Uyumlu|Kısmi|Uyumsuz", "evidence": "..."}],\n'
-        '  "camera_scores": [{"profile_id": "P1", "profile_name": "Dış ortam sabit kamera", '
+        '  "camera_scores": [{"profile_id": "P1", "profile_name": "...", '
         '"camera_model": "...", "score": 0, "verdict": "Uyumlu|Kısmi|Uyumsuz", '
         '"notes": "..."}],\n'
         '  "recommendation": "..."\n'
         "}\n\n"
+        "ÖRNEK\n"
+        f"ŞARTNAME: {_FEWSHOT['spec']}\n"
+        f"JSON: {json.dumps(_FEWSHOT['json'], ensure_ascii=False)}\n\n"
         f"KAMERA KÜTÜPHANESİ:\n{json.dumps(camera_summary, ensure_ascii=False)}\n\n"
         f"ŞARTNAME:\n{compact_spec}"
     )
@@ -99,8 +142,12 @@ def ollama_available(timeout: float = 0.8) -> bool:
         return False
 
 
+# Local models that handle Turkish + structured JSON well (Ollama tags).
+OLLAMA_MODELS = ["qwen2.5:7b", "qwen2.5:14b", "llama3.1:8b", "gemma2:9b", "qwen2.5:3b"]
+
+
 def analyze_with_ollama(spec_text: str, camera_library: Dict[str, Any],
-                        model: str = "llama3.1", timeout: float = 180.0) -> Optional[Dict[str, Any]]:
+                        model: str = "qwen2.5:7b", timeout: float = 300.0) -> Optional[Dict[str, Any]]:
     """Local-LLM spec analysis via Ollama, same JSON contract as Gemini.
 
     Returns the parsed dict, or None if Ollama is not reachable / the reply is
@@ -112,7 +159,9 @@ def analyze_with_ollama(spec_text: str, camera_library: Dict[str, Any],
         "prompt": prompt + "\n\nYalnızca geçerli JSON döndür, açıklama yazma.",
         "stream": False,
         "format": "json",
-        "options": {"temperature": 0.1},
+        # Specs are long; the default 2k context silently truncates them.
+        "options": {"temperature": 0.1, "num_ctx": 16384, "num_predict": 8192},
+        "keep_alive": "10m",
     }).encode("utf-8")
     req = urllib.request.Request(_OLLAMA_URL, data=body,
                                  headers={"Content-Type": "application/json"})
