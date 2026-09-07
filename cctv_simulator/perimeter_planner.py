@@ -198,51 +198,82 @@ def generate_perimeter_plan(terrain: TerrainData,
     hfov_deg = math.degrees(2.0 * math.atan((sw / 2.0) / focal_mm))
     vfov_deg = math.degrees(2.0 * math.atan((sh / 2.0) / focal_mm))
 
+    # Tilt: aim the optical axis at ~55 % of the ground reach so the vertical
+    # frame actually lands on the fence line, instead of a fixed -14 deg that
+    # only frames a few metres of ground with a tele lens. Clamped to a sane
+    # surveillance band.
+    aim_dist = max(ground_reach * 0.55, dead_zone * 2.0, 5.0)
+    default_tilt = -max(1.5, min(25.0, math.degrees(math.atan(mast_height_m / aim_dist))))
+
     placed_cameras: List[PlacedCamera] = []
-    gaps: List[FenceGap] = []
     pole_counter = 1
 
-    # Walk along each segment
-    for seg_idx, (p1, p2, seg_len) in enumerate(zip(pts[:-1], pts[1:], segment_lengths)):
+    def _place(px: float, py: float, pan_deg: float, *, reach: float = ground_reach,
+               dz: float = dead_zone, tilt: float = default_tilt, note: str = "") -> None:
+        nonlocal pole_counter
+        gz = terrain.get_elevation_at(px, py)
+        placed_cameras.append(PlacedCamera(
+            pole_id=pole_counter,
+            x_m=round(px, 1), y_m=round(py, 1), ground_z_m=round(gz, 1),
+            mast_height_m=mast_height_m,
+            pan_deg=round(pan_deg % 360.0, 1), tilt_deg=round(tilt, 1),
+            focal_mm=focal_mm, hfov_deg=round(hfov_deg, 1), vfov_deg=round(vfov_deg, 1),
+            effective_range_m=round(reach, 1), dead_zone_m=round(dz, 1),
+            camera_model=camera.name + (f" [{note}]" if note else ""),
+            sensor_name=camera.sensor_name, resolution_name=camera.resolution_name,
+        ))
+        pole_counter += 1
+
+    seg_headings: List[float] = []
+    for (p1, p2, seg_len) in zip(pts[:-1], pts[1:], segment_lengths):
+        if seg_len < 1e-6:
+            seg_headings.append(0.0)
+            continue
+        h = (math.degrees(math.atan2(p2[0] - p1[0], p2[1] - p1[1])) + 360.0) % 360.0
+        seg_headings.append(h)
+
+    # Walk along each segment: a pole at the start vertex + evenly spaced poles,
+    # each looking forward along the fence toward the next pole.
+    for (p1, p2, seg_len), heading_deg in zip(zip(pts[:-1], pts[1:], segment_lengths), seg_headings):
         if seg_len < 1.0:
             continue
-
-        # Segment heading vector
-        dx = p2[0] - p1[0]
-        dy = p2[1] - p1[1]
-        heading_rad = math.atan2(dx, dy)
-        heading_deg = (math.degrees(heading_rad) + 360.0) % 360.0
-
-        # Number of poles required for this segment
+        dx, dy = p2[0] - p1[0], p2[1] - p1[1]
         num_spans = max(1, int(math.ceil(seg_len / optimal_spacing)))
-        actual_step = seg_len / num_spans
-
         for step_idx in range(num_spans):
-            cur_x = p1[0] + (step_idx / num_spans) * dx
-            cur_y = p1[1] + (step_idx / num_spans) * dy
+            f = step_idx / num_spans
+            _place(p1[0] + f * dx, p1[1] + f * dy, heading_deg)
 
-            ground_z = terrain.get_elevation_at(cur_x, cur_y)
+    # Open perimeter: the far endpoint is not the start of any segment, so add a
+    # pole there looking back along the last leg.
+    if not is_closed_loop and total_len > 1.0:
+        _place(pts[-1][0], pts[-1][1], (seg_headings[-1] + 180.0) % 360.0, note="uç")
 
-            # Camera points forward along the fence towards the next camera
-            cam = PlacedCamera(
-                pole_id=pole_counter,
-                x_m=round(cur_x, 1),
-                y_m=round(cur_y, 1),
-                ground_z_m=round(ground_z, 1),
-                mast_height_m=mast_height_m,
-                pan_deg=round(heading_deg, 1),
-                tilt_deg=-14.0,
-                focal_mm=focal_mm,
-                hfov_deg=round(hfov_deg, 1),
-                vfov_deg=round(vfov_deg, 1),
-                effective_range_m=round(ground_reach, 1),
-                dead_zone_m=round(dead_zone, 1),
-                camera_model=camera.name,
-                sensor_name=camera.sensor_name,
-                resolution_name=camera.resolution_name,
-            )
-            placed_cameras.append(cam)
-            pole_counter += 1
+    # Corner guards: at a sharp turn the vertex pole faces the *outgoing* leg but
+    # its dead zone leaves the fence right at the corner uncovered, and the
+    # incoming poles face away from the new leg. Add a wide-angle corner camera
+    # on the vertex, aimed steeply down the outgoing leg so its dead zone shrinks
+    # to ~1 m and the corner wedge is covered.
+    n_vert = len(pts) - 1
+    corner_range = min(ground_reach, max(dead_zone * 6.0, 40.0))
+    corner_dz = max(dead_zone * 0.15, 1.0)
+    corner_tilt = -max(3.0, min(35.0, math.degrees(math.atan(mast_height_m / max(corner_range * 0.35, 3.0)))))
+    interior = list(range(1, n_vert))
+    if is_closed_loop:
+        interior.append(0)                       # the closing corner (last leg -> first leg)
+    for vi in interior:
+        h_in = seg_headings[vi - 1]               # vi == 0 -> seg_headings[-1], the last leg
+        h_out = seg_headings[vi % len(seg_headings)]
+        turn = abs((h_out - h_in + 180.0) % 360.0 - 180.0)
+        if turn < 20.0:
+            continue
+        vx, vy = pts[vi]
+        _place(vx, vy, h_out, reach=corner_range, dz=corner_dz, tilt=corner_tilt, note="köşe")
+
+    # Coverage / gap analysis along the fence line.
+    gaps, coverage_pct = _analyse_fence_coverage(
+        pts, placed_cameras, visibility_km, weather,
+        _atm.band_for_camera(camera.sensor_name, camera.model_name),
+    )
 
     # Compute BOM metrics
     num_cams = len(placed_cameras)
@@ -271,10 +302,74 @@ def generate_perimeter_plan(terrain: TerrainData,
         pole_count=num_cams,
         target_ppm=target_ppm,
         avg_spacing_m=round(avg_spacing, 1),
-        coverage_percentage=100.0 if not gaps else 92.5,
+        coverage_percentage=round(coverage_pct, 1),
         estimated_bandwidth_mbps=round(total_bandwidth_mbps, 1),
         estimated_storage_30days_tb=round(storage_30days_tb, 1),
     )
+
+
+def _analyse_fence_coverage(pts: List[Tuple[float, float]],
+                            cams: List[PlacedCamera],
+                            visibility_km: float, weather: str, band: str,
+                            sample_step_m: float = 2.0,
+                            min_gap_m: float = 4.0) -> Tuple[List[FenceGap], float]:
+    """Walk the fence polyline; a point is covered when some camera has it inside
+    its horizontal cone, past the dead zone and within the (weather-capped)
+    range. Returns the gap list and the covered percentage.
+
+    Terrain line-of-sight is intentionally not applied here — the coverage
+    heatmap (:func:`compute_coverage_grid`) carries the ridge occlusion; this
+    check is the geometric fence-continuity test.
+    """
+    if len(pts) < 2 or not cams:
+        return [], 0.0
+
+    prep = []
+    for c in cams:
+        rng = _atm.usable_range_m(c.effective_range_m, visibility_km, band, weather)
+        prep.append((c.x_m, c.y_m, c.pan_deg, c.hfov_deg / 2.0, c.dead_zone_m, rng))
+
+    def _covered(px: float, py: float) -> bool:
+        for cx, cy, pan, half_h, dz, rng in prep:
+            dist = math.hypot(px - cx, py - cy)
+            if dist < dz or dist > rng:
+                continue
+            az = (math.degrees(math.atan2(px - cx, py - cy)) + 360.0) % 360.0
+            if abs((az - pan + 180.0) % 360.0 - 180.0) <= half_h:
+                return True
+        return False
+
+    total = 0
+    covered = 0
+    gap_run: List[Tuple[float, float]] = []
+    gaps: List[FenceGap] = []
+
+    def _flush_gap():
+        if len(gap_run) >= 2:
+            length = math.hypot(gap_run[-1][0] - gap_run[0][0], gap_run[-1][1] - gap_run[0][1])
+            if length >= min_gap_m:
+                gaps.append(FenceGap(gap_run[0][0], gap_run[0][1],
+                                     gap_run[-1][0], gap_run[-1][1], round(length, 1)))
+        gap_run.clear()
+
+    for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]):
+        seg = math.hypot(x1 - x0, y1 - y0)
+        if seg < 1e-6:
+            continue
+        n = max(1, int(seg / sample_step_m))
+        for k in range(n + 1):
+            t = k / n
+            px, py = x0 + t * (x1 - x0), y0 + t * (y1 - y0)
+            total += 1
+            if _covered(px, py):
+                covered += 1
+                _flush_gap()
+            else:
+                gap_run.append((px, py))
+    _flush_gap()
+
+    pct = 100.0 * covered / max(total, 1)
+    return gaps, pct
 
 
 @dataclass
@@ -360,8 +455,16 @@ def compute_coverage_grid(plan: PerimeterPlanResult, camera: CameraConfig,
         atm_reach = _atm.usable_range_m(c.effective_range_m, visibility_km, band, weather)
         in_cone = (off <= c.hfov_deg / 2.0) & (dist >= c.dead_zone_m) & (dist <= atm_reach)
 
+        # Vertical framing: the ground cell must sit between the bottom and top
+        # rays (tilt +/- vfov/2). Without this the heatmap credits far cells the
+        # tilted-down camera never frames.
+        eye_z = c.ground_z_m + c.mast_height_m
+        gz = cell_z if do_occ else float(c.ground_z_m)
+        elev_ang = np.degrees(np.arctan2(gz - eye_z, np.maximum(dist, 0.1)))
+        half_vfov = c.vfov_deg / 2.0 if c.vfov_deg > 0 else 15.0
+        in_cone &= (elev_ang >= c.tilt_deg - half_vfov) & (elev_ang <= c.tilt_deg + half_vfov)
+
         if do_occ:
-            eye_z = c.ground_z_m + c.mast_height_m
             sx = c.x_m + ts * dx
             sy = c.y_m + ts * dy
             terr = _sample_terrain(terrain, sx, sy)

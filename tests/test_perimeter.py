@@ -156,3 +156,34 @@ def test_coverage_grid_no_occlusion_flag_without_terrain(cam):
     square = [(50.0, 50.0), (200.0, 50.0), (200.0, 200.0), (50.0, 200.0)]
     plan = generate_perimeter_plan(terr, square, cam)
     assert compute_coverage_grid(plan, cam).occlusion_applied is False
+
+
+def test_closed_perimeter_is_well_covered_with_corner_guards(cam):
+    terr = generate_procedural_terrain("rolling_hills", grid_size=48, cell_size_m=10.0)
+    square = [(60.0, 60.0), (360.0, 60.0), (360.0, 360.0), (60.0, 360.0)]
+    plan = generate_perimeter_plan(terr, square, cam, target_ppm=40.0)
+    # straight legs are gap-free by construction, corner guards close the corners
+    assert plan.coverage_percentage >= 95.0
+    assert any("köşe" in c.camera_model for c in plan.placed_cameras)
+    # pole ids stay contiguous even with the extra guards
+    assert [c.pole_id for c in plan.placed_cameras] == list(range(1, len(plan.placed_cameras) + 1))
+
+
+def test_open_perimeter_flags_gap_and_adds_end_pole(cam):
+    terr = generate_procedural_terrain("rolling_hills", grid_size=40, cell_size_m=10.0)
+    plan = generate_perimeter_plan(terr, [(0.0, 0.0), (300.0, 0.0)], cam,
+                                   target_ppm=40.0, is_closed_loop=False)
+    # the first pole's dead zone at the very start of an open leg is uncovered
+    assert plan.coverage_percentage < 100.0
+    assert any(g.length_m >= 4.0 for g in plan.gaps)
+    # an end pole was added, looking back along the last leg
+    assert any("uç" in c.camera_model for c in plan.placed_cameras)
+
+
+def test_coverage_percentage_reflects_gap_length(cam):
+    terr = generate_procedural_terrain("rolling_hills", grid_size=40, cell_size_m=10.0)
+    good = generate_perimeter_plan(terr, [(60.0, 60.0), (360.0, 60.0), (360.0, 360.0), (60.0, 360.0)],
+                                   cam, target_ppm=40.0)
+    open_line = generate_perimeter_plan(terr, [(0.0, 0.0), (300.0, 0.0)], cam,
+                                        target_ppm=40.0, is_closed_loop=False)
+    assert good.coverage_percentage > open_line.coverage_percentage
