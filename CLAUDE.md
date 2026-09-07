@@ -414,6 +414,51 @@ boşluk çizgileri + BOM CSV başlığında boşluk listesi. `_analyse_fence_cov
 - Şartname görev sözlüğü (`_TASK_TR`) kısaltıldı; nadir eş anlamlılar
   ("gözetim", "seçme") kaçabilir — few-shot LLM yolu yakalar.
 
+### Çoklu kamera viewshed + PTZ (yeni — eksikler)
+
+- **GUI'de hiç yok.** `calculate_multi_camera_viewshed` ve `ptz_tour` yalnız
+  motor + başsız CLI. `map_3d_window`'a "çoklu kamera viewshed" ve "PTZ tur"
+  sekmesi/düğmesi yok; `best_cam_grid` / `seen_count_grid` (örtüşme) ve
+  `revisit_grid` görselleştirilmiyor. PNG çıktısı da yok.
+- **İki ayrı çok-kamera motoru.** GUI kapsama ısı haritası hâlâ
+  `perimeter_planner.compute_coverage_grid` (koni + LOS, basit); yeni
+  `calculate_multi_camera_viewshed` otoriter tekil motoru kullanıyor. İkisi
+  birleşmeli — `compute_coverage_grid` çağrısı multi-viewshed'e devredilebilir.
+- **Ölçekleme.** Multi-viewshed her kamera için tam `calculate_3d_viewshed`
+  koşturur (arazi grid hazırlığı paylaşılmıyor); 20+ kamerada yavaş.
+- **PTZ geçiş modeli kaba.** `_tour_timeline` geçişi `max(Δpan,Δtilt)/hız` —
+  ivme/oturma süresi yok, zoom geçiş süresi yok. Preset `lens_mode` yalnız
+  min/max (gerçek ara zoom yok). Revizit sabit sonsuz döngü varsayar
+  (alarm-tetikli slew, guard-tour, operatör müdahalesi modellenmiyor).
+- **Placement doğrulama yok.** `terrain.placements` / `ptz` koordinatı arazi
+  sınırı dışındaysa uyarı yok; `_build_terrain` prosedürel `grid_size=200`
+  sabit (10 km arazi → 50 m hücre). Başsız `geotiff` yolu test edilmedi.
+- CLI görüş raporu başlığında hep `project.cameras[0]` kullanılıyor (placement'lar
+  farklı kamera kullansa bile).
+
+### i18n (yeni — eksikler)
+
+- **Kapsam çok dar.** ~15-20 metin sarılı (yalnız `main_window` + `map_3d_window`);
+  8 UI modülünün 6'sında hiç `t()` yok. Gövde metinlerinin ~%98'i Türkçe-yalnız.
+- Dil değişince canlı yeniden çizim yok (yeniden başlatma gerekir).
+- ASELSAN PDF raporu, CLI mesajları, `errors.py`, `compliance*`, `exporters`
+  hepsi sabit Türkçe.
+- Sayı/tarih biçimi yerelleştirilmiyor (ondalık virgül/nokta).
+- `en.json` çevirileri gözden geçirilmedi (makine kalitesi, alan uzmanı değil).
+
+### Yerel model fine-tune (yeni — eksikler)
+
+- `finetune_compliance._train` test edilmiyor (GPU + unsloth gerekir); yalnız
+  `--prepare-only` yolu koşuyor.
+- **Gold veri seti üretme aracı yok.** `eval_compliance.py` gold JSONL bekliyor
+  ama EKAP şartnamesi + öğretmen model + insan düzeltme hattı için script yok
+  (docs anlatıyor, kod yok).
+- `compliance_eval` yalnız DORI ister + matris durumu ölçüyor;
+  `ambiguities` / `clarification_questions` / `camera_scores` / `recommendation`
+  puanlanmıyor. Matris doğruluğu tam `requirement_id` eşleşmesi istiyor — model
+  isterleri yeniden numaralandırırsa 0 alır.
+- RAG hâlâ yok (`docs/yerel-model-egitimi.md`: ⏳).
+
 ## cctv_iq — görüntü kalitesi ölçüm çekirdeği
 
 `cctv_simulator/cctv_iq.py`. Başsız, numpy; dosya okumak için Pillow.
