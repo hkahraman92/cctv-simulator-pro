@@ -950,7 +950,7 @@ def _ptz_rows(ptz) -> List[List[str]]:
     c = ptz.combined
     rows = [
         ["Preset adedi", f"{len(ptz.preset_labels)}"],
-        ["Tur periyodu", f"{_fmt_dur(ptz.tour_period_s)} (bekleme {ptz.active_dwell_s:.0f} sn + gezinme {ptz.slew_total_s:.0f} sn)"],
+        ["Tur periyodu", f"{_fmt_dur(ptz.tour_period_s)} (bekleme {ptz.active_dwell_s:.0f} + pan/tilt {ptz.slew_total_s:.0f} + zoom {ptz.zoom_total_s:.0f} + oturma {ptz.settle_total_s:.0f} sn)"],
         ["Birleşik görünür alan", _fmt_area(c.visible_area_m2)],
         ["Sürekli izlenen alan (revizit ~0)", _fmt_area(ptz.continuous_area_m2)],
         ["Aralıklı izlenen alan", _fmt_area(ptz.intermittent_area_m2)],

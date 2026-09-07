@@ -11,6 +11,7 @@ from cctv_simulator.viewshed_3d import (
     CameraPlacement,
     calculate_3d_viewshed,
     calculate_multi_camera_viewshed,
+    placement_bounds_warnings,
 )
 
 CAM = CameraConfig(name="M", sensor_name='1/2.8"', resolution_name="4 MP (2K - 2688x1520)",
@@ -65,6 +66,39 @@ def test_overlap_and_best_camera_tracking():
     # zone percentages are nested
     p = res.pct_by_zone
     assert p["detect"] >= p["observe"] >= p["recog"] >= p["ident"] - 1e-9
+
+
+def test_focal_override_sits_between_lens_ends():
+    terr = _flat()
+    wide = calculate_3d_viewshed(terrain=terr, cam_x_m=400, cam_y_m=100, mast_height_m=8,
+                                 camera=CAM, lens_mode="min", pan_deg=0, tilt_deg=-3, max_range_m=600)
+    tele = calculate_3d_viewshed(terrain=terr, cam_x_m=400, cam_y_m=100, mast_height_m=8,
+                                 camera=CAM, lens_mode="max", pan_deg=0, tilt_deg=-3, max_range_m=600)
+    mid = calculate_3d_viewshed(terrain=terr, cam_x_m=400, cam_y_m=100, mast_height_m=8,
+                                camera=CAM, focal_mm_override=15.0, pan_deg=0, tilt_deg=-3, max_range_m=600)
+    assert tele.hfov_deg < mid.hfov_deg < wide.hfov_deg
+    # override outside the range is clamped
+    clamped = calculate_3d_viewshed(terrain=terr, cam_x_m=400, cam_y_m=100, mast_height_m=8,
+                                    camera=CAM, focal_mm_override=999.0, pan_deg=0, tilt_deg=-3)
+    assert clamped.hfov_deg == pytest.approx(tele.hfov_deg)
+
+
+def test_with_profile_false_skips_cross_section_only():
+    terr = _flat()
+    kw = dict(terrain=terr, cam_x_m=400, cam_y_m=100, mast_height_m=8, camera=CAM,
+              pan_deg=0, tilt_deg=-3, max_range_m=500)
+    full = calculate_3d_viewshed(**kw, with_profile=True)
+    lean = calculate_3d_viewshed(**kw, with_profile=False)
+    assert np.array_equal(full.dori_grid, lean.dori_grid)
+    assert full.profile_dists_m.size > 0 and lean.profile_dists_m.size == 0
+
+
+def test_placement_bounds_warnings():
+    terr = _flat(80, 10.0)   # 0..800 m
+    inside = CameraPlacement(x_m=400, y_m=400, mast_height_m=8, camera=CAM, label="içeride")
+    outside = CameraPlacement(x_m=-50, y_m=400, mast_height_m=8, camera=CAM, label="dışarıda")
+    warns = placement_bounds_warnings(terr, [inside, outside])
+    assert len(warns) == 1 and "dışarıda" in warns[0]
 
 
 def test_combined_dori_is_best_of_cameras():

@@ -33,7 +33,8 @@ class PTZPreset:
     name: str
     pan_deg: float
     tilt_deg: float = -5.0            # < 0 = down
-    lens_mode: str = "max"           # presets are usually zoomed in
+    lens_mode: str = "max"           # zoom end used when focal_mm is None
+    focal_mm: Optional[float] = None  # explicit intermediate zoom (mm)
     dwell_s: float = 5.0
 
 
@@ -45,7 +46,15 @@ class PTZTour:
     camera: CameraConfig
     presets: List[PTZPreset] = field(default_factory=list)
     max_range_m: float = 2000.0
-    slew_speed_deg_s: float = 90.0    # typical mid-range PTZ pan/tilt speed
+    slew_speed_deg_s: float = 90.0    # pan/tilt slew speed (deg/s)
+    settle_s: float = 1.5            # stabilisation time after each move before dwell
+    zoom_full_sweep_s: float = 3.0    # time for a full min->max optical zoom
+
+
+def _preset_focal(preset: PTZPreset, camera: CameraConfig) -> float:
+    if preset.focal_mm and preset.focal_mm > 0:
+        return float(max(min(preset.focal_mm, camera.focal_max_mm), camera.focal_min_mm))
+    return camera.focal_min_mm if preset.lens_mode == "min" else camera.focal_max_mm
 
 
 @dataclass
@@ -53,8 +62,10 @@ class PTZTourResult:
     combined: MultiViewshedResult    # union of every preset (best DORI per cell)
     revisit_grid: np.ndarray         # seconds; +inf where no preset ever covers
     tour_period_s: float
-    active_dwell_s: float            # sum of preset dwell (excludes slew)
-    slew_total_s: float
+    active_dwell_s: float            # sum of preset dwell (excludes transitions)
+    slew_total_s: float             # pan/tilt travel time over the tour
+    zoom_total_s: float             # optical zoom travel time over the tour
+    settle_total_s: float           # stabilisation time over the tour
     mean_revisit_s: float            # over cells covered at least once
     worst_revisit_s: float
     continuous_area_m2: float        # always in some preset's frame (revisit ~ 0)
@@ -63,19 +74,29 @@ class PTZTourResult:
     preset_labels: List[str]
 
 
-def _tour_timeline(tour: PTZTour):
-    """(start, end, preset_index) windows over one period, plus the period."""
-    n = len(tour.presets)
+def _transition_s(tour: PTZTour, cur: PTZPreset, nxt: PTZPreset) -> tuple[float, float, float]:
+    """(pan/tilt slew, optical zoom, settle) seconds between two presets."""
     speed = max(tour.slew_speed_deg_s, 1.0)
+    d_pan = abs((nxt.pan_deg - cur.pan_deg + 180.0) % 360.0 - 180.0)
+    d_tilt = abs(nxt.tilt_deg - cur.tilt_deg)
+    slew = max(d_pan, d_tilt) / speed                      # pan & tilt move together
+    zoom_span = max(tour.camera.focal_max_mm - tour.camera.focal_min_mm, 1e-6)
+    d_focal = abs(_preset_focal(nxt, tour.camera) - _preset_focal(cur, tour.camera))
+    zoom = (d_focal / zoom_span) * max(tour.zoom_full_sweep_s, 0.0)
+    settle = tour.settle_s if (slew > 0.05 or zoom > 0.05) else 0.0
+    return slew, zoom, settle
+
+
+def _tour_timeline(tour: PTZTour):
+    """(start, end, preset_index) dwell windows over one period, plus the period."""
+    n = len(tour.presets)
     windows = []
     t = 0.0
     for i, ps in enumerate(tour.presets):
         windows.append((t, t + ps.dwell_s, i))
         t += ps.dwell_s
-        nxt = tour.presets[(i + 1) % n]
-        d_pan = abs((nxt.pan_deg - ps.pan_deg + 180.0) % 360.0 - 180.0)
-        d_tilt = abs(nxt.tilt_deg - ps.tilt_deg)
-        t += max(d_pan, d_tilt) / speed
+        slew, zoom, settle = _transition_s(tour, ps, tour.presets[(i + 1) % n])
+        t += slew + zoom + settle
     return windows, t
 
 
@@ -103,6 +124,7 @@ def evaluate_ptz_tour(terrain: TerrainData, tour: PTZTour, *,
             x_m=tour.x_m, y_m=tour.y_m, mast_height_m=tour.mast_height_m,
             camera=tour.camera, lens_mode=ps.lens_mode, pan_deg=ps.pan_deg,
             tilt_deg=ps.tilt_deg, max_range_m=tour.max_range_m, label=ps.name,
+            focal_mm_override=_preset_focal(ps, tour.camera),
         )
         for ps in tour.presets
     ]
@@ -113,6 +135,13 @@ def evaluate_ptz_tour(terrain: TerrainData, tour: PTZTour, *,
     assert combined is not None
 
     windows, period = _tour_timeline(tour)
+    n = len(tour.presets)
+    slew_tot = zoom_tot = settle_tot = 0.0
+    for i, ps in enumerate(tour.presets):
+        s, z, st = _transition_s(tour, ps, tour.presets[(i + 1) % n])
+        slew_tot += s
+        zoom_tot += z
+        settle_tot += st
 
     # per-cell bitmask of which presets frame it
     mask = np.zeros(combined.visibility_mask.shape, dtype=np.int64)
@@ -135,7 +164,9 @@ def evaluate_ptz_tour(terrain: TerrainData, tour: PTZTour, *,
         revisit_grid=revisit,
         tour_period_s=period,
         active_dwell_s=active_dwell,
-        slew_total_s=period - active_dwell,
+        slew_total_s=slew_tot,
+        zoom_total_s=zoom_tot,
+        settle_total_s=settle_tot,
         mean_revisit_s=float(cov_vals.mean()) if cov_vals.size else 0.0,
         worst_revisit_s=float(cov_vals.max()) if cov_vals.size else 0.0,
         continuous_area_m2=float(np.count_nonzero(covered & (revisit < 1e-6)) * cell_a),

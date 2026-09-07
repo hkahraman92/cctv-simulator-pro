@@ -23,15 +23,31 @@ def test_none_without_presets():
     assert evaluate_ptz_tour(_flat(), tour) is None
 
 
-def test_tour_period_includes_dwell_and_slew():
-    tour = PTZTour(x_m=0, y_m=0, mast_height_m=8, camera=CAM, slew_speed_deg_s=90.0, presets=[
-        PTZPreset("A", pan_deg=0, dwell_s=5),
-        PTZPreset("B", pan_deg=90, dwell_s=5),
+def test_tour_period_includes_dwell_slew_and_settle():
+    tour = PTZTour(x_m=0, y_m=0, mast_height_m=8, camera=CAM, slew_speed_deg_s=90.0,
+                   settle_s=1.5, zoom_full_sweep_s=3.0, presets=[
+        PTZPreset("A", pan_deg=0, lens_mode="max", dwell_s=5),
+        PTZPreset("B", pan_deg=90, lens_mode="max", dwell_s=5),
     ])
     windows, period = _tour_timeline(tour)
-    # 2x5 s dwell + 2x (90 deg / 90 deg/s) slew = 10 + 2 = 12 s
-    assert period == pytest.approx(12.0)
+    # 2x5 dwell + 2x(90/90) slew + 2x1.5 settle + 0 zoom (same lens end) = 15 s
+    assert period == pytest.approx(15.0)
     assert len(windows) == 2
+
+
+def test_zoom_transition_adds_time():
+    base = dict(x_m=0, y_m=0, mast_height_m=8, camera=CAM, slew_speed_deg_s=90.0,
+                settle_s=0.0, zoom_full_sweep_s=4.0)
+    no_zoom = PTZTour(**base, presets=[
+        PTZPreset("A", pan_deg=0, focal_mm=6, dwell_s=5),
+        PTZPreset("B", pan_deg=0, focal_mm=6, dwell_s=5)])
+    full_zoom = PTZTour(**base, presets=[
+        PTZPreset("A", pan_deg=0, focal_mm=6, dwell_s=5),      # wide
+        PTZPreset("B", pan_deg=0, focal_mm=120, dwell_s=5)])   # full tele
+    _, p0 = _tour_timeline(no_zoom)
+    _, p1 = _tour_timeline(full_zoom)
+    # one full min->max sweep each way => +2 * 4 s
+    assert p1 == pytest.approx(p0 + 8.0)
 
 
 def test_more_presets_cover_more_area():

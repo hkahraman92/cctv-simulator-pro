@@ -90,8 +90,15 @@ def calculate_3d_viewshed(terrain: TerrainData,
                           earth_curvature: bool = True,
                           ray_step_m: float = 3.0,
                           visibility_km: float = 40.0,
-                          weather: str = "") -> ViewshedResult:
-    """Computes comprehensive 3D viewshed, terrain occlusion, and DORI mapping."""
+                          weather: str = "",
+                          focal_mm_override: Optional[float] = None,
+                          with_profile: bool = True) -> ViewshedResult:
+    """Computes comprehensive 3D viewshed, terrain occlusion, and DORI mapping.
+
+    ``focal_mm_override`` sets an explicit focal length (mm) — for a PTZ preset
+    at an intermediate zoom, instead of the min/max lens_mode ends.
+    ``with_profile=False`` skips the (unused-in-batch) elevation cross-section.
+    """
     rows, cols = terrain.rows, terrain.cols
     cell_size = terrain.cell_size_m
 
@@ -100,7 +107,10 @@ def calculate_3d_viewshed(terrain: TerrainData,
     cam_z = cam_ground_z + mast_height_m
 
     # 2. Camera Optics & FOV
-    focal_mm = camera.focal_min_mm if lens_mode == "min" else camera.focal_max_mm
+    if focal_mm_override and focal_mm_override > 0:
+        focal_mm = float(max(min(focal_mm_override, camera.focal_max_mm), camera.focal_min_mm))
+    else:
+        focal_mm = camera.focal_min_mm if lens_mode == "min" else camera.focal_max_mm
     sw, sh = SENSOR_DIMS_MM.get(camera.sensor_name, (5.6, 4.2))
     res_w, res_h = RESOLUTIONS.get(camera.resolution_name, (1920, 1080))
 
@@ -241,30 +251,33 @@ def calculate_3d_viewshed(terrain: TerrainData,
     dori_grid[~in_fov_cone] = ZONE_OUT_OF_FOV
     vis_mask[~in_fov_cone] = False
 
-    # 6. Extract Elevation Profile along the central optical axis
-    prof_dists, prof_elevs, prof_coords = terrain.get_profile_between(
-        cam_x_m, cam_y_m,
-        cam_x_m + effective_max_range * opt_dir_x,
-        cam_y_m + effective_max_range * opt_dir_y,
-        num_samples=250
-    )
-
-    tilt_rad = math.radians(tilt_deg)
-    prof_ray_z = cam_z + prof_dists * math.tan(tilt_rad)
-    prof_vis = np.ones_like(prof_dists, dtype=bool)
-
-    max_tan = -1e9
-    for i, (d, el) in enumerate(zip(prof_dists, prof_elevs)):
-        if d < 1.0:
-            continue
-        curv = ((d * d) / (2.0 * R_EARTH) * (1.0 - K_REFRACT)) if earth_curvature else 0.0
-        eff_el = el - curv
-        tan_a = (eff_el - cam_z) / d
-        if tan_a >= max_tan:
-            max_tan = tan_a
-            prof_vis[i] = True
-        else:
-            prof_vis[i] = False
+    # 6. Elevation profile along the central optical axis (skipped in batch runs
+    # that never read the per-camera cross-section).
+    if with_profile:
+        prof_dists, prof_elevs, prof_coords = terrain.get_profile_between(
+            cam_x_m, cam_y_m,
+            cam_x_m + effective_max_range * opt_dir_x,
+            cam_y_m + effective_max_range * opt_dir_y,
+            num_samples=250
+        )
+        tilt_rad = math.radians(tilt_deg)
+        prof_ray_z = cam_z + prof_dists * math.tan(tilt_rad)
+        prof_vis = np.ones_like(prof_dists, dtype=bool)
+        max_tan = -1e9
+        for i, (d, el) in enumerate(zip(prof_dists, prof_elevs)):
+            if d < 1.0:
+                continue
+            curv = ((d * d) / (2.0 * R_EARTH) * (1.0 - K_REFRACT)) if earth_curvature else 0.0
+            tan_a = (el - curv - cam_z) / d
+            if tan_a >= max_tan:
+                max_tan = tan_a
+                prof_vis[i] = True
+            else:
+                prof_vis[i] = False
+    else:
+        _empty = np.zeros(0, dtype=np.float64)
+        prof_dists = prof_elevs = prof_ray_z = _empty
+        prof_vis = np.zeros(0, dtype=bool)
 
     # 7. Compute Statistics
     cell_area = cell_size * cell_size
@@ -324,6 +337,23 @@ class CameraPlacement:
     tilt_deg: float = -5.0
     max_range_m: float = 2000.0
     label: str = ""
+    focal_mm_override: Optional[float] = None   # explicit zoom (mm), overrides lens_mode
+
+
+def placement_bounds_warnings(terrain: TerrainData,
+                              placements: List["CameraPlacement"]) -> List[str]:
+    """Non-fatal warnings for placements outside the terrain frame — their
+    elevation is clamped to the nearest edge cell and the result is unreliable."""
+    x0, y0 = terrain.origin_x, terrain.origin_y
+    x1, y1 = x0 + terrain.width_m, y0 + terrain.height_m
+    out = []
+    for i, p in enumerate(placements):
+        if not (x0 <= p.x_m <= x1 and y0 <= p.y_m <= y1):
+            out.append(
+                f"{p.label or f'yerleşim {i + 1}'}: ({p.x_m:.0f}, {p.y_m:.0f}) arazi "
+                f"çerçevesi dışında [{x0:.0f}-{x1:.0f}] × [{y0:.0f}-{y1:.0f}] — "
+                "zemin rakımı kenara sabitlendi, sonuç güvenilmez.")
+    return out
 
 
 @dataclass
@@ -369,6 +399,7 @@ def calculate_multi_camera_viewshed(terrain: TerrainData,
             camera=p.camera, lens_mode=p.lens_mode, pan_deg=p.pan_deg, tilt_deg=p.tilt_deg,
             max_range_m=p.max_range_m, earth_curvature=earth_curvature,
             visibility_km=visibility_km, weather=weather,
+            focal_mm_override=p.focal_mm_override, with_profile=False,
         ))
 
     ppm = np.zeros((rows, cols), np.float32)
