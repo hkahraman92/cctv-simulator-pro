@@ -162,6 +162,17 @@ class TerrainViewshedWindow:
         self.show_coverage_var = tk.BooleanVar(value=False)
         self.stat_coverage_map_var = tk.StringVar(value="-")
         self._coverage_grid = None
+
+        # Multi-camera unified viewshed + PTZ tour (tab 3)
+        self._multi_vs = None            # MultiViewshedResult
+        self._ptz_result = None          # PTZTourResult
+        self._ptz_presets = []           # list of (name, pan, tilt, lens_mode, dwell)
+        self.show_multi_var = tk.BooleanVar(value=True)
+        self.multi_overlay_var = tk.StringVar(value="dori")   # "dori" | "overlap" | "revisit"
+        self.mc_stat_var = tk.StringVar(value="-")
+        self.mc_overlap_var = tk.StringVar(value="-")
+        self.ptz_stat_var = tk.StringVar(value="-")
+        self.ptz_dwell_var = tk.DoubleVar(value=6.0)
         import datetime as _dtmod
         self.glare_date_var = tk.StringVar(value=str(_dtmod.date.today()))
         self.stat_glare_var = tk.StringVar(value="-")
@@ -276,9 +287,11 @@ class TerrainViewshedWindow:
 
         self.tab_single = ttk.Frame(self.mode_notebook, padding=6)
         self.tab_perimeter = ttk.Frame(self.mode_notebook, padding=6)
+        self.tab_multi = ttk.Frame(self.mode_notebook, padding=6)
 
         self.mode_notebook.add(self.tab_single, text="⛰️ Tekil Kamera & Viewshed")
         self.mode_notebook.add(self.tab_perimeter, text="🛡️ Çevre Çiti (50-100 Kamera)")
+        self.mode_notebook.add(self.tab_multi, text="🎯 Çoklu Kamera + PTZ")
         self.mode_notebook.bind("<<NotebookTabChanged>>", self._on_mode_tab_changed)
 
         # ── TAB 1: SINGLE CAMERA VIEWSHED ──
@@ -286,6 +299,9 @@ class TerrainViewshedWindow:
 
         # ── TAB 2: MULTI-CAMERA PERIMETER AUTO-PLANNER ──
         self._build_perimeter_planner_tab(self.tab_perimeter)
+
+        # ── TAB 3: MULTI-CAMERA UNIFIED VIEWSHED + PTZ TOUR ──
+        self._build_multi_ptz_tab(self.tab_multi)
 
         # ── RIGHT AREA: MAP CANVAS (TOP) + ELEVATION PROFILE / BOM (BOTTOM) ──
         right_frame = ttk.Frame(main_paned)
@@ -558,6 +574,197 @@ class TerrainViewshedWindow:
         self._create_stat_row(grp_bom, "30 Günlük RAID Depolama:", self.bom_storage_var, ACCENT_PURPLE)
 
         StyledButton(parent, text="💾 Kamera Listesi & BOM İndir (.xlsx / .csv)", command=self._export_perimeter_bom, bootstyle="primary-outline").pack(fill=tk.X, pady=(4, 0))
+
+    # ── TAB 3: MULTI-CAMERA UNIFIED VIEWSHED + PTZ TOUR ──
+    def _build_multi_ptz_tab(self, parent):
+        grp_mc = ttk.LabelFrame(parent, text="Çoklu Kamera Birleşik Viewshed (otoriter motor)", padding=6)
+        grp_mc.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(grp_mc, text="Çevre çiti planındaki tüm kameraları gerçek görüş "
+                               "alanı motoruyla birleştirir.", wraplength=250,
+                  foreground=TEXT_MUTED).pack(anchor="w", pady=(0, 4))
+        StyledButton(grp_mc, text="🎯 Çit Kameralarından Birleşik Viewshed",
+                     command=self._run_multi_viewshed, bootstyle="success").pack(fill=tk.X, pady=(0, 4))
+        self._create_stat_row(grp_mc, "Birleşik kapsama:", self.mc_stat_var, ACCENT_GREEN)
+        self._create_stat_row(grp_mc, "Örtüşen / yedeksiz:", self.mc_overlap_var, ACCENT_AMBER)
+
+        grp_ov = ttk.LabelFrame(parent, text="Harita Katmanı", padding=6)
+        grp_ov.pack(fill=tk.X, pady=(0, 6))
+        ttk.Checkbutton(grp_ov, text="Birleşik katmanı göster", variable=self.show_multi_var,
+                        command=self._render_map_canvas).pack(anchor="w")
+        for val, lbl in (("dori", "DORI seviyeleri"), ("overlap", "Kamera örtüşmesi (yedeklilik)"),
+                         ("revisit", "PTZ revizit süresi")):
+            ttk.Radiobutton(grp_ov, text=lbl, value=val, variable=self.multi_overlay_var,
+                            command=self._render_map_canvas).pack(anchor="w", padx=8)
+
+        grp_ptz = ttk.LabelFrame(parent, text="PTZ Preset Turu (mevcut kamera + konum)", padding=6)
+        grp_ptz.pack(fill=tk.X, pady=(0, 6))
+        self.ptz_tree = ttk.Treeview(grp_ptz, columns=("pan", "tilt", "lens", "dwell"),
+                                     show="headings", height=5)
+        for c, txt, wd in (("pan", "Pan°", 45), ("tilt", "Tilt°", 45),
+                           ("lens", "Zoom", 55), ("dwell", "Bekle sn", 55)):
+            self.ptz_tree.heading(c, text=txt)
+            self.ptz_tree.column(c, width=wd, anchor="center")
+        self.ptz_tree.pack(fill=tk.X, pady=(0, 4))
+
+        row = ttk.Frame(grp_ptz)
+        row.pack(fill=tk.X)
+        ttk.Label(row, text="Bekle:").pack(side=tk.LEFT)
+        ttk.Spinbox(row, from_=1, to=60, textvariable=self.ptz_dwell_var, width=5).pack(side=tk.LEFT, padx=(2, 6))
+        StyledButton(row, text="＋ Bu bakışı ekle", command=self._ptz_add_preset,
+                     bootstyle="info-outline").pack(side=tk.LEFT, fill=tk.X, expand=True)
+        row2 = ttk.Frame(grp_ptz)
+        row2.pack(fill=tk.X, pady=(3, 0))
+        StyledButton(row2, text="Seçiliyi sil", command=self._ptz_del_preset,
+                     bootstyle="danger-outline").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+        StyledButton(row2, text="Tümünü temizle", command=self._ptz_clear_presets,
+                     bootstyle="secondary-outline").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
+        StyledButton(grp_ptz, text="🔄 Turu Çöz (kapsama + revizit)",
+                     command=self._run_ptz_tour, bootstyle="success").pack(fill=tk.X, pady=(4, 0))
+        self._create_stat_row(grp_ptz, "Tur / revizit:", self.ptz_stat_var, ACCENT_CYAN)
+
+        StyledButton(parent, text=_t("📄 Mühendislik Raporu (PDF / CSV — ASELSAN)"),
+                     command=self._export_engineering_report, bootstyle="primary-outline").pack(fill=tk.X, pady=(6, 0))
+
+    # ── multi-camera unified viewshed ──
+    def _placements_from_perimeter(self):
+        from ..viewshed_3d import CameraPlacement
+        if not self.perimeter_plan or not self.perimeter_plan.placed_cameras:
+            return []
+        rng = self.perimeter_plan.placed_cameras[0].effective_range_m
+        out = []
+        for c in self.perimeter_plan.placed_cameras:
+            lm = "max" if "köşe" not in c.camera_model else "min"
+            out.append(CameraPlacement(
+                x_m=c.x_m, y_m=c.y_m, mast_height_m=c.mast_height_m, camera=self.current_camera,
+                lens_mode=lm, pan_deg=c.pan_deg, tilt_deg=c.tilt_deg,
+                max_range_m=max(c.effective_range_m, rng), label=f"Direk {c.pole_id}"))
+        return out
+
+    def _run_multi_viewshed(self):
+        from ..viewshed_3d import calculate_multi_camera_viewshed, placement_bounds_warnings
+        placements = self._placements_from_perimeter()
+        if not placements:
+            messagebox.showinfo("Birleşik Viewshed",
+                                "Önce 'Çevre Çiti' sekmesinde 'Otomatik Diz' ile kamera yerleştirin.",
+                                parent=self.window)
+            return
+        if len(placements) > 120:
+            step = (len(placements) // 120) + 1
+            if not messagebox.askyesno(
+                    "Çok kamera",
+                    f"{len(placements)} kamera birleşik viewshed'i uzun sürebilir "
+                    f"(~{len(placements) * 4 // 1000 + 1} sn).\n"
+                    f"Her {step}. kamera örneklenerek hızlandırılsın mı?",
+                    parent=self.window):
+                pass
+            else:
+                placements = placements[::step]
+        warns = placement_bounds_warnings(self.terrain, placements)
+        if warns:
+            messagebox.showwarning("Yerleşim uyarısı", "\n".join(warns[:6]), parent=self.window)
+        weather = self.weather_var.get()
+        self.window.config(cursor="watch")
+        self.window.update_idletasks()
+        try:
+            self._multi_vs = calculate_multi_camera_viewshed(
+                self.terrain, placements, visibility_km=WEATHER_PRESETS.get(weather, 40.0),
+                weather=weather)
+        finally:
+            self.window.config(cursor="")
+        mv = self._multi_vs
+        if mv is None:
+            return
+        self.mc_stat_var.set(f"%{mv.coverage_pct:.1f} ({len(placements)} kamera)")
+        self.mc_overlap_var.set(f"{mv.overlap_area_m2 / 1e4:.1f} / {mv.single_cover_area_m2 / 1e4:.1f} ha")
+        self.show_multi_var.set(True)
+        self.multi_overlay_var.set("dori")
+        self._render_map_canvas()
+
+    # ── PTZ preset tour ──
+    def _ptz_add_preset(self):
+        pan = round(self.pan_deg_var.get(), 1)
+        tilt = round(self.tilt_deg_var.get(), 1)
+        lens = self.lens_mode_var.get()
+        dwell = round(self.ptz_dwell_var.get(), 1)
+        name = f"Bakış {len(self._ptz_presets) + 1}"
+        self._ptz_presets.append((name, pan, tilt, lens, dwell))
+        self.ptz_tree.insert("", "end", values=(pan, tilt, "Dar" if lens == "max" else "Geniş", dwell))
+
+    def _ptz_del_preset(self):
+        sel = self.ptz_tree.selection()
+        if not sel:
+            return
+        idx = self.ptz_tree.index(sel[0])
+        self.ptz_tree.delete(sel[0])
+        del self._ptz_presets[idx]
+
+    def _ptz_clear_presets(self):
+        self._ptz_presets.clear()
+        for iid in self.ptz_tree.get_children():
+            self.ptz_tree.delete(iid)
+        self._ptz_result = None
+
+    def _run_ptz_tour(self):
+        from ..ptz_tour import PTZPreset, PTZTour, evaluate_ptz_tour
+        if len(self._ptz_presets) < 2:
+            messagebox.showinfo("PTZ Tur", "En az 2 preset ekleyin (mevcut pan/tilt/zoom'u '＋ Bu bakışı ekle' ile kaydedin).",
+                                parent=self.window)
+            return
+        weather = self.weather_var.get()
+        tour = PTZTour(
+            x_m=self.cam_x_var.get(), y_m=self.cam_y_var.get(),
+            mast_height_m=self.mast_height_var.get(), camera=self.current_camera,
+            max_range_m=self.max_range_var.get(),
+            presets=[PTZPreset(name=n, pan_deg=p, tilt_deg=tl, lens_mode=lm, dwell_s=d)
+                     for (n, p, tl, lm, d) in self._ptz_presets])
+        self.window.config(cursor="watch")
+        self.window.update_idletasks()
+        try:
+            self._ptz_result = evaluate_ptz_tour(
+                self.terrain, tour, visibility_km=WEATHER_PRESETS.get(weather, 40.0), weather=weather)
+        finally:
+            self.window.config(cursor="")
+        r = self._ptz_result
+        if r is None:
+            return
+        self.ptz_stat_var.set(f"periyot {r.tour_period_s:.0f} sn · revizit ort {r.mean_revisit_s:.0f} / "
+                              f"en kötü {r.worst_revisit_s:.0f} sn")
+        self.show_multi_var.set(True)
+        self.multi_overlay_var.set("revisit")
+        self._render_map_canvas()
+
+    def _draw_multi_overlay_arr(self, rows, cols):
+        """RGBA (rows, cols) overlay for the active multi/ptz layer, or None."""
+        if not self.show_multi_var.get():
+            return None
+        mode = self.multi_overlay_var.get()
+        ov = np.zeros((rows, cols, 4), dtype=np.uint8)
+        if mode == "revisit" and self._ptz_result is not None:
+            g = self._ptz_result.revisit_grid
+            if g.shape != (rows, cols):
+                return None
+            finite = np.isfinite(g)
+            ov[finite & (g < 10)] = [0, 230, 118, 130]
+            ov[finite & (g >= 10) & (g < 30)] = [255, 214, 0, 125]
+            ov[finite & (g >= 30) & (g < 60)] = [255, 112, 67, 120]
+            ov[finite & (g >= 60)] = [255, 77, 109, 120]
+            return np.flipud(ov)
+        mv = self._multi_vs
+        if mv is None or mv.dori_grid.shape != (rows, cols):
+            return None
+        if mode == "overlap":
+            s = mv.seen_count_grid
+            ov[s == 1] = [255, 214, 0, 110]
+            ov[s == 2] = [0, 230, 118, 120]
+            ov[s >= 3] = [0, 229, 255, 130]
+            return np.flipud(ov)
+        d = mv.dori_grid
+        ov[d == ZONE_IDENT] = [0, 230, 118, 150]
+        ov[d == ZONE_RECOG] = [255, 179, 0, 130]
+        ov[d == ZONE_OBSERVE] = [255, 112, 67, 115]
+        ov[d == ZONE_DETECT] = [255, 77, 109, 100]
+        ov[d == ZONE_OCCLUDED] = [12, 14, 18, 200]
+        return np.flipud(ov)
 
     # ── TILE CACHE ──
     def _refresh_tile_cache_label(self):
@@ -999,7 +1206,7 @@ class TerrainViewshedWindow:
 
     def _on_mode_tab_changed(self, _e=None):
         selected_idx = self.mode_notebook.index(self.mode_notebook.select())
-        self.planner_mode_var.set("single" if selected_idx == 0 else "perimeter")
+        self.planner_mode_var.set({0: "single", 1: "perimeter"}.get(selected_idx, "multi"))
         if self.planner_mode_var.get() == "perimeter":
             self.lbl_bottom_title.configure(text="📊 50-100 KAMERALIK ÇEVRE ÇİTİ DİZİLİMİ & KULE MATRİSİ (PERIMETER SCHEDULE)")
             if self.perimeter_plan is None:
@@ -1175,10 +1382,13 @@ class TerrainViewshedWindow:
         viewshed = self.result
         coverage = self._coverage_grid
         perimeter = self.perimeter_plan if (self.perimeter_plan and self.perimeter_plan.placed_cameras) else None
-        if viewshed is None and coverage is None and perimeter is None:
+        multi_vs = self._multi_vs
+        ptz = self._ptz_result
+        if all(x is None for x in (viewshed, coverage, perimeter, multi_vs, ptz)):
             messagebox.showwarning(
                 "Rapor",
-                "Rapora aktarılacak analiz yok.\nÖnce bir görüş alanı hesaplayın veya çevre çiti dizin.")
+                "Rapora aktarılacak analiz yok.\nÖnce bir görüş alanı hesaplayın, çevre çiti dizin "
+                "veya PTZ turu çözün.")
             return
 
         file_path = filedialog.asksaveasfilename(
@@ -1199,6 +1409,8 @@ class TerrainViewshedWindow:
                 viewshed=viewshed,
                 coverage=coverage,
                 perimeter=perimeter,
+                multi_viewshed=multi_vs,
+                ptz=ptz,
             )
             if file_path.lower().endswith(".csv"):
                 export_engineering_report_csv(file_path, **kw)
@@ -1555,6 +1767,13 @@ class TerrainViewshedWindow:
                 dori_img = Image.fromarray(dori_overlay, mode="RGBA").resize((full_map_img.width, full_map_img.height), Image.Resampling.NEAREST)
                 full_map_img = Image.alpha_composite(full_map_img, dori_img)
 
+        # 2b. Multi-camera unified viewshed / PTZ revisit overlay
+        _mc_arr = self._draw_multi_overlay_arr(rows, cols)
+        if _mc_arr is not None:
+            _mc_img = Image.fromarray(_mc_arr, mode="RGBA").resize(
+                (full_map_img.width, full_map_img.height), Image.Resampling.NEAREST)
+            full_map_img = Image.alpha_composite(full_map_img, _mc_img)
+
         # 3. Exact Metric Screen Placement for Terrain Raster
         img_x0, img_y0 = self.world_to_screen_px(0.0, self.terrain.height_m)
         img_x1, img_y1 = self.world_to_screen_px(self.terrain.width_m, 0.0)
@@ -1563,7 +1782,7 @@ class TerrainViewshedWindow:
 
         if img_w > 10 and img_h > 10:
             resized_terrain = full_map_img.resize((img_w, img_h), Image.Resampling.BILINEAR)
-            self._map_photo = ImageTk.PhotoImage(resized_terrain)
+            self._map_photo = ImageTk.PhotoImage(resized_terrain, master=cv)  # Kural 5
             cv.create_image(img_x0, img_y0, image=self._map_photo, anchor="nw")
             cv.create_rectangle(img_x0, img_y0, img_x1, img_y1, outline=PANEL_BORDER, width=2)
 
