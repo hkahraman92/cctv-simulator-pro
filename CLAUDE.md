@@ -127,6 +127,11 @@ metreye çevrilirken boylam merkez enlem kosinüsüyle ölçeklenir.
 mozaik bırakıyor, arayüz de bunu "başarıyla indirildi" diye raporluyordu.
 `_download_mosaic` %70 altına düşerse `RuntimeError` atar.
 
+**NaN merkezîdir.** `TerrainData.__post_init__` grid'deki her NaN/inf'i sonlu
+hücrelerin ortalamasıyla doldurur (dtype korunur). Nodata bilinear
+interpolasyondan geçip viewshed/kapsama sayılarına sızıyordu; artık hiçbir alt
+katman NaN'a karşı savunma yapmak zorunda değil.
+
 **Karo sunucusu nezaketi.** Gerçek User-Agent (tarayıcı taklidi OSM politikasına
 aykırı ve IP bloklatır), OSM/OpenTopo için `max_workers=2`, disk önbelleği
 (`%APPDATA%\<uygulama>\tile-cache`), `MAX_TILES=400` bütçesi, kaynağa göre atıf.
@@ -201,6 +206,12 @@ model (Ollama)" kutusu işaretliyse önce `localhost:11434` denenir,
 **İster şablonu** (kaydedilmiş ister setini mevcut kamera kütüphanesine karşı
 yeniden değerlendir).
 
+Ollama yolu `use_ollama_var` işaretliyse Gemini anahtarı kontrol edilmeden
+**önce** çalışır (yoksa anahtarsız kullanıcı yerel modele hiç ulaşamıyordu).
+`_run_ollama_in_thread`: `analyze_with_ollama` senkron `urlopen(timeout=300)`
+yapıyor, ilk model yüklemesinde arayüzü donduruyordu → daemon thread + ilerleme
+diyaloğu + `after(150)` poll; yok edilmiş diyalog sessizce iptal eder.
+
 `rule_based_compliance` artık iki tür ister çıkarır:
 - Klasik anahtar-kelime (`extract_rule_requirements`, ~30 kalıp) — broşür alanına
   karşı `evaluate_rule_requirement`.
@@ -211,9 +222,15 @@ yeniden değerlendir).
   ("optik motor" / "broşür"), `standard_clause`, `spec_quote`, `confidence`.
 
 `compliance_standards`: EN 62676-4 DORI tablosu (Detect 25 … Identify 250),
-TR görev→PPM (`teşhis`→identify, `plaka`→143), kategori→madde eşlemesi,
-`find_ambiguities` (madde madde: nicel-olmayan sıfat + sayı yok → RFI sorusu).
-Sonuçta `ambiguities` / `clarification_questions`.
+TR görev→PPM (`teşhis`→identify, `plaka`→143), kategori→madde eşlemesi.
+`_TASK_TR` **özgül köklerle** eşleşir: "kontrol" ("erişim kontrolü") ve çıplak
+"tanı" ("tanımlı") kaldırıldı — sahte DORI isteri üretiyorlardı; "kimlik" →
+"kimlik tespit/belirle", "takip" → "hareket takib". `compliance_optics._DIST`
+penceresi 40 → 90 karakter (uzun TR cümlesinde "plaka … 25 metre" kaçıyordu).
+`find_ambiguities`: madde içinde herhangi bir rakam değil, **birim taşıyan**
+sayı (`_SPEC_NUMBER`: MP/dB/lux/m/%…) varsa belirsiz sıfat atlanır — "1 adet
+yüksek çözünürlüklü" artık işaretlenir. Sonuçta `ambiguities` /
+`clarification_questions`.
 
 `compliance_report.build_statement(result)` → EN 62676-4 uygunluk beyanı
 (markdown; `write_statement_pdf` ince PDF). `requirement_library` şablonları
@@ -315,19 +332,21 @@ menziline göre kapsanıyor mu; ardışık ≥4 m kapsanmayan koşu `FenceGap`.
 `coverage_percentage` gerçek orandır (eskiden sabit 100/92.5, `gaps` hiç
 dolmuyordu). `map_3d_window` BOM'da "Çit Kapsaması" satırı + haritada kırmızı
 boşluk çizgileri + BOM CSV başlığında boşluk listesi. `_analyse_fence_coverage`
-arazi LOS uygulamaz (o `compute_coverage_grid`'de) — saf geometrik süreklilik.
+`terrain` verilince **DEM görüş hattı** de uygular (kamera gözünden çit noktasına
+12 örnek, sırt 0.5 m aşarsa o kamera o noktayı görmüyor).
 
 ## Açık işler
 
 - Klasik `main_window` DORI tablosu hâlâ berrak hava (bilinçli — DORI berrak-hava
   standardı; atmosfer 3B/harita/tezgâh pencerelerinde). `k` orada var.
-- Kapsama occlusion ışın örneklemesi arazi hücre boyutuna göre; çok keskin dar
-  sırtlar hâlâ kaçabilir. Otorite tekil `calculate_3d_viewshed`.
-- `_analyse_fence_coverage` arazi engelini saymaz; sarp arazide çit "kapsandı"
-  görünüp `compute_coverage_grid` ısı haritasında boşuk çıkabilir.
+- Occlusion ışın örneklemesi artık ≤0.5 hücre adım (viewshed) / ≤1 hücre
+  (`compute_coverage_grid`, `n_samp` tavanı 90); DDA değil, çok ince çapraz
+  sırtlar teorik olarak hâlâ kaçabilir. Otorite tekil `calculate_3d_viewshed`.
 - `load_geotiff_or_dem` yerel GeoTIFF için `origin`'i 0,0 yapar (gerçek dünya
   koordinatını atar) — indirilen DEM'lerle tutarlı ama gerçek jeoreferans
   gerekirse dönüştürülmeli.
+- Şartname görev sözlüğü (`_TASK_TR`) kısaltıldı; nadir eş anlamlılar
+  ("gözetim", "seçme") kaçabilir — few-shot LLM yolu yakalar.
 
 ## cctv_iq — görüntü kalitesi ölçüm çekirdeği
 
