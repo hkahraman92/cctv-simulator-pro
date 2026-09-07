@@ -118,7 +118,10 @@ Prosedürel önayarlar, gri tonlamalı heightmap ve son çare arazi `False` ve a
 
 **Yön.** `TerrainData.z_grid` satır 0 = **güney** (artan +Y kuzey). Mozaik satır 0 =
 kuzey. Render `np.flipud` yapar. DEM'i `z_grid`'e yazarken `flipud` şart, yoksa arazi
-kuzey-güney aynalanır.
+kuzey-güney aynalanır. `terrain_loader._terrain_from_rasterio` da yapar: kuzey-yukarı
+GeoTIFF (`transform.e < 0`) `flipud`'lanır, `origin_x/y = 0` (yerel metre çerçevesi,
+indirilen DEM'lerle aynı), nodata `nanmean` ile doldurulur. Coğrafi (derece) grid
+metreye çevrilirken boylam merkez enlem kosinüsüyle ölçeklenir.
 
 **Başarısız indirme yüksek sesle başarısız olur.** Sessizce düşen karolar düz gri bir
 mozaik bırakıyor, arayüz de bunu "başarıyla indirildi" diye raporluyordu.
@@ -256,12 +259,15 @@ etiketleme hattı. Tezgâhta "🧠 Eğitim Verisi Dışa Aktar". Fine-tune reçe
   yapılan "rastgele config diff'i" alışkanlığının otomatik hâli.
 - `test_mosaic_math.py` — `_fetch_tile` monkeypatch'li; Mercator/bbox/karo
   matematiği ve `_download_mosaic` kırpma + hata yolları.
-- `test_terrain.py` — `is_measured` bayrağı, `download_terrain_dem` kuzey-güney
-  `flipud` sözleşmesi, bilinear yükselti.
-- `test_perimeter.py` — EN 62676-4 aralık formülü, BOM sayıları.
+- `test_terrain.py` — `is_measured` bayrağı, `download_terrain_dem` + yerel
+  GeoTIFF (`_terrain_from_rasterio`, sahte rasterio) kuzey-güney `flipud`
+  sözleşmesi, nodata doldurma, bilinear yükselti.
+- `test_perimeter.py` — EN 62676-4 aralık formülü, BOM sayıları, boşluk tespiti
+  (kapalı halka ≥%95, açık uçta kör-nokta boşluğu), köşe/uç kameraları.
 - `test_cli_headless.py` — başsız CLI + `project_io` roundtrip.
-- `test_viewshed.py` — LOS occlusion (duvar gölgesi), FOV konisi, DORI düşüşü,
-  atmosferik menzil, `effective_px_ratio` optik limiti.
+- `test_viewshed.py` — LOS occlusion (duvar gölgesi), yatay + **dikey** FOV
+  konisi (dik tilt yalnız yakını çerçeveler), DORI düşüşü, atmosferik menzil,
+  `effective_px_ratio` optik limiti.
 - `test_atmosphere.py` / `test_solar.py` — Koschmieder, bant, güneş konumu,
   parlama seviyeleri, yerel saat.
 - `test_compliance.py` / `test_compliance_io.py` — DORI ister çıkarım, optik
@@ -286,12 +292,42 @@ veya `--json` ile stdout'a sonuç. Tk yok, ekran yok.
   `exporters.py` yazıcılarını kullanır. Şema değişirse üç yeri de güncelle:
   `main_window.save_project`, `project_io`, gerekiyorsa `__main__._results_to_json`.
 
+## DORI değerleri — tek kaynak
+
+`models.DEFAULT_LEVELS` optik seviyeleri artık **EN 62676-4:2015 DORI** ile
+bire bir: İzleme/Monitoring **12,5** · Algılama/Detection **25** ·
+Gözlem/Observation **62,5** · Tanıma/Recognition **125** · Teşhis/Identification
+**250** px/m. Eskiden Algılama 40 / Gözlem 80 idi (klasik arayüz ile
+viewshed/compliance ayrışıyordu). `viewshed_3d.PPM_*`, `compliance_standards.DORI_PPM`
+ve `modern_window` aynı beş değeri kullanır — birini değiştirirsen hepsini değiştir,
+`optics_golden`'ı yeniden üret. Perimetre hedef PPM'i ayrı bir seçim
+(`map_3d_window.PERIMETER_PPM_OPTIONS`): EN Detection 25 + "güçlendirilmiş çit" 40
++ üst seviyeler; etiket→ppm sözlükle çözülür (eski `"40" in metin` kırılgandı).
+
+## Çevre çiti boşluk analizi
+
+`generate_perimeter_plan` artık: (1) her kameraya menzilin ~%55'ine nişan alan
+gerçekçi tilt, (2) açık perimetrede son noktaya "uç" direği, (3) keskin köşelere
+(>20° dönüş) dışa bakan geniş açı "köşe" guard kamerası (küçük kör nokta),
+(4) **gerçek boşluk tespiti** (`_analyse_fence_coverage`): çit çizgisi 2 m'de bir
+örneklenir, her nokta yerleşik kameraların yatay konisi + kör nokta + hava-kapalı
+menziline göre kapsanıyor mu; ardışık ≥4 m kapsanmayan koşu `FenceGap`.
+`coverage_percentage` gerçek orandır (eskiden sabit 100/92.5, `gaps` hiç
+dolmuyordu). `map_3d_window` BOM'da "Çit Kapsaması" satırı + haritada kırmızı
+boşluk çizgileri + BOM CSV başlığında boşluk listesi. `_analyse_fence_coverage`
+arazi LOS uygulamaz (o `compute_coverage_grid`'de) — saf geometrik süreklilik.
+
 ## Açık işler
 
 - Klasik `main_window` DORI tablosu hâlâ berrak hava (bilinçli — DORI berrak-hava
   standardı; atmosfer 3B/harita/tezgâh pencerelerinde). `k` orada var.
 - Kapsama occlusion ışın örneklemesi arazi hücre boyutuna göre; çok keskin dar
   sırtlar hâlâ kaçabilir. Otorite tekil `calculate_3d_viewshed`.
+- `_analyse_fence_coverage` arazi engelini saymaz; sarp arazide çit "kapsandı"
+  görünüp `compute_coverage_grid` ısı haritasında boşuk çıkabilir.
+- `load_geotiff_or_dem` yerel GeoTIFF için `origin`'i 0,0 yapar (gerçek dünya
+  koordinatını atar) — indirilen DEM'lerle tutarlı ama gerçek jeoreferans
+  gerekirse dönüştürülmeli.
 
 ## cctv_iq — görüntü kalitesi ölçüm çekirdeği
 
@@ -351,14 +387,27 @@ değerin altına indirir, `effective_max_range` bununla kapanır. İkisi de art�
 ~50–150 ms) tek (R,S) numpy bloğuna çevrildi (~4 ms). Ufuk açısı
 `np.maximum.accumulate` ile kümülatif; ışın grid'den çıkınca
 `np.logical_and.accumulate` durdurur; hücreye scatter ray-major sırada
-(son yazan kazanır — eski döngüyle aynı). 3 arazi × 3 pan/tilt'te `dori_grid` /
-`visibility_mask` **bit-aynı** çıktı (`tests/test_viewshed.py` invariyantları
-sabitler). PPM/slant `math.hypot` → `np.hypot` yüzünden ~1 ULP oynar.
+(son yazan kazanır — eski döngüyle aynı). PPM/slant `math.hypot` → `np.hypot`
+yüzünden ~1 ULP oynar.
+
+**Dikey FOV grid'de uygulanır.** `tilt_deg` eskiden yalnız kesit profilini
+etkiliyordu; grid "araziyi görüyor mu + yatay FOV + piksel" hesaplıyordu, dik
+açılı kamera bile uzağı kapsıyor gösteriyordu. Artık `elev_angle = arctan(dz/d)`
+alt/üst ışın (`tilt ± vfov/2`) arasında değilse hücre **çerçeve dışı** (occlusion
+DEĞİL — `ZONE_OUT_OF_FOV`). Terrain occlusion ufku fiziksel kalır (çerçeve dışı
+sırt da engeller → `tan_for_max` `valid & ppm_ok` üzerinden). Analitik `in_fov_cone`
+de dikey sınırlanır ki `coverage_pct` "çerçevelenebilir alanın yüzdesi" olsun.
+`min_detect_ppm` tabanı 20 → **`PPM_DETECT` (25, EN 62676-4)**. `num_rays` uzak
+kenarda ışın aralığı < 0.6 hücre olacak şekilde artırılır (yoksa `coverage_pct`
+düşük okur), 2200 tavan.
 
 ## Çok kameralı birleşik kapsama (`perimeter_planner.compute_coverage_grid`)
 
 Plan kutusu üzerinde grid; her hücre için **herhangi bir** yerleşik kameradan
-ulaşılan en iyi px/m (FOV konisi + kör nokta + optik/atmosferik menzil).
+ulaşılan en iyi px/m (yatay FOV konisi + **dikey FOV** `tilt ± vfov/2` + kör nokta
++ optik/atmosferik menzil). Dikey sınır önemli: sabit `tilt=-14°` yerine
+`generate_perimeter_plan` artık optik ekseni ≈ menzilin %55'ine nişan alan
+gerçekçi tilt hesaplar; tele lensle -1..-2°, geniş açıyla daha dik.
 `terrain` verilirse **DEM üzerinden görüş hattı** (sırt engellemesi) de uygulanır:
 kamera gözünden hücre zeminine düz çizgi, `n_samp` (5–12, kamera sayısına göre)
 noktada `_sample_terrain` vektörel bilinear ile DEM örneklenir, herhangi biri
