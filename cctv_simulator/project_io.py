@@ -33,6 +33,7 @@ class ProjectData:
     terrain_preset: str = "ridge_and_valley"
     terrain_file: str = ""
     terrain_width_m: float = 2000.0
+    terrain_grid: int = 200            # procedural grid resolution (cells per side)
     viewshed_range_m: float = 1500.0
     weather: str = ""
     # Explicit camera pins on the terrain frame for --viewshed. Each:
@@ -75,6 +76,7 @@ def load_project(path: str | Path) -> ProjectData:
         terrain_preset=str(terr.get("preset", "ridge_and_valley")),
         terrain_file=str(terr.get("file", "")),
         terrain_width_m=float(terr.get("width_m", 2000.0)),
+        terrain_grid=int(terr.get("grid", 200)),
         viewshed_range_m=float(terr.get("viewshed_range_m", 1500.0)),
         weather=str(terr.get("weather", "")),
         placements=list(terr.get("placements", []) or []),
@@ -99,6 +101,7 @@ def save_project(path: str | Path, project: ProjectData) -> None:
             "preset": project.terrain_preset,
             "file": project.terrain_file,
             "width_m": project.terrain_width_m,
+            "grid": project.terrain_grid,
             "viewshed_range_m": project.viewshed_range_m,
             "weather": project.weather,
             "placements": project.placements,

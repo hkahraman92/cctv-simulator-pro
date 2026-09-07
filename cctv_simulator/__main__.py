@@ -27,7 +27,7 @@ def _build_terrain(project):
     from .terrain_loader import generate_procedural_terrain, load_geotiff_or_dem
     if project.terrain_source == "geotiff" and project.terrain_file:
         return load_geotiff_or_dem(project.terrain_file)
-    grid = 200
+    grid = max(int(project.terrain_grid or 200), 32)
     return generate_procedural_terrain(
         project.terrain_preset, grid_size=grid,
         cell_size_m=max(project.terrain_width_m / grid, 1.0),
@@ -41,6 +41,8 @@ def _run_viewshed(project, terrain, default_mode: str):
         raise ValueError(
             "Görüş alanı için proje dosyasında terrain.placements listesi gerekli. "
             'Her giriş: {"camera": <ad|index>, "x_m", "y_m", "mast_m", "pan_deg", "tilt_deg"}.')
+
+    from .viewshed_3d import placement_bounds_warnings
 
     by_name = {c.name: c for c in project.cameras}
     placements = []
@@ -58,8 +60,16 @@ def _run_viewshed(project, terrain, default_mode: str):
             tilt_deg=float(pl.get("tilt_deg", -5.0)),
             max_range_m=float(pl.get("range_m", project.viewshed_range_m)),
             label=str(pl.get("label", cam.name)),
+            focal_mm_override=(float(pl["focal_mm"]) if pl.get("focal_mm") else None),
         ))
-    return placements, calculate_multi_camera_viewshed(
+    for warn in placement_bounds_warnings(terrain, placements):
+        print(f"  ⚠ {warn}", file=sys.stderr)
+    models = {p.camera.name for p in placements}
+    rep_cam = placements[0].camera
+    if len(models) > 1:
+        print(f"  not: yerleşimler {len(models)} farklı kamera modeli kullanıyor; "
+              f"rapor başlığında '{rep_cam.name}' gösteriliyor.", file=sys.stderr)
+    return placements, rep_cam, calculate_multi_camera_viewshed(
         terrain, placements, visibility_km=_vis_km(project.weather), weather=project.weather)
 
 
@@ -167,15 +177,18 @@ def main(argv: List[str] | None = None) -> int:
     results = _run(project, mode)
 
     terrain = mv = placements = ptz_res = None
+    report_cam = project.cameras[0]
     if args.viewshed or args.ptz:
         terrain = _build_terrain(project)
     if args.viewshed:
-        placements, mv = _run_viewshed(project, terrain, mode)
+        placements, report_cam, mv = _run_viewshed(project, terrain, mode)
         print(f"görüş alanı · {len(placements)} kamera · birleşik kapsama "
               f"%{mv.coverage_pct:.1f} · örtüşen {mv.overlap_area_m2 / 1e6:.2f} km² · "
               f"arazi {'ÖLÇÜLMÜŞ' if terrain.is_measured else 'TEMSİLİ'}", file=sys.stderr)
     if args.ptz:
         _tour, ptz_res = _run_ptz(project, terrain, mode)
+        if not args.viewshed:
+            report_cam = _tour.camera
         print(f"PTZ turu · {len(ptz_res.preset_labels)} preset · periyot "
               f"{ptz_res.tour_period_s:.0f} sn · ort. revizit {ptz_res.mean_revisit_s:.0f} sn · "
               f"en kötü {ptz_res.worst_revisit_s:.0f} sn", file=sys.stderr)
@@ -240,9 +253,8 @@ def main(argv: List[str] | None = None) -> int:
             print(f"yazıldı: {p}", file=sys.stderr)
 
         if (args.viewshed or args.ptz) and formats & {"pdf", "csv"}:
-            cam0 = project.cameras[0]
             kw = dict(project_name=project.project_name or stem, terrain=terrain,
-                      camera=cam0, weather=project.weather, multi_viewshed=mv, ptz=ptz_res)
+                      camera=report_cam, weather=project.weather, multi_viewshed=mv, ptz=ptz_res)
             if "pdf" in formats:
                 vp = args.out / f"{stem}-gorusalani.pdf"
                 exporters.export_engineering_report_pdf(str(vp), **kw)
