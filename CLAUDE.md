@@ -302,9 +302,12 @@ sayısıyla ağırlıklı, DORI metrikleri yalnız parse edilenler üzerinden). 
 - `test_engineering_report.py` — viewshed+kapsama+perimetre → ASELSAN PDF/CSV;
   bölüm başlıkları, `%PDF-` başlığı, `is_measured` uyarısı / ÖLÇÜLMÜŞ DEM ayrımı.
 - `test_multi_viewshed.py` — çoklu kamera birleşimi, tek kamera ile bit-aynı,
-  örtüşme + best_cam takibi, en iyi-DORI birleştirme.
-- `test_ptz_tour.py` — tur periyodu (bekleme + gezinme), revizit = periyot − dwell
-  (tek preset), zıt presetlerde revizit boşluğu, hiç-görülmeyende ∞.
+  örtüşme + best_cam takibi, en iyi-DORI birleştirme, `focal_mm_override`
+  aradeğer + kelepçe, `with_profile=False` yalnız kesiti atlar,
+  `placement_bounds_warnings`.
+- `test_ptz_tour.py` — tur periyodu (dwell + slew + settle), zoom geçiş süresi,
+  revizit = periyot − dwell (tek preset), zıt presetlerde revizit boşluğu,
+  hiç-görülmeyende ∞.
 - `test_i18n.py` — Türkçe kimlik, İngilizce çeviri + geri düşüş, `{}` biçim,
   tercih kalıcılığı, `CCTV_LANG` env önceliği.
 - `test_cli_headless.py` — `--viewshed` / `--ptz` başsız akış + JSON + rapor.
@@ -336,11 +339,12 @@ otoriter tekil motoru her yerleşim için koşturup grid'leri birleştirir:
 
 `ptz_tour.evaluate_ptz_tour(terrain, PTZTour(presets=[PTZPreset…]))` — PTZ'yi
 "aynı konumda farklı pan/tilt/zoom kameraları" olarak `calculate_multi_camera_
-viewshed`'e verir, üstüne **revizit süresi** katmanı ekler: `_tour_timeline`
-bekleme + pan/tilt gezinme pencerelerini kurar, `_revisit_for_mask` her benzersiz
+viewshed`'e verir (`PTZPreset.focal_mm` → `CameraPlacement.focal_mm_override`),
+üstüne **revizit süresi** katmanı ekler: `_transition_s` her geçişte pan/tilt
+slew + optik zoom süresi + `settle_s` oturma; `_revisit_for_mask` her benzersiz
 preset-maskesi için döngüsel en uzun izlenmeyen boşluğu bulur. `revisit_grid`
-saniye (∞ = hiç görülmez), `tour_period_s`, ortalama/en kötü revizit,
-sürekli/aralıklı/hiç-görülmeyen alan.
+saniye (∞ = hiç görülmez), `tour_period_s` (dwell + slew + zoom + settle
+ayrışık), ortalama/en kötü revizit, sürekli/aralıklı/hiç-görülmeyen alan.
 
 Başsız: `--viewshed` (proje `terrain.placements[]`) ve `--ptz` (`terrain.ptz`)
 `__main__.py`'de; `--export pdf,csv` ile `<stem>-gorusalani.pdf/.csv` (ASELSAN
@@ -414,27 +418,34 @@ boşluk çizgileri + BOM CSV başlığında boşluk listesi. `_analyse_fence_cov
 - Şartname görev sözlüğü (`_TASK_TR`) kısaltıldı; nadir eş anlamlılar
   ("gözetim", "seçme") kaçabilir — few-shot LLM yolu yakalar.
 
-### Çoklu kamera viewshed + PTZ (yeni — eksikler)
+### Çoklu kamera viewshed + PTZ
 
-- **GUI'de hiç yok.** `calculate_multi_camera_viewshed` ve `ptz_tour` yalnız
-  motor + başsız CLI. `map_3d_window`'a "çoklu kamera viewshed" ve "PTZ tur"
-  sekmesi/düğmesi yok; `best_cam_grid` / `seen_count_grid` (örtüşme) ve
-  `revisit_grid` görselleştirilmiyor. PNG çıktısı da yok.
-- **İki ayrı çok-kamera motoru.** GUI kapsama ısı haritası hâlâ
-  `perimeter_planner.compute_coverage_grid` (koni + LOS, basit); yeni
-  `calculate_multi_camera_viewshed` otoriter tekil motoru kullanıyor. İkisi
-  birleşmeli — `compute_coverage_grid` çağrısı multi-viewshed'e devredilebilir.
-- **Ölçekleme.** Multi-viewshed her kamera için tam `calculate_3d_viewshed`
-  koşturur (arazi grid hazırlığı paylaşılmıyor); 20+ kamerada yavaş.
-- **PTZ geçiş modeli kaba.** `_tour_timeline` geçişi `max(Δpan,Δtilt)/hız` —
-  ivme/oturma süresi yok, zoom geçiş süresi yok. Preset `lens_mode` yalnız
-  min/max (gerçek ara zoom yok). Revizit sabit sonsuz döngü varsayar
-  (alarm-tetikli slew, guard-tour, operatör müdahalesi modellenmiyor).
-- **Placement doğrulama yok.** `terrain.placements` / `ptz` koordinatı arazi
-  sınırı dışındaysa uyarı yok; `_build_terrain` prosedürel `grid_size=200`
-  sabit (10 km arazi → 50 m hücre). Başsız `geotiff` yolu test edilmedi.
-- CLI görüş raporu başlığında hep `project.cameras[0]` kullanılıyor (placement'lar
-  farklı kamera kullansa bile).
+`map_3d_window` **"🎯 Çoklu Kamera + PTZ" sekmesi** (`_build_multi_ptz_tab`):
+çit planındaki kameraları `_placements_from_perimeter` ile `CameraPlacement`'a
+çevirip `_run_multi_viewshed` → harita katmanı DORI / kamera örtüşmesi
+(`seen_count_grid`) / PTZ revizit (`_draw_multi_overlay_arr` → render'da
+`_render_map_canvas` 2b bloğu). PTZ: mevcut pan/tilt/zoom'u Treeview'a "＋ Bu
+bakışı ekle", "Turu Çöz" → `evaluate_ptz_tour`, revizit ısı haritası.
+`_export_engineering_report` `multi_viewshed` + `ptz` parametrelerini geçirir.
+>120 kamerada örnekleme sorar.
+
+- **PTZ geçiş modeli** artık `_transition_s`: pan/tilt slew + optik zoom süresi
+  (`zoom_full_sweep_s` × odak farkı / zoom aralığı) + `settle_s` oturma. Preset
+  `focal_mm` ile ara zoom (`calculate_3d_viewshed(focal_mm_override=)`). Hâlâ
+  yok: ivme profili, alarm-tetikli slew, operatör müdahalesi (revizit sabit
+  döngü varsayar).
+- **Perf.** `calculate_multi_camera_viewshed` her kamera için `calculate_3d_
+  viewshed(with_profile=False)` (kesit atlanır) — ~3 ms/kamera; 200 kamera
+  ~0,7 sn. Arazi grid hazırlığı hâlâ kamera başına tekrar ediyor.
+- **İki çok-kamera motoru hâlâ ayrı.** `compute_coverage_grid` (çit bandı,
+  kendi grid'i) ve `calculate_multi_camera_viewshed` (tam arazi). Ortak
+  DORI/LOS ilkelini paylaşmıyorlar — çit bandı yüzdeleri için
+  `compute_coverage_grid` kalıyor.
+- **Placement doğrulama** var: `viewshed_3d.placement_bounds_warnings` arazi
+  sınırı dışı yerleşimi uyarır (GUI dialog + CLI stderr). `terrain.grid` proje
+  şemasında (prosedürel çözünürlük). Başsız `geotiff` yolu hâlâ test edilmedi.
+- CLI görüş raporu başlığı: viewshed → ilk placement kamerası, PTZ → tur
+  kamerası; placement'lar birden çok model kullanırsa stderr'e not.
 
 ### i18n (yeni — eksikler)
 
