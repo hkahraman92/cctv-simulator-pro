@@ -38,7 +38,9 @@ _BAND_FACTOR = {
     "lwir": 0.40,      # 8-12 µm
 }
 
-_FOG_BANDS = ("Kar", "Sis", "Yoğun sis", "Kuvvetli yağmur")  # droplet regimes: thermal hit harder too
+# Droplet regimes (drops > ~10 µm) scatter/absorb LWIR & MWIR too, not just the
+# visible band — every rain/snow/fog preset, but NOT dry haze ("pus").
+_FOG_BANDS = ("Hafif yağmur", "Orta yağmur", "Kuvvetli yağmur", "Kar", "Sis", "Yoğun sis")
 
 
 def band_for_camera(sensor_name: str, model_name: str = "", *, night_ir: bool = False) -> str:

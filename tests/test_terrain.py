@@ -70,6 +70,14 @@ def test_bilinear_elevation_matches_corners():
     assert terr.get_elevation_at(0.5, 0.5) == pytest.approx(15.0)
 
 
+def test_terraindata_fills_nan_at_construction():
+    z = np.array([[10.0, np.nan], [20.0, 30.0]], dtype=np.float32)
+    terr = TerrainData(z_grid=z, cell_size_m=1.0)
+    assert np.isfinite(terr.z_grid).all()
+    assert terr.z_grid[0, 1] == pytest.approx(20.0)   # mean of the finite cells
+    assert np.isfinite(terr.get_elevation_at(0.5, 0.3))
+
+
 class _FakeAffine:
     # a, b, c, d, e, f — north-up raster has e (row step) < 0
     def __init__(self, a, e, c, f):

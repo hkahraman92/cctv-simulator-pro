@@ -29,6 +29,13 @@ def test_fog_hits_thermal_too():
     assert snow < haze          # droplet regime scatters thermal
 
 
+def test_all_rain_intensities_are_droplet_regimes_for_thermal():
+    # rain drops are large; every rain preset must hit LWIR harder than dry haze
+    haze = atm.extinction_per_m(4.0, "lwir", weather="Pus")   # aerosol, no boost
+    for wx in ("Hafif yağmur", "Orta yağmur", "Kuvvetli yağmur"):
+        assert atm.extinction_per_m(4.0, "lwir", weather=wx) > haze, wx
+
+
 def test_usable_range_caps_clear_range():
     capped = atm.usable_range_m(5000.0, 1.0, "lwir", weather="Sis")
     assert capped < 5000.0

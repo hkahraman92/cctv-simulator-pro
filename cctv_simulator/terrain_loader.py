@@ -32,6 +32,16 @@ class TerrainData:
     is_measured: bool = False
     source_note: str = ""
 
+    def __post_init__(self):
+        # NaN in the grid (DEM nodata, void) propagates silently through bilinear
+        # interpolation into every viewshed / coverage number. Fill it once, here,
+        # so no downstream code has to defend against it. dtype is preserved.
+        z = self.z_grid
+        if getattr(z, "ndim", 0) == 2 and not np.isfinite(z).all():
+            good = z[np.isfinite(z)]
+            fill = float(good.mean()) if good.size else 0.0
+            self.z_grid = np.where(np.isfinite(z), z, fill).astype(z.dtype, copy=False)
+
     @property
     def is_synthetic(self) -> bool:
         return not self.is_measured
