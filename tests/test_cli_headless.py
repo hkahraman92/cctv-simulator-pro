@@ -125,3 +125,47 @@ def test_cli_viewshed_needs_placements(project_file):
     # project_file has no terrain.placements
     with pytest.raises(ValueError):
         main(["--project", str(project_file), "--viewshed", "--json"])
+
+
+@pytest.fixture
+def ptz_project_file(tmp_path):
+    path = tmp_path / "ptz.json"
+    data = {
+        "version": "2.0", "project_name": "PTZ Gözetleme",
+        "cameras": [asdict(CameraConfig(name="PTZ-1", focal_min_mm=6, focal_max_mm=180, pole_height_m=15))],
+        "ppm_levels": [asdict(x) for x in DEFAULT_LEVELS],
+        "terrain": {
+            "source": "procedural", "preset": "rolling_hills", "width_m": 2000.0,
+            "ptz": {
+                "camera": "PTZ-1", "x_m": 1000, "y_m": 1000, "mast_m": 15,
+                "range_m": 700, "slew_speed_deg_s": 120.0,
+                "presets": [
+                    {"name": "Kuzey kapı", "pan_deg": 0, "tilt_deg": -3, "lens_mode": "min", "dwell_s": 8},
+                    {"name": "Doğu çit", "pan_deg": 90, "tilt_deg": -4, "lens_mode": "max", "dwell_s": 6},
+                    {"name": "Güney yol", "pan_deg": 180, "tilt_deg": -3, "lens_mode": "min", "dwell_s": 10},
+                ],
+            },
+        },
+    }
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def test_cli_ptz_json_and_report(ptz_project_file, tmp_path, capsys):
+    outdir = tmp_path / "r"
+    rc = main(["--project", str(ptz_project_file), "--ptz", "--json",
+               "--export", "csv", "--out", str(outdir)])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    pt = out["ptz_tour"]
+    assert pt["presets"] == ["Kuzey kapı", "Doğu çit", "Güney yol"]
+    assert pt["tour_period_s"] > 24.0                    # 24 s dwell + slew
+    assert pt["worst_revisit_s"] >= pt["mean_revisit_s"]
+    csv_text = (outdir / "ptz-gorusalani.csv").read_text(encoding="utf-8-sig")
+    assert "PTZ PRESET TURU" in csv_text
+    assert "revizit" in csv_text.lower()
+
+
+def test_cli_ptz_needs_presets(project_file):
+    with pytest.raises(ValueError):
+        main(["--project", str(project_file), "--ptz", "--json"])

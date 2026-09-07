@@ -940,6 +940,32 @@ def _multi_viewshed_rows(mv) -> List[List[str]]:
     return rows
 
 
+def _fmt_dur(s: float) -> str:
+    if not (s == s) or s == float("inf"):
+        return "hiç"
+    return f"{s:.0f} sn" if s < 90 else f"{s / 60.0:.1f} dk"
+
+
+def _ptz_rows(ptz) -> List[List[str]]:
+    c = ptz.combined
+    rows = [
+        ["Preset adedi", f"{len(ptz.preset_labels)}"],
+        ["Tur periyodu", f"{_fmt_dur(ptz.tour_period_s)} (bekleme {ptz.active_dwell_s:.0f} sn + gezinme {ptz.slew_total_s:.0f} sn)"],
+        ["Birleşik görünür alan", _fmt_area(c.visible_area_m2)],
+        ["Sürekli izlenen alan (revizit ~0)", _fmt_area(ptz.continuous_area_m2)],
+        ["Aralıklı izlenen alan", _fmt_area(ptz.intermittent_area_m2)],
+        ["Hiç görülmeyen (koni içi)", _fmt_area(ptz.never_seen_area_m2)],
+        ["Ortalama revizit süresi", _fmt_dur(ptz.mean_revisit_s)],
+        ["En kötü revizit süresi", _fmt_dur(ptz.worst_revisit_s)],
+        ["Teşhis (Identification) kapsaması", f"% {c.pct_by_zone.get('ident', 0.0):.1f}"],
+        ["Algılama (Detection) kapsaması", f"% {c.pct_by_zone.get('detect', 0.0):.1f}"],
+    ]
+    for lbl, r in zip(ptz.preset_labels, c.per_camera):
+        rows.append([f"  → {lbl}", f"pan {r.pan_deg:.0f}° · tilt {r.tilt_deg:.1f}° · "
+                                   f"görünür {_fmt_area(r.visible_area_m2)}"])
+    return rows
+
+
 def _coverage_rows(coverage) -> List[List[str]]:
     p = coverage.pct_by_level
     return [
@@ -984,7 +1010,7 @@ def _provenance_line(terrain) -> str:
 
 def export_engineering_report_csv(path: str, *, project_name: str, terrain, camera,
                                   weather: str, viewshed=None, coverage=None, perimeter=None,
-                                  multi_viewshed=None) -> None:
+                                  multi_viewshed=None, ptz=None) -> None:
     """Flat, sectioned CSV of the viewshed / coverage / perimeter engineering analysis."""
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f, delimiter=";")
@@ -1001,6 +1027,11 @@ def export_engineering_report_csv(path: str, *, project_name: str, terrain, came
         if multi_viewshed is not None:
             w.writerow(["=== ÇOKLU KAMERA BİRLEŞİK GÖRÜŞ ALANI ==="])
             for k, val in _multi_viewshed_rows(multi_viewshed):
+                w.writerow([k, val])
+            w.writerow([])
+        if ptz is not None:
+            w.writerow(["=== PTZ PRESET TURU (KAPSAMA + REVİZİT) ==="])
+            for k, val in _ptz_rows(ptz):
                 w.writerow([k, val])
             w.writerow([])
         if viewshed is not None:
@@ -1028,7 +1059,7 @@ def export_engineering_report_csv(path: str, *, project_name: str, terrain, came
 
 def export_engineering_report_pdf(path: str, *, project_name: str, terrain, camera,
                                   weather: str, viewshed=None, coverage=None, perimeter=None,
-                                  multi_viewshed=None) -> None:
+                                  multi_viewshed=None, ptz=None) -> None:
     """ASELSAN kurumsal formatında görüş alanı / kapsama mühendislik raporu.
 
     ReportLab yoksa düz metin PDF'e (write_simple_pdf) düşer.
@@ -1043,9 +1074,10 @@ def export_engineering_report_pdf(path: str, *, project_name: str, terrain, came
                  f"Hava: {weather or 'Berrak'}", f"Arazi: {terrain.name}",
                  _provenance_line(terrain), ""]
         for title, rws in (("1. ÇOKLU KAMERA BİRLEŞİK GÖRÜŞ ALANI", multi_viewshed is not None and _multi_viewshed_rows(multi_viewshed)),
-                           ("2. TEKİL GÖRÜŞ ALANI", viewshed is not None and _viewshed_rows(viewshed, terrain.cell_size_m)),
-                           ("3. BİRLEŞİK KAPSAMA", coverage is not None and _coverage_rows(coverage)),
-                           ("4. ÇEVRE ÇİTİ PLANI", perimeter is not None and _perimeter_rows(perimeter))):
+                           ("2. PTZ PRESET TURU", ptz is not None and _ptz_rows(ptz)),
+                           ("3. TEKİL GÖRÜŞ ALANI", viewshed is not None and _viewshed_rows(viewshed, terrain.cell_size_m)),
+                           ("4. BİRLEŞİK KAPSAMA", coverage is not None and _coverage_rows(coverage)),
+                           ("5. ÇEVRE ÇİTİ PLANI", perimeter is not None and _perimeter_rows(perimeter))):
             if rws:
                 lines.append(title)
                 lines.extend(f"  {k:<38} {val}" for k, val in rws)
@@ -1128,6 +1160,9 @@ def export_engineering_report_pdf(path: str, *, project_name: str, terrain, came
     _sec_n = 2
     if multi_viewshed is not None:
         _kv(f"{_sec_n}. ÇOKLU KAMERA BİRLEŞİK GÖRÜŞ ALANI (EN 62676-4 DORI)", _multi_viewshed_rows(multi_viewshed))
+        _sec_n += 1
+    if ptz is not None:
+        _kv(f"{_sec_n}. PTZ PRESET TURU — KAPSAMA VE REVİZİT SÜRESİ", _ptz_rows(ptz))
         _sec_n += 1
     if viewshed is not None:
         _kv(f"{_sec_n}. TEKİL KAMERA GÖRÜŞ ALANI (VIEWSHED) ANALİZİ", _viewshed_rows(viewshed, terrain.cell_size_m))

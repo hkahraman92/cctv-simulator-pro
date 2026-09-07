@@ -39,6 +39,10 @@ class ProjectData:
     # {"camera": <name|index>, "x_m", "y_m", "mast_m", "pan_deg", "tilt_deg", "range_m"}
     # pan_deg is a compass bearing (0 = north, 90 = east); tilt_deg < 0 = down.
     placements: List[Dict[str, Any]] = field(default_factory=list)
+    # Optional PTZ tour for --ptz:
+    # {"camera": <name|index>, "x_m", "y_m", "mast_m", "range_m", "slew_speed_deg_s",
+    #  "presets": [{"name", "pan_deg", "tilt_deg", "lens_mode", "dwell_s"}, ...]}
+    ptz: Dict[str, Any] = field(default_factory=dict)
 
 
 def load_project(path: str | Path) -> ProjectData:
@@ -74,6 +78,7 @@ def load_project(path: str | Path) -> ProjectData:
         viewshed_range_m=float(terr.get("viewshed_range_m", 1500.0)),
         weather=str(terr.get("weather", "")),
         placements=list(terr.get("placements", []) or []),
+        ptz=dict(terr.get("ptz", {}) or {}),
     )
 
 
@@ -97,6 +102,7 @@ def save_project(path: str | Path, project: ProjectData) -> None:
             "viewshed_range_m": project.viewshed_range_m,
             "weather": project.weather,
             "placements": project.placements,
+            "ptz": project.ptz,
         },
     }
     Path(path).write_text(json.dumps(data, ensure_ascii=False, indent=4), encoding="utf-8")

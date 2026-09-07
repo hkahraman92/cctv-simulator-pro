@@ -68,6 +68,37 @@ def _vis_km(weather: str) -> float:
     return WEATHER_PRESETS.get(weather, 40.0)
 
 
+def _run_ptz(project, terrain, default_mode: str):
+    from .ptz_tour import PTZPreset, PTZTour, evaluate_ptz_tour
+    spec = project.ptz
+    if not spec or not spec.get("presets"):
+        raise ValueError(
+            'PTZ analizi için proje dosyasında terrain.ptz.presets listesi gerekli. '
+            'Her preset: {"name", "pan_deg", "tilt_deg", "lens_mode", "dwell_s"}.')
+    by_name = {c.name: c for c in project.cameras}
+    ref = spec.get("camera", 0)
+    cam = by_name.get(ref) if isinstance(ref, str) else project.cameras[int(ref)]
+    if cam is None:
+        raise ValueError(f"terrain.ptz: '{ref}' kamerası projede yok.")
+    lm = default_mode if default_mode in ("min", "max") else "max"
+    tour = PTZTour(
+        x_m=float(spec["x_m"]), y_m=float(spec["y_m"]),
+        mast_height_m=float(spec.get("mast_m", cam.pole_height_m)),
+        camera=cam, max_range_m=float(spec.get("range_m", project.viewshed_range_m)),
+        slew_speed_deg_s=float(spec.get("slew_speed_deg_s", 90.0)),
+        presets=[
+            PTZPreset(
+                name=str(p.get("name", f"P{i + 1}")),
+                pan_deg=float(p["pan_deg"]), tilt_deg=float(p.get("tilt_deg", -5.0)),
+                lens_mode=str(p.get("lens_mode", lm)), dwell_s=float(p.get("dwell_s", 5.0)),
+            )
+            for i, p in enumerate(spec["presets"])
+        ],
+    )
+    return tour, evaluate_ptz_tour(terrain, tour, visibility_km=_vis_km(project.weather),
+                                   weather=project.weather)
+
+
 def _run(project, mode: str) -> Dict[str, List[OpticResult]]:
     modes = ["min", "max"] if mode == "compare" else [mode]
     results: Dict[str, List[OpticResult]] = {}
@@ -119,6 +150,8 @@ def main(argv: List[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="Sonuçları stdout'a JSON yaz")
     parser.add_argument("--viewshed", action="store_true",
                         help="Arazi + terrain.placements'tan çoklu kamera birleşik görüş alanı hesapla ve rapora ekle")
+    parser.add_argument("--ptz", action="store_true",
+                        help="terrain.ptz preset turundan kapsama + revizit süresi analizi ekle")
     args = parser.parse_args(argv)
 
     if not args.project.is_file():
@@ -133,13 +166,19 @@ def main(argv: List[str] | None = None) -> int:
     mode = args.mode or project.lens_mode
     results = _run(project, mode)
 
-    terrain = mv = placements = None
-    if args.viewshed:
+    terrain = mv = placements = ptz_res = None
+    if args.viewshed or args.ptz:
         terrain = _build_terrain(project)
+    if args.viewshed:
         placements, mv = _run_viewshed(project, terrain, mode)
         print(f"görüş alanı · {len(placements)} kamera · birleşik kapsama "
               f"%{mv.coverage_pct:.1f} · örtüşen {mv.overlap_area_m2 / 1e6:.2f} km² · "
               f"arazi {'ÖLÇÜLMÜŞ' if terrain.is_measured else 'TEMSİLİ'}", file=sys.stderr)
+    if args.ptz:
+        _tour, ptz_res = _run_ptz(project, terrain, mode)
+        print(f"PTZ turu · {len(ptz_res.preset_labels)} preset · periyot "
+              f"{ptz_res.tour_period_s:.0f} sn · ort. revizit {ptz_res.mean_revisit_s:.0f} sn · "
+              f"en kötü {ptz_res.worst_revisit_s:.0f} sn", file=sys.stderr)
 
     n_rows = sum(len(r.rows) for lst in results.values() for r in lst)
     print(
@@ -150,6 +189,16 @@ def main(argv: List[str] | None = None) -> int:
 
     if args.json:
         payload = _results_to_json(results)
+        if ptz_res is not None:
+            payload["ptz_tour"] = {
+                "presets": ptz_res.preset_labels,
+                "tour_period_s": round(ptz_res.tour_period_s, 1),
+                "mean_revisit_s": round(ptz_res.mean_revisit_s, 1),
+                "worst_revisit_s": round(ptz_res.worst_revisit_s, 1),
+                "continuous_area_m2": round(ptz_res.continuous_area_m2, 1),
+                "never_seen_area_m2": round(ptz_res.never_seen_area_m2, 1),
+                "combined_coverage_pct": round(ptz_res.combined.coverage_pct, 2),
+            }
         if mv is not None:
             payload["viewshed"] = {
                 "terrain_measured": bool(terrain.is_measured),
@@ -190,10 +239,10 @@ def main(argv: List[str] | None = None) -> int:
             )
             print(f"yazıldı: {p}", file=sys.stderr)
 
-        if args.viewshed and formats & {"pdf", "csv"}:
+        if (args.viewshed or args.ptz) and formats & {"pdf", "csv"}:
             cam0 = project.cameras[0]
             kw = dict(project_name=project.project_name or stem, terrain=terrain,
-                      camera=cam0, weather=project.weather, multi_viewshed=mv)
+                      camera=cam0, weather=project.weather, multi_viewshed=mv, ptz=ptz_res)
             if "pdf" in formats:
                 vp = args.out / f"{stem}-gorusalani.pdf"
                 exporters.export_engineering_report_pdf(str(vp), **kw)
