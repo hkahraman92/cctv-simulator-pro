@@ -3,6 +3,7 @@ import csv
 import json
 import os
 import re
+import threading
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -293,7 +294,7 @@ class SpecAssistantWindow:
         # reachable *before* we ever look at the Gemini API key, otherwise a missing
         # key would short-circuit to the rule engine and the local path never runs.
         if self.use_ollama_var.get():
-            from ..compliance import OLLAMA_MODELS, analyze_with_ollama, ollama_available
+            from ..compliance import OLLAMA_MODELS, ollama_available
             if not ollama_available():
                 messagebox.showwarning(
                     "Yerel model",
@@ -306,25 +307,9 @@ class SpecAssistantWindow:
                 )
                 self.analyze_spec_rule_based()
                 return
-            self.compliance_summary_text.configure(state=tk.NORMAL)
-            self.compliance_summary_text.delete("1.0", tk.END)
-            self.compliance_summary_text.insert("1.0", "Yerel model analiz ediyor… (ilk çağrı model yüklenirken uzun sürebilir)")
-            self.compliance_summary_text.configure(state=tk.DISABLED)
-            self.window.update_idletasks()
             sel = self.spec_model_entry.get().strip()
             local_model = sel if sel and "gemini" not in sel.lower() else OLLAMA_MODELS[0]
-            res = analyze_with_ollama(spec_text, self.app.camera_library, model=local_model)
-            if res and res.get("matrix"):
-                self._analysis_source = "ollama"
-                self.apply_compliance_result(res)
-                return
-            messagebox.showinfo(
-                "Yerel model",
-                f"'{local_model}' geçerli JSON döndürmedi (model çekili mi? 'ollama list' ile kontrol edin).\n"
-                "Kurallı + fizik analizine dönülüyor.",
-                parent=self.window,
-            )
-            self.analyze_spec_rule_based()
+            self._run_ollama_in_thread(spec_text, local_model)
             return
 
         api_key = self.spec_api_key_entry.get().strip() or os.environ.get("GEMINI_API_KEY", "").strip()
@@ -366,6 +351,82 @@ class SpecAssistantWindow:
             on_success=self.apply_compliance_result,
             on_failure=self.analyze_spec_rule_based
         )
+
+    def _run_ollama_in_thread(self, spec_text: str, local_model: str):
+        """Local-LLM spec analysis off the Tk main loop.
+
+        analyze_with_ollama does a synchronous urlopen (up to 300 s while the
+        model loads); calling it inline froze the whole UI. Worker thread posts
+        the result back via after(0); a destroyed dialog cancels quietly.
+        """
+        from ..compliance import analyze_with_ollama
+
+        win = tk.Toplevel(self.window)
+        win.title("Yerel model")
+        win.transient(self.window)
+        win.resizable(False, False)
+        ttk.Label(win, text=f"'{local_model}' şartnameyi analiz ediyor…\n"
+                            "İlk çağrı model belleğe yüklenirken uzun sürebilir.",
+                  wraplength=340, justify=tk.LEFT).pack(padx=16, pady=(14, 8))
+        pb = ttk.Progressbar(win, mode="indeterminate", length=300)
+        pb.pack(padx=16, pady=(0, 10))
+        pb.start(12)
+        state = {"alive": True}
+
+        def _close():
+            state["alive"] = False
+            if win.winfo_exists():
+                win.destroy()
+
+        ttk.Button(win, text="İptal", command=_close).pack(pady=(0, 12))
+        win.protocol("WM_DELETE_WINDOW", _close)
+        try:
+            win.grab_set()
+        except tk.TclError:
+            pass
+
+        box = {"res": None, "err": None}
+
+        def worker():
+            try:
+                box["res"] = analyze_with_ollama(spec_text, self.app.camera_library, model=local_model)
+            except Exception as exc:                       # noqa: BLE001 - reported to the user
+                box["err"] = str(exc)
+
+        def finish():
+            if not state["alive"]:
+                return
+            _close()
+            if box["err"]:
+                messagebox.showwarning("Yerel model",
+                                       f"Yerel model hatası:\n{box['err']}\n\nKurallı + fizik analizine dönülüyor.",
+                                       parent=self.window)
+                self.analyze_spec_rule_based()
+                return
+            res = box["res"]
+            if res and res.get("matrix"):
+                self._analysis_source = "ollama"
+                self.apply_compliance_result(res)
+                return
+            messagebox.showinfo(
+                "Yerel model",
+                f"'{local_model}' geçerli JSON döndürmedi (model çekili mi? 'ollama list' ile kontrol edin).\n"
+                "Kurallı + fizik analizine dönülüyor.",
+                parent=self.window,
+            )
+            self.analyze_spec_rule_based()
+
+        def poll(t: threading.Thread):
+            if not state["alive"]:
+                return
+            if t.is_alive():
+                self.window.after(150, lambda: poll(t))
+            else:
+                finish()
+
+        th = threading.Thread(target=worker, daemon=True)
+        th.start()
+        self.window.after(150, lambda: poll(th))
 
     def analyze_spec_rule_based(self):
         spec_text = self._get_spec_text()
