@@ -73,3 +73,55 @@ def test_cli_exports_all_formats(project_file, tmp_path):
 def test_cli_rejects_unknown_format(project_file):
     with pytest.raises(SystemExit):
         main(["--project", str(project_file), "--export", "docx"])
+
+
+@pytest.fixture
+def viewshed_project_file(tmp_path):
+    path = tmp_path / "saha.json"
+    data = {
+        "version": "2.0",
+        "project_name": "Sınır KGYS",
+        "cameras": [
+            asdict(CameraConfig(name="Kule-1", focal_min_mm=8, focal_max_mm=48, pole_height_m=12)),
+            asdict(CameraConfig(name="Kule-2", focal_min_mm=8, focal_max_mm=48, pole_height_m=12)),
+        ],
+        "ppm_levels": [asdict(x) for x in DEFAULT_LEVELS],
+        "terrain": {
+            "source": "procedural", "preset": "rolling_hills", "width_m": 2000.0,
+            "weather": "Hafif pus", "viewshed_range_m": 800.0,
+            "placements": [
+                {"camera": "Kule-1", "x_m": 700, "y_m": 700, "mast_m": 12, "pan_deg": 45, "tilt_deg": -3},
+                {"camera": "Kule-2", "x_m": 1300, "y_m": 1300, "mast_m": 12, "pan_deg": 225, "tilt_deg": -3},
+            ],
+        },
+    }
+    path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def test_cli_viewshed_json(viewshed_project_file, capsys):
+    rc = main(["--project", str(viewshed_project_file), "--viewshed", "--json"])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    vs = out["viewshed"]
+    assert vs["terrain_measured"] is False
+    assert 0.0 <= vs["combined_coverage_pct"] <= 100.0
+    assert {c["label"] for c in vs["cameras"]} == {"Kule-1", "Kule-2"}
+    assert vs["pct_by_zone"]["detect"] >= vs["pct_by_zone"]["ident"] - 1e-9
+
+
+def test_cli_viewshed_report_export(viewshed_project_file, tmp_path):
+    outdir = tmp_path / "rapor"
+    rc = main(["--project", str(viewshed_project_file), "--viewshed",
+               "--export", "pdf,csv", "--out", str(outdir)])
+    assert rc == 0
+    assert (outdir / "saha-gorusalani.pdf").read_bytes()[:5] == b"%PDF-"
+    csv_text = (outdir / "saha-gorusalani.csv").read_text(encoding="utf-8-sig")
+    assert "ÇOKLU KAMERA BİRLEŞİK GÖRÜŞ ALANI" in csv_text
+    assert "TEMSİLİ" in csv_text
+
+
+def test_cli_viewshed_needs_placements(project_file):
+    # project_file has no terrain.placements
+    with pytest.raises(ValueError):
+        main(["--project", str(project_file), "--viewshed", "--json"])
