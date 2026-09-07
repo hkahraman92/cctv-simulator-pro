@@ -68,6 +68,19 @@ from ..viewshed_3d import (
 )
 
 
+# Perimeter target pixel-density options: (label, px/m). The first four are the
+# EN 62676-4:2015 DORI levels; "güçlendirilmiş çit" (40) is a common enhanced
+# perimeter-detection target above the bare Detection minimum.
+PERIMETER_PPM_OPTIONS: List[Tuple[str, float]] = [
+    ("Algılama / Detection — EN 62676-4 (25 px/m)", 25.0),
+    ("Güçlendirilmiş çit algılama (40 px/m)", 40.0),
+    ("Gözlem / Observation (62,5 px/m)", 62.5),
+    ("Tanıma / Recognition (125 px/m)", 125.0),
+    ("Teşhis / Identification — kritik bölge (250 px/m)", 250.0),
+]
+_PERIMETER_PPM_BY_LABEL = {lbl: ppm for lbl, ppm in PERIMETER_PPM_OPTIONS}
+
+
 # Color Tokens for CAD Topography
 BG_DARK = "#14171C"
 PANEL_DARK = "#1E2229"
@@ -155,7 +168,7 @@ class TerrainViewshedWindow:
         # Perimeter Planner Variables
         self.fence_points: List[Tuple[float, float]] = []
         self.is_drawing_fence = False
-        self.target_ppm_var = tk.StringVar(value="Algılama / İnsan Tespiti (40 PPM - Standart Çit)")
+        self.target_ppm_var = tk.StringVar(value=PERIMETER_PPM_OPTIONS[1][0])  # güçlendirilmiş çit (40)
         self.overlap_pct_var = tk.DoubleVar(value=15.0)
         self.fence_closed_var = tk.BooleanVar(value=True)
         self.selected_pole_id: Optional[int] = None
@@ -173,6 +186,7 @@ class TerrainViewshedWindow:
         # Perimeter BOM Vars
         self.bom_cam_count_var = tk.StringVar(value="-")
         self.bom_fence_len_var = tk.StringVar(value="-")
+        self.bom_coverage_var = tk.StringVar(value="-")
         self.bom_spacing_var = tk.StringVar(value="-")
         self.bom_bandwidth_var = tk.StringVar(value="-")
         self.bom_storage_var = tk.StringVar(value="-")
@@ -490,12 +504,7 @@ class TerrainViewshedWindow:
         combo_ppm = ttk.Combobox(
             grp_params,
             textvariable=self.target_ppm_var,
-            values=[
-                "Algılama / İnsan Tespiti (40 PPM - Standart Çit)",
-                "Gözlem / Hareket Takibi (80 PPM)",
-                "Tanıma / Teşhis Öncesi (125 PPM)",
-                "Teşhis / Kimlik Tespiti (250 PPM - Kritik Bölge)",
-            ],
+            values=[lbl for lbl, _ in PERIMETER_PPM_OPTIONS],
             state="readonly",
         )
         combo_ppm.pack(fill=tk.X, pady=(2, 4))
@@ -539,6 +548,7 @@ class TerrainViewshedWindow:
 
         self._create_stat_row(grp_bom, "Toplam Kamera / Direk:", self.bom_cam_count_var, ACCENT_CYAN)
         self._create_stat_row(grp_bom, "Toplam Çevre Çiti:", self.bom_fence_len_var, TEXT_WHITE)
+        self._create_stat_row(grp_bom, "Çit Kapsaması (geometrik):", self.bom_coverage_var, ACCENT_GREEN)
         self._create_stat_row(grp_bom, "Ortalama Direk Aralığı:", self.bom_spacing_var, ACCENT_GREEN)
         self._create_stat_row(grp_bom, "Tahmini Ağ Trafiği:", self.bom_bandwidth_var, ACCENT_AMBER)
         self._create_stat_row(grp_bom, "30 Günlük RAID Depolama:", self.bom_storage_var, ACCENT_PURPLE)
@@ -1116,17 +1126,7 @@ class TerrainViewshedWindow:
         if len(self.fence_points) < 2:
             return
 
-        ppm_text = self.target_ppm_var.get()
-        if "40" in ppm_text:
-            target_ppm = 40.0
-        elif "80" in ppm_text:
-            target_ppm = 80.0
-        elif "125" in ppm_text:
-            target_ppm = 125.0
-        elif "250" in ppm_text:
-            target_ppm = 250.0
-        else:
-            target_ppm = 40.0
+        target_ppm = _PERIMETER_PPM_BY_LABEL.get(self.target_ppm_var.get(), 40.0)
 
         overlap_frac = self.overlap_pct_var.get() / 100.0
         mast_h = self.mast_height_var.get()
@@ -1153,6 +1153,12 @@ class TerrainViewshedWindow:
             self.bom_fence_len_var.set(f"{p.total_fence_length_m:,.0f} m ({p.total_fence_length_m / 1000.0:.2f} km)")
         else:
             self.bom_fence_len_var.set(f"{p.total_fence_length_m:,.0f} m")
+
+        if p.gaps:
+            gap_total = sum(g.length_m for g in p.gaps)
+            self.bom_coverage_var.set(f"%{p.coverage_percentage:.1f}  ·  {len(p.gaps)} boşluk / {gap_total:.0f} m açık")
+        else:
+            self.bom_coverage_var.set(f"%{p.coverage_percentage:.1f}  ·  boşluk yok")
 
         self.bom_spacing_var.set(f"{p.avg_spacing_m:.1f} metre")
         self.bom_bandwidth_var.set(f"{p.estimated_bandwidth_mbps:.1f} Mbps")
@@ -1195,6 +1201,13 @@ class TerrainViewshedWindow:
                 if glare_ready:
                     writer.writerow(["# Güneş/parlama analizi", f"{lat:.4f}, {lon:.4f} · seçili {_sel} + yaz gündönümü {_summer} · saatler yerel (UTC{_tz:+.0f})"])
                 writer.writerow(["# Not", getattr(self.terrain, "source_note", "").replace("\n", " ")])
+                _pl = self.perimeter_plan
+                writer.writerow(["# Çit kapsaması (geometrik)", f"%{_pl.coverage_percentage:.1f}"])
+                if _pl.gaps:
+                    writer.writerow(["# Kapsanmayan bölümler", f"{len(_pl.gaps)} adet"])
+                    for _gi, g in enumerate(_pl.gaps, 1):
+                        writer.writerow([f"#  boşluk {_gi}",
+                                         f"({g.start_x:.0f}, {g.start_y:.0f}) → ({g.end_x:.0f}, {g.end_y:.0f}) · {g.length_m:.0f} m"])
                 writer.writerow([])
                 header = ["Direk No", "Kamera Modeli", "Sensör", "Çözünürlük", "Konum X (m)", "Konum Y (m)", "Zemin Rakımı (m)", "Direk Boyu (m)", "Toplam İrtifa (m)", "Pan Açısı (°)", "Tilt Açısı (°)", "Odak (mm)", "HFOV (°)", "Etkin Menzil (m)", "Kör Nokta (m)"]
                 if glare_ready:
@@ -1589,12 +1602,26 @@ class TerrainViewshedWindow:
                                        fill="#FFFFFF" if big else "#9FB3C8",
                                        font=("Segoe UI", 8 if big else 7, "bold" if big else "normal"))
 
+                # Uncovered fence stretches, drawn thick red over the fence line.
+                for g in getattr(self.perimeter_plan, "gaps", []):
+                    gx0, gy0 = self.world_to_screen_px(g.start_x, g.start_y)
+                    gx1, gy1 = self.world_to_screen_px(g.end_x, g.end_y)
+                    cv.create_line(gx0, gy0, gx1, gy1, fill=ACCENT_RED, width=4)
+                    cv.create_text((gx0 + gx1) / 2, (gy0 + gy1) / 2 - 8, text=f"boşluk {g.length_m:.0f}m",
+                                   anchor="s", fill=ACCENT_RED, font=("Segoe UI", 7, "bold"))
+
+                cov = self.perimeter_plan.coverage_percentage
+                gap_n = len(getattr(self.perimeter_plan, "gaps", []))
                 leg_x, leg_y = 30, h - 85
                 cv.create_rectangle(leg_x - 6, leg_y - 6, leg_x + 250, leg_y + 68, fill="#16191E", outline=PANEL_BORDER)
                 cv.create_text(leg_x, leg_y + 2, text=f"ÇEVRE ÇİTİ · {self.perimeter_plan.camera_count} KAMERA AKTİF", anchor="w", font=("Segoe UI", 8, "bold"), fill=ACCENT_CYAN)
                 cv.create_text(leg_x, leg_y + 22, text=f"• Toplam Çit: {self.perimeter_plan.total_fence_length_m:,.0f}m", anchor="w", font=("Segoe UI", 8), fill=TEXT_WHITE)
                 cv.create_text(leg_x, leg_y + 38, text=f"• Ortalama Direk Aralığı: {self.perimeter_plan.avg_spacing_m:.1f}m", anchor="w", font=("Segoe UI", 8), fill=ACCENT_GREEN)
-                cv.create_text(leg_x, leg_y + 54, text="• %100 Kesintisiz Kör Noktasız Örtüşme", anchor="w", font=("Segoe UI", 8), fill="#FFD600")
+                cv.create_text(leg_x, leg_y + 54,
+                               text=(f"• Çit kapsaması %{cov:.1f} — kesintisiz" if gap_n == 0
+                                     else f"• Çit kapsaması %{cov:.1f} — {gap_n} boşluk"),
+                               anchor="w", font=("Segoe UI", 8),
+                               fill=(ACCENT_GREEN if gap_n == 0 else ACCENT_RED))
 
         else:
             # 6. SINGLE CAMERA VECTOR OVERLAYS

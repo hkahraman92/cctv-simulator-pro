@@ -171,9 +171,9 @@ class Perspective3DEngine:
 
         # Standard Optical DORI
         if ppm >= 250.0:
-            return ("Kimlik Tespiti (Identification)", "#FF0039", "Yüz hatları ve detaylar kesin olarak teşhis edilir (250+ PPM)")
+            return ("Teşhis (Identification)", "#FF0039", "Kimlik makul şüphe ötesinde belirlenebilir (≥ 250 px/m)")
         elif ppm >= 125.0:
-            return ("Tanıma / Teşhis (Recognition)", "#FF7518", "Şahsın kim olduğu biliniyorsa net tanınabilir (125-250 PPM)")
+            return ("Tanıma (Recognition)", "#FF7518", "Daha önce görülen bir kişi net tanınabilir (125-250 px/m)")
         elif ppm >= 62.5:
             return ("Gözlem (Observation)", "#2780E3", "Kıyafet, cinsiyet ve genel hareketler izlenebilir (62.5-125 PPM)")
         elif ppm >= 25.0:

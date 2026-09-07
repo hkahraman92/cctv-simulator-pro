@@ -90,14 +90,19 @@ DEFAULT_LEVELS = [
     PPMLevel("Johnson_Veh_Rec", "Johnson: Araç Tanıma (6.0 cyc)", 5.22, "#0288D1", "Termal"),
     PPMLevel("Johnson_Veh_Id", "Johnson: Araç Teşhis (12.0 cyc)", 10.43, "#FF5722", "Termal"),
 
-    # ── Optik: EN 62676-4 ve Özel Güvenlik Seviyeleri ──
-    PPMLevel("Scrutinize", "Optik: Scrutinize", 1500, "#FF8A80", "Standart"),
-    PPMLevel("Face_Detect", "Optik: Yüz Tespit", 794, "#FFB74D", "Algoritma"),
-    PPMLevel("Validate", "Optik: Validate", 500, "#FFF59D", "Standart"),
-    PPMLevel("Characterize", "Optik: Kimlik Tespiti (250 PPM)", 250, "#D4E157", "Standart"),
-    PPMLevel("ANPR_Alg", "Optik: TR Plaka (143 PPM)", 143, "#CE93D8", "Algoritma"),
-    PPMLevel("Perceive", "Optik: Tanıma / Teşhis (125 PPM)", 125, "#A5D6A7", "Standart"),
-    PPMLevel("Discern", "Optik: Gözlem (80 PPM)", 80, "#81C784", "Standart"),
-    PPMLevel("Outline", "Optik: Algılama (40 PPM)", 40, "#80DEEA", "Standart"),
-    PPMLevel("Overview", "Optik: İzleme (20 PPM)", 20, "#90CAF9", "Standart"),
+    # ── Optik: EN 62676-4:2015 DORI (Tablo B.1) ──
+    # Piksel yoğunluğu = hedef düzlemindeki yatay çözünürlük (px/m). Standardın
+    # DORI seviyeleri: Monitoring 12,5 · Detection 25 · Observation 62,5 ·
+    # Recognition 125 · Identification 250. Bu beş değer viewshed_3d,
+    # compliance_standards ve modern_window ile bire bir aynıdır. Aşağıdaki
+    # daha yüksek seviyeler (doğrulama/yüz/inceleme) DORI dışıdır; sektör pratiği.
+    PPMLevel("Scrutinize", "Optik: İnceleme / Scrutinize (1500 px/m)", 1500, "#FF8A80", "Standart"),
+    PPMLevel("Face_Detect", "Optik: Yüz Tespiti (~800 px/m)", 794, "#FFB74D", "Algoritma"),
+    PPMLevel("Validate", "Optik: Doğrulama / Validate (500 px/m)", 500, "#FFF59D", "Standart"),
+    PPMLevel("Characterize", "Optik: Teşhis / Identification (250 px/m)", 250, "#D4E157", "Standart"),
+    PPMLevel("ANPR_Alg", "Optik: TR Plaka / ANPR (143 px/m)", 143, "#CE93D8", "Algoritma"),
+    PPMLevel("Perceive", "Optik: Tanıma / Recognition (125 px/m)", 125, "#A5D6A7", "Standart"),
+    PPMLevel("Discern", "Optik: Gözlem / Observation (62,5 px/m)", 62.5, "#81C784", "Standart"),
+    PPMLevel("Outline", "Optik: Algılama / Detection (25 px/m)", 25, "#80DEEA", "Standart"),
+    PPMLevel("Overview", "Optik: İzleme / Monitoring (12,5 px/m)", 12.5, "#90CAF9", "Standart"),
 ]
