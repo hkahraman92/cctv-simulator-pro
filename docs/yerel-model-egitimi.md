@@ -31,39 +31,26 @@ vektör deposu; şartname başına en ilgili 5 madde/örnek prompt'a.
 
 Anlamlı fine-tune için ~**300+** düzeltilmiş örnek.
 
-## 2. LoRA / QLoRA fine-tune (unsloth)
+## 2. LoRA / QLoRA fine-tune — `scripts/finetune_compliance.py`
 
 Tek 16–24 GB GPU (RTX 3090/4090) veya kiralık A100 birkaç saat (~$5–20).
 
-```python
-# pip install unsloth
-from unsloth import FastLanguageModel
-import json
+```bash
+# GPU'suz: yalnız veriyi hazırla + train/eval böl
+py -3.13 scripts/finetune_compliance.py --prepare-only
 
-model, tok = FastLanguageModel.from_pretrained(
-    "unsloth/Qwen2.5-7B-Instruct-bnb-4bit", max_seq_length=16384, load_in_4bit=True)
-model = FastLanguageModel.get_peft_model(model, r=32, lora_alpha=32,
-    target_modules=["q_proj","k_proj","v_proj","o_proj","gate_proj","up_proj","down_proj"])
-
-rows = [json.loads(l) for l in open("cctv_compliance_train.jsonl", encoding="utf-8")]
-def fmt(ex):
-    return {"text": tok.apply_chat_template(ex["messages"], tokenize=False)}
-from datasets import Dataset
-ds = Dataset.from_list([fmt(r) for r in rows])
-
-from trl import SFTTrainer, SFTConfig
-SFTTrainer(model=model, tokenizer=tok, train_dataset=ds,
-    args=SFTConfig(per_device_train_batch_size=1, gradient_accumulation_steps=8,
-        num_train_epochs=3, learning_rate=2e-4, warmup_ratio=0.05,
-        logging_steps=5, output_dir="out", optim="adamw_8bit")).train()
-
-model.save_pretrained_gguf("cctv-uygunluk", tok, quantization_method="q4_k_m")
+# tam eğitim (unsloth kurulu, GPU var)
+pip install "unsloth @ git+https://github.com/unslothai/unsloth.git" trl datasets
+py -3.13 scripts/finetune_compliance.py --out out/cctv-uygunluk
 ```
 
-Sonra:
+Boru hattı: `training_log.build_instruction_dataset` → `split_dataset` (spec
+hash'ine göre, bir şartname hiç iki tarafa düşmez) → QLoRA SFT (r=32) → q4_k_m
+GGUF + Ollama `Modelfile`. Çıktı dizininde `train.jsonl`, `eval.jsonl`,
+`<ad>.Q4_K_M.gguf`, `Modelfile`.
 
 ```
-ollama create cctv-uygunluk -f Modelfile   # FROM ./cctv-uygunluk.Q4_K_M.gguf
+ollama create cctv-uygunluk -f out/cctv-uygunluk/Modelfile
 ```
 
 `analyze_with_ollama(model="cctv-uygunluk")` — küçük/hızlı, senin formatında.
@@ -79,12 +66,17 @@ ollama create cctv-uygunluk -f Modelfile   # FROM ./cctv-uygunluk.Q4_K_M.gguf
 
 ## 4. Değerlendirme (her değişiklikten önce)
 
-```python
-# JSON parse oranı, kural motorunun bulduğu DORI isterlerini bulma F1'i,
-# matris status doğruluğu (insan gold'a karşı)
+`scripts/eval_compliance.py` — bir gold JSONL'e karşı model koşturur ve metrik
+basar (JSON parse oranı, DORI ister precision/recall/F1, matris durum doğruluğu).
+Metrik çekirdeği `cctv_simulator.compliance_eval` (GPU/ağ yok, birim testli).
+
+```bash
+py -3.13 scripts/eval_compliance.py out/cctv-uygunluk/eval.jsonl --model rule          # offline taban
+py -3.13 scripts/eval_compliance.py out/cctv-uygunluk/eval.jsonl --model cctv-uygunluk --baseline qwen2.5:7b
 ```
 
-`training_log.read_all()` ile analiz kayıtlarını çekip test bölümü ayır.
+`training_log.split_dataset(recs, eval_ratio)` test bölümünü ayırır (spec hash'ine
+göre — bir şartname hiç iki tarafa düşmez).
 
 ## 5. Sürekli döngü
 

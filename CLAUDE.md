@@ -246,7 +246,16 @@ llama3.1:8b, gemma2:9b (Türkçe + JSON). `training_log`: her analiz +
 her override JSONL'e yazılır (`%APPDATA%\<app>\training\compliance.jsonl`);
 `build_instruction_dataset` bunları system/user/assistant çiftlerine çevirir,
 **insan düzeltmelerini assistant hedefine katarak** — yani override UI bir
-etiketleme hattı. Tezgâhta "🧠 Eğitim Verisi Dışa Aktar". Fine-tune reçetesi:
+etiketleme hattı. Tezgâhta "🧠 Eğitim Verisi Dışa Aktar".
+
+**Fine-tune + değerlendirme.** `scripts/finetune_compliance.py`: `training_log`'dan
+dataset üret → `split_dataset` (spec hash'ine göre train/eval) → unsloth QLoRA
+(r=32) → q4_k_m GGUF + Ollama `Modelfile`. `--prepare-only` GPU'suz veri hazırlar.
+`scripts/eval_compliance.py`: gold JSONL'e karşı model (`rule` veya Ollama adı)
+koşturur, metrik basar. Metrik çekirdeği `compliance_eval.py` (birim testli, GPU
+yok): `dori_requirement_prf` (task/mesafe/ppm kümesi P/R/F1), `matrix_status_
+accuracy` (`user_status` tercih edilir), `aggregate` (durum doğruluğu satır
+sayısıyla ağırlıklı, DORI metrikleri yalnız parse edilenler üzerinden). Reçete:
 `docs/yerel-model-egitimi.md`.
 
 ## Doğrulama alışkanlıkları

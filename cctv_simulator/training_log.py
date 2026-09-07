@@ -120,6 +120,23 @@ _SYSTEM = (
 )
 
 
+def split_dataset(records: List[Dict[str, Any]], eval_ratio: float = 0.15,
+                  seed: int = 0) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Deterministic train/eval split by spec hash (a spec never straddles)."""
+    import random
+    shas = sorted({r.get("meta", {}).get("spec_sha") or r.get("spec_sha", "") for r in records})
+    rng = random.Random(seed)
+    rng.shuffle(shas)
+    n_eval = max(1, int(len(shas) * eval_ratio)) if len(shas) > 3 else 0
+    eval_shas = set(shas[:n_eval])
+
+    def _sha(r):
+        return r.get("meta", {}).get("spec_sha") or r.get("spec_sha", "")
+    train = [r for r in records if _sha(r) not in eval_shas]
+    ev = [r for r in records if _sha(r) in eval_shas]
+    return train, ev
+
+
 def build_instruction_dataset(out_path: str | Path) -> int:
     """Write system/user/assistant JSONL for fine-tuning. Human overrides are
     folded into the assistant target so the model learns the corrections.
