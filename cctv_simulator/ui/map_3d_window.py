@@ -51,6 +51,7 @@ from ..perimeter_planner import (
     point_along_polyline,
 )
 from ..terrain_loader import TerrainData, generate_procedural_terrain, load_geotiff_or_dem
+from ..i18n import t as _t
 from ..theme import COLORS, StyledButton, fit_and_center_window
 from ..viewshed_3d import (
     PPM_DETECT,
@@ -117,7 +118,7 @@ class TerrainViewshedWindow:
         else:
             self.window = tk.Tk()
 
-        self.window.title("🗺️ 3D Arazi, HD Uydu Haritası, Görüş Hattı & Çevre Çiti Planlayıcı")
+        self.window.title(_t("🗺️ 3D Arazi, HD Uydu Haritası, Görüş Hattı & Çevre Çiti Planlayıcı"))
         fit_and_center_window(self.window, default_w=1520, default_h=920, min_w=1080, min_h=700, maximize=False)
 
         # State & Data (Default: 2000m x 2000m terrain grid)
@@ -479,7 +480,7 @@ class TerrainViewshedWindow:
         self._create_stat_row(grp_stats, "Net Görüş Oranı:", self.stat_coverage_var, ACCENT_AMBER)
         self._create_stat_row(grp_stats, "Max Görüş Menzili:", self.stat_max_reach_var, TEXT_WHITE)
 
-        StyledButton(grp_stats, text="📄 Mühendislik Raporu (PDF / CSV — ASELSAN)",
+        StyledButton(grp_stats, text=_t("📄 Mühendislik Raporu (PDF / CSV — ASELSAN)"),
                      command=self._export_engineering_report, bootstyle="primary-outline").pack(fill=tk.X, pady=(6, 0))
 
     def _build_perimeter_planner_tab(self, parent):

@@ -196,9 +196,12 @@ def describe_tcl(widget) -> str:
     return "\n".join(lines)
 
 
-def create_app_window(title: str = "Gelişmiş CCTV Görüş Alanı ve Proje Simülatörü",
+def create_app_window(title: str = "",
                       geometry: str = "1400x860") -> tk.Tk:
     """Create the main application window with ttkbootstrap theme or fallback."""
+    if not title:
+        from .i18n import t as _t
+        title = _t("Gelişmiş CCTV Görüş Alanı ve Proje Simülatörü")
     root = None
     bootstrap_error = ""
     if _TTKBOOTSTRAP_AVAILABLE:

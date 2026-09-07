@@ -292,6 +292,13 @@ etiketleme hattı. Tezgâhta "🧠 Eğitim Verisi Dışa Aktar". Fine-tune reçe
   guard, "erişim kontrolü" sahte DORI üretmez, uzun cümle toleransı.
 - `test_engineering_report.py` — viewshed+kapsama+perimetre → ASELSAN PDF/CSV;
   bölüm başlıkları, `%PDF-` başlığı, `is_measured` uyarısı / ÖLÇÜLMÜŞ DEM ayrımı.
+- `test_multi_viewshed.py` — çoklu kamera birleşimi, tek kamera ile bit-aynı,
+  örtüşme + best_cam takibi, en iyi-DORI birleştirme.
+- `test_ptz_tour.py` — tur periyodu (bekleme + gezinme), revizit = periyot − dwell
+  (tek preset), zıt presetlerde revizit boşluğu, hiç-görülmeyende ∞.
+- `test_i18n.py` — Türkçe kimlik, İngilizce çeviri + geri düşüş, `{}` biçim,
+  tercih kalıcılığı, `CCTV_LANG` env önceliği.
+- `test_cli_headless.py` — `--viewshed` / `--ptz` başsız akış + JSON + rapor.
 
 `network` işaretli test yok (hepsi monkeypatch'li). Canlı sunucu denemesi
 istersen elle: `py -3.13 -c "from cctv_simulator.online_map_loader import _fetch_tile; ..."`.
@@ -310,6 +317,40 @@ veya `--json` ile stdout'a sonuç. Tk yok, ekran yok.
 - `__main__.py` optik motoru koşturur, `analyze_dead_zone_coverage` çağırır,
   `exporters.py` yazıcılarını kullanır. Şema değişirse üç yeri de güncelle:
   `main_window.save_project`, `project_io`, gerekiyorsa `__main__._results_to_json`.
+
+## Çoklu kamera + PTZ + başsız görüş alanı
+
+`viewshed_3d.calculate_multi_camera_viewshed(terrain, [CameraPlacement…])` —
+otoriter tekil motoru her yerleşim için koşturup grid'leri birleştirir:
+`MultiViewshedResult` her hücrede en iyi DORI + `seen_count_grid` (yedeklilik) +
+`best_cam_grid` + örtüşen/tek-kamera alan + `per_camera` listesi.
+
+`ptz_tour.evaluate_ptz_tour(terrain, PTZTour(presets=[PTZPreset…]))` — PTZ'yi
+"aynı konumda farklı pan/tilt/zoom kameraları" olarak `calculate_multi_camera_
+viewshed`'e verir, üstüne **revizit süresi** katmanı ekler: `_tour_timeline`
+bekleme + pan/tilt gezinme pencerelerini kurar, `_revisit_for_mask` her benzersiz
+preset-maskesi için döngüsel en uzun izlenmeyen boşluğu bulur. `revisit_grid`
+saniye (∞ = hiç görülmez), `tour_period_s`, ortalama/en kötü revizit,
+sürekli/aralıklı/hiç-görülmeyen alan.
+
+Başsız: `--viewshed` (proje `terrain.placements[]`) ve `--ptz` (`terrain.ptz`)
+`__main__.py`'de; `--export pdf,csv` ile `<stem>-gorusalani.pdf/.csv` (ASELSAN
+formatı), `--json` çıktısına özet. `project_io` şeması `terrain` bloğu:
+`source/preset/file/width_m/viewshed_range_m/weather/placements/ptz` — eski
+proje dosyaları değişmeden yüklenir (hepsi varsayılanlı).
+
+## Arayüz dili (i18n)
+
+`i18n.py` — **Türkçe kaynak metin anahtardır**: `t("Kaydet")` en'de "Save",
+bulunamazsa Türkçe anahtarı döner (call site sarmak Türkçeyi hiç bozmaz).
+`locale/en.json` düz `{türkçe: çeviri}` haritası. Dil sırası: `CCTV_LANG` env →
+kayıtlı tercih (`user_data_dir()/ui_prefs.json`) → "tr". `cctv_dual_view_simulator.py`
+başlangıçta `load_preferred_language()` çağırır; `main_window` "Çıktı" sekmesinde
+dil seçici (yeniden başlatınca etkin — kurulu widget'lar yeniden çizilmez).
+Çeviri kapsamı **artımlı**: şu an pencere başlıkları + yeni özelliklerin
+metinleri sarılı; gövde metinlerinin çoğu hâlâ Türkçe-yalnız, `t()` sarıldıkça
+`en.json`'a eklenir. PyInstaller `cctv_simulator/` dizinini komple veri olarak
+aldığı için `locale/*.json` otomatik paketlenir.
 
 ## Görüş alanı / kapsama mühendislik raporu
 

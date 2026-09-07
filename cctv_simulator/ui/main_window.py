@@ -7,6 +7,7 @@ from tkinter import ttk, filedialog, messagebox, colorchooser
 from typing import Dict, List, Any, Optional, Tuple
 
 from ..config import SENSOR_DIMS_MM, RESOLUTIONS, configure_tk_paths, get_admin_password
+from ..i18n import t as _t, available_languages, get_language, set_language, LANGUAGE_NAMES
 from ..models import CameraConfig, TargetPoint, PPMLevel, OpticResult, DEFAULT_LEVELS
 from ..database import load_camera_library
 from ..calculations import (
@@ -19,7 +20,7 @@ from ..calculations import (
     mode_label,
 )
 from ..exporters import export_csv, export_png, export_pdf, export_excel
-from ..theme import is_themed, COLORS, StyledButton, fit_and_center_window
+from ..theme import COLORS, StyledButton, fit_and_center_window
 from .canvas_drawer import CanvasDrawer, canvas_to_world, top_plot_from_rect
 from .spec_assistant import SpecAssistantWindow
 from .camera_db_window import CameraDatabaseWindow
@@ -38,8 +39,7 @@ class DualViewCCTVDesignApp:
 
     def __init__(self, root: tk.Tk):
         self.root = root
-        if not is_themed():
-            self.root.title("Gelişmiş CCTV Görüş Alanı ve Proje Simülatörü")
+        self.root.title(_t("Gelişmiş CCTV Görüş Alanı ve Proje Simülatörü"))
 
         self.camera_library = load_camera_library()
         self.ppm_levels = [PPMLevel(**asdict(level)) for level in self.DEFAULT_LEVELS]
@@ -543,15 +543,35 @@ class DualViewCCTVDesignApp:
         ttk.Button(button_row, text="Sil", command=self.delete_level).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
     def _build_export_tab(self):
-        StyledButton(self.tab_export, text="Excel (.xlsx) Rapor Dışa Aktar", command=self.export_excel, bootstyle="success").pack(fill=tk.X, pady=(0, 6))
-        StyledButton(self.tab_export, text="PDF Mühendislik Raporu (ASELSAN Formatı)", command=self.export_pdf, bootstyle="danger").pack(fill=tk.X, pady=(0, 6))
-        StyledButton(self.tab_export, text="CSV Tablo Dışa Aktar", command=self.export_csv, bootstyle="info").pack(fill=tk.X, pady=(0, 6))
-        StyledButton(self.tab_export, text="PNG Görsel Dışa Aktar", command=self.export_png, bootstyle="info").pack(fill=tk.X, pady=(0, 10))
+        StyledButton(self.tab_export, text=_t("Excel (.xlsx) Rapor Dışa Aktar"), command=self.export_excel, bootstyle="success").pack(fill=tk.X, pady=(0, 6))
+        StyledButton(self.tab_export, text=_t("PDF Mühendislik Raporu (ASELSAN Formatı)"), command=self.export_pdf, bootstyle="danger").pack(fill=tk.X, pady=(0, 6))
+        StyledButton(self.tab_export, text=_t("CSV Tablo Dışa Aktar"), command=self.export_csv, bootstyle="info").pack(fill=tk.X, pady=(0, 6))
+        StyledButton(self.tab_export, text=_t("PNG Görsel Dışa Aktar"), command=self.export_png, bootstyle="info").pack(fill=tk.X, pady=(0, 10))
         export_note = (
             "PDF Raporu ASELSAN Kurumsal Kimliği ve Savunma Sanayii standartlarında, "
             "DORI menzilleri, kamera matrisi, kör nokta ve şartname uyumluluk tablolarını içeren resmi mühendislik raporu olarak üretilir."
         )
         ttk.Label(self.tab_export, text=export_note, wraplength=260, foreground="#002D62").pack(fill=tk.X)
+
+        lang_frame = ttk.LabelFrame(self.tab_export, text="🌐 " + _t("Dil / Language"), padding=6)
+        lang_frame.pack(fill=tk.X, pady=(12, 0))
+        cur = get_language()
+        self._lang_var = tk.StringVar(value=LANGUAGE_NAMES.get(cur, cur))
+        names = [LANGUAGE_NAMES.get(code, code) for code in available_languages()]
+        combo = ttk.Combobox(lang_frame, textvariable=self._lang_var, values=names, state="readonly")
+        combo.pack(fill=tk.X)
+        combo.bind("<<ComboboxSelected>>", self._on_language_changed)
+        ttk.Label(lang_frame, text=_t("Dil değişikliği uygulamanın yeniden başlatılmasıyla etkin olur."),
+                  wraplength=260, foreground="#666").pack(fill=tk.X, pady=(4, 0))
+
+    def _on_language_changed(self, _evt=None):
+        chosen = self._lang_var.get()
+        code = next((c for c, name in LANGUAGE_NAMES.items() if name == chosen), chosen).lower()
+        if code == get_language():
+            return
+        set_language(code)
+        messagebox.showinfo(_t("Dil / Language"),
+                            _t("Dil değişikliği uygulamanın yeniden başlatılmasıyla etkin olur."))
 
     def _add_entry(self, parent: ttk.Frame, row: int, label: str, default: str) -> ttk.Entry:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky=tk.W, pady=2, padx=(0, 6))
