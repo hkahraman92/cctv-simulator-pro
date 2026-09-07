@@ -287,21 +287,16 @@ class TerrainViewshedWindow:
 
         self.tab_single = ttk.Frame(self.mode_notebook, padding=6)
         self.tab_perimeter = ttk.Frame(self.mode_notebook, padding=6)
-        self.tab_multi = ttk.Frame(self.mode_notebook, padding=6)
 
         self.mode_notebook.add(self.tab_single, text="⛰️ Tekil Kamera & Viewshed")
         self.mode_notebook.add(self.tab_perimeter, text="🛡️ Çevre Çiti (50-100 Kamera)")
-        self.mode_notebook.add(self.tab_multi, text="🎯 Çoklu Kamera + PTZ")
         self.mode_notebook.bind("<<NotebookTabChanged>>", self._on_mode_tab_changed)
 
-        # ── TAB 1: SINGLE CAMERA VIEWSHED ──
+        # ── TAB 1: SINGLE CAMERA VIEWSHED (+ inline PTZ tour when a PTZ model) ──
         self._build_single_camera_tab(self.tab_single)
 
-        # ── TAB 2: MULTI-CAMERA PERIMETER AUTO-PLANNER ──
+        # ── TAB 2: MULTI-CAMERA PERIMETER AUTO-PLANNER (+ combined viewshed) ──
         self._build_perimeter_planner_tab(self.tab_perimeter)
-
-        # ── TAB 3: MULTI-CAMERA UNIFIED VIEWSHED + PTZ TOUR ──
-        self._build_multi_ptz_tab(self.tab_multi)
 
         # ── RIGHT AREA: MAP CANVAS (TOP) + ELEVATION PROFILE / BOM (BOTTOM) ──
         right_frame = ttk.Frame(main_paned)
@@ -496,8 +491,14 @@ class TerrainViewshedWindow:
         self._create_stat_row(grp_stats, "Net Görüş Oranı:", self.stat_coverage_var, ACCENT_AMBER)
         self._create_stat_row(grp_stats, "Max Görüş Menzili:", self.stat_max_reach_var, TEXT_WHITE)
 
-        StyledButton(grp_stats, text=_t("📄 Mühendislik Raporu (PDF / CSV — ASELSAN)"),
-                     command=self._export_engineering_report, bootstyle="primary-outline").pack(fill=tk.X, pady=(6, 0))
+        # PTZ tour panel — built now, shown/hidden by camera type
+        self._build_ptz_panel(parent)
+
+        self._single_tab_report_btn = StyledButton(
+            parent, text=_t("📄 Mühendislik Raporu (PDF / CSV — ASELSAN)"),
+            command=self._export_engineering_report, bootstyle="primary-outline")
+        self._single_tab_report_btn.pack(fill=tk.X, pady=(6, 0))
+        self._update_ptz_panel_visibility()
 
     def _build_perimeter_planner_tab(self, parent):
         grp_tools = ttk.LabelFrame(parent, text="Çit & Sınır Çizim Araçları", padding=6)
@@ -574,56 +575,66 @@ class TerrainViewshedWindow:
         self._create_stat_row(grp_bom, "30 Günlük RAID Depolama:", self.bom_storage_var, ACCENT_PURPLE)
 
         StyledButton(parent, text="💾 Kamera Listesi & BOM İndir (.xlsx / .csv)", command=self._export_perimeter_bom, bootstyle="primary-outline").pack(fill=tk.X, pady=(4, 0))
+        self._build_combined_panel(parent)
 
-    # ── TAB 3: MULTI-CAMERA UNIFIED VIEWSHED + PTZ TOUR ──
-    def _build_multi_ptz_tab(self, parent):
-        grp_mc = ttk.LabelFrame(parent, text="Çoklu Kamera Birleşik Viewshed (otoriter motor)", padding=6)
-        grp_mc.pack(fill=tk.X, pady=(0, 6))
-        ttk.Label(grp_mc, text="Çevre çiti planındaki tüm kameraları gerçek görüş "
-                               "alanı motoruyla birleştirir.", wraplength=250,
-                  foreground=TEXT_MUTED).pack(anchor="w", pady=(0, 4))
-        StyledButton(grp_mc, text="🎯 Çit Kameralarından Birleşik Viewshed",
-                     command=self._run_multi_viewshed, bootstyle="success").pack(fill=tk.X, pady=(0, 4))
-        self._create_stat_row(grp_mc, "Birleşik kapsama:", self.mc_stat_var, ACCENT_GREEN)
-        self._create_stat_row(grp_mc, "Örtüşen / yedeksiz:", self.mc_overlap_var, ACCENT_AMBER)
-
-        grp_ov = ttk.LabelFrame(parent, text="Harita Katmanı", padding=6)
-        grp_ov.pack(fill=tk.X, pady=(0, 6))
-        ttk.Checkbutton(grp_ov, text="Birleşik katmanı göster", variable=self.show_multi_var,
-                        command=self._render_map_canvas).pack(anchor="w")
-        for val, lbl in (("dori", "DORI seviyeleri"), ("overlap", "Kamera örtüşmesi (yedeklilik)"),
-                         ("revisit", "PTZ revizit süresi")):
-            ttk.Radiobutton(grp_ov, text=lbl, value=val, variable=self.multi_overlay_var,
-                            command=self._render_map_canvas).pack(anchor="w", padx=8)
-
-        grp_ptz = ttk.LabelFrame(parent, text="PTZ Preset Turu (mevcut kamera + konum)", padding=6)
-        grp_ptz.pack(fill=tk.X, pady=(0, 6))
-        self.ptz_tree = ttk.Treeview(grp_ptz, columns=("pan", "tilt", "lens", "dwell"),
-                                     show="headings", height=5)
+    # ── inline PTZ preset-tour panel (single-camera tab; shown only for PTZ) ──
+    def _build_ptz_panel(self, parent):
+        grp = ttk.LabelFrame(parent, text="🔄 PTZ Preset Turu — kapsama & revizit", padding=6)
+        self.grp_ptz = grp
+        ttk.Label(grp, text="Yukarıdaki pan / tilt / zoom kaydırıcılarını istediğin "
+                            "bakışa getir, sonra “＋ Bu bakışı preset ekle”.",
+                  wraplength=250, foreground=TEXT_MUTED).pack(anchor="w", pady=(0, 4))
+        self.ptz_tree = ttk.Treeview(grp, columns=("pan", "tilt", "lens", "dwell"),
+                                     show="headings", height=4)
         for c, txt, wd in (("pan", "Pan°", 45), ("tilt", "Tilt°", 45),
                            ("lens", "Zoom", 55), ("dwell", "Bekle sn", 55)):
             self.ptz_tree.heading(c, text=txt)
             self.ptz_tree.column(c, width=wd, anchor="center")
         self.ptz_tree.pack(fill=tk.X, pady=(0, 4))
-
-        row = ttk.Frame(grp_ptz)
+        row = ttk.Frame(grp)
         row.pack(fill=tk.X)
         ttk.Label(row, text="Bekle:").pack(side=tk.LEFT)
         ttk.Spinbox(row, from_=1, to=60, textvariable=self.ptz_dwell_var, width=5).pack(side=tk.LEFT, padx=(2, 6))
-        StyledButton(row, text="＋ Bu bakışı ekle", command=self._ptz_add_preset,
+        StyledButton(row, text="＋ Bu bakışı preset ekle", command=self._ptz_add_preset,
                      bootstyle="info-outline").pack(side=tk.LEFT, fill=tk.X, expand=True)
-        row2 = ttk.Frame(grp_ptz)
+        row2 = ttk.Frame(grp)
         row2.pack(fill=tk.X, pady=(3, 0))
         StyledButton(row2, text="Seçiliyi sil", command=self._ptz_del_preset,
                      bootstyle="danger-outline").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
         StyledButton(row2, text="Tümünü temizle", command=self._ptz_clear_presets,
                      bootstyle="secondary-outline").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
-        StyledButton(grp_ptz, text="🔄 Turu Çöz (kapsama + revizit)",
+        StyledButton(grp, text="🔄 Turu Çöz (birleşik kapsama + revizit ısı haritası)",
                      command=self._run_ptz_tour, bootstyle="success").pack(fill=tk.X, pady=(4, 0))
-        self._create_stat_row(grp_ptz, "Tur / revizit:", self.ptz_stat_var, ACCENT_CYAN)
+        self._create_stat_row(grp, "Tur / revizit:", self.ptz_stat_var, ACCENT_CYAN)
+        # placed by _update_ptz_panel_visibility()
 
-        StyledButton(parent, text=_t("📄 Mühendislik Raporu (PDF / CSV — ASELSAN)"),
-                     command=self._export_engineering_report, bootstyle="primary-outline").pack(fill=tk.X, pady=(6, 0))
+    def _update_ptz_panel_visibility(self):
+        from ..database import is_ptz_camera
+        model = self.camera_library.get(self.cam_model_var.get(), {}) if hasattr(self, "cam_model_var") else {}
+        is_ptz = is_ptz_camera(model) or is_ptz_camera(
+            {"model_name": self.current_camera.model_name, "camera_type": getattr(self.current_camera, "camera_type", "")})
+        if not hasattr(self, "grp_ptz"):
+            return
+        if is_ptz:
+            self.grp_ptz.pack(fill=tk.X, pady=(0, 6), before=self._single_tab_report_btn)
+        else:
+            self.grp_ptz.pack_forget()
+
+    # ── combined multi-camera viewshed panel (perimeter tab) ──
+    def _build_combined_panel(self, parent):
+        grp = ttk.LabelFrame(parent, text="🎯 Birleşik Viewshed (tüm çit kameraları, otoriter motor)", padding=6)
+        grp.pack(fill=tk.X, pady=(6, 0))
+        StyledButton(grp, text="🎯 Çit Kameralarını Birleştir",
+                     command=self._run_multi_viewshed, bootstyle="success").pack(fill=tk.X, pady=(0, 4))
+        self._create_stat_row(grp, "Birleşik kapsama:", self.mc_stat_var, ACCENT_GREEN)
+        self._create_stat_row(grp, "Örtüşen / yedeksiz:", self.mc_overlap_var, ACCENT_AMBER)
+        lay = ttk.Frame(grp)
+        lay.pack(fill=tk.X, pady=(3, 0))
+        ttk.Checkbutton(lay, text="Katman:", variable=self.show_multi_var,
+                        command=self._render_map_canvas).pack(side=tk.LEFT)
+        for val, lbl in (("dori", "DORI"), ("overlap", "Örtüşme"), ("revisit", "Revizit")):
+            ttk.Radiobutton(lay, text=lbl, value=val, variable=self.multi_overlay_var,
+                            command=self._render_map_canvas).pack(side=tk.LEFT, padx=2)
 
     # ── multi-camera unified viewshed ──
     def _placements_from_perimeter(self):
@@ -1206,7 +1217,7 @@ class TerrainViewshedWindow:
 
     def _on_mode_tab_changed(self, _e=None):
         selected_idx = self.mode_notebook.index(self.mode_notebook.select())
-        self.planner_mode_var.set({0: "single", 1: "perimeter"}.get(selected_idx, "multi"))
+        self.planner_mode_var.set("single" if selected_idx == 0 else "perimeter")
         if self.planner_mode_var.get() == "perimeter":
             self.lbl_bottom_title.configure(text="📊 50-100 KAMERALIK ÇEVRE ÇİTİ DİZİLİMİ & KULE MATRİSİ (PERIMETER SCHEDULE)")
             if self.perimeter_plan is None:
@@ -1566,7 +1577,9 @@ class TerrainViewshedWindow:
                 self.current_camera.resolution_name = data["resolution_name"]
             self.current_camera.focal_min_mm = float(data.get("focal_min_mm", 4.0))
             self.current_camera.focal_max_mm = float(data.get("focal_max_mm", 12.0))
+            self.current_camera.camera_type = str(data.get("camera_type", ""))
             self._sync_active_camera()
+            self._update_ptz_panel_visibility()
             if self.planner_mode_var.get() == "perimeter":
                 self.distribute_perimeter_cameras()
             else:

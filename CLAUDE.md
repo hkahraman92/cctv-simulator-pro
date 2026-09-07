@@ -308,6 +308,8 @@ sayısıyla ağırlıklı, DORI metrikleri yalnız parse edilenler üzerinden). 
 - `test_ptz_tour.py` — tur periyodu (dwell + slew + settle), zoom geçiş süresi,
   revizit = periyot − dwell (tek preset), zıt presetlerde revizit boşluğu,
   hiç-görülmeyende ∞.
+- `test_database.py` — `is_ptz_camera` (yerleşik ASELSAN UMA T5/Fix, anahtar
+  kelime, açık `is_ptz` alanı önceliği).
 - `test_i18n.py` — Türkçe kimlik, İngilizce çeviri + geri düşüş, `{}` biçim,
   tercih kalıcılığı, `CCTV_LANG` env önceliği.
 - `test_cli_headless.py` — `--viewshed` / `--ptz` başsız akış + JSON + rapor.
@@ -420,14 +422,23 @@ boşluk çizgileri + BOM CSV başlığında boşluk listesi. `_analyse_fence_cov
 
 ### Çoklu kamera viewshed + PTZ
 
-`map_3d_window` **"🎯 Çoklu Kamera + PTZ" sekmesi** (`_build_multi_ptz_tab`):
-çit planındaki kameraları `_placements_from_perimeter` ile `CameraPlacement`'a
-çevirip `_run_multi_viewshed` → harita katmanı DORI / kamera örtüşmesi
-(`seen_count_grid`) / PTZ revizit (`_draw_multi_overlay_arr` → render'da
-`_render_map_canvas` 2b bloğu). PTZ: mevcut pan/tilt/zoom'u Treeview'a "＋ Bu
-bakışı ekle", "Turu Çöz" → `evaluate_ptz_tour`, revizit ısı haritası.
-`_export_engineering_report` `multi_viewshed` + `ptz` parametrelerini geçirir.
->120 kamerada örnekleme sorar.
+**Ayrı sekme yok — kamera tipine göre otomatik.** `database.is_ptz_camera(model)`
+kamera `camera_type`'ını (DB'deki "Kamera tipi" combobox: Sabit / PTZ / Speed
+Dome …) + model adı + broşür özetini "ptz / speed dome / sürekli optik zoom"
+için tarar; açık `is_ptz` alanı varsa o kazanır. `CameraConfig.camera_type`
+alanı taşır. `map_3d_window`:
+- **PTZ kamera seçilince** tekil sekmede **inline PTZ Preset Turu paneli**
+  (`_build_ptz_panel` / `_update_ptz_panel_visibility`, `_on_camera_model_changed`
+  toggle eder) belirir: pan/tilt/zoom kaydırıcılarını istediğin bakışa getir →
+  "＋ Bu bakışı preset ekle" → Treeview; "Turu Çöz" → `evaluate_ptz_tour` →
+  revizit ısı haritası. Sabit kamerada panel gizli.
+- **Çevre çiti sekmesinde "🎯 Birleşik Viewshed"** paneli
+  (`_build_combined_panel`): `_placements_from_perimeter` → `_run_multi_viewshed`
+  → DORI / örtüşme (`seen_count_grid`) / revizit katmanı. >120 kamerada
+  örnekleme sorar.
+
+Overlay `_draw_multi_overlay_arr` → `_render_map_canvas` 2b bloğunda komposit.
+`_export_engineering_report` `multi_viewshed` + `ptz` geçirir.
 
 - **PTZ geçiş modeli** artık `_transition_s`: pan/tilt slew + optik zoom süresi
   (`zoom_full_sweep_s` × odak farkı / zoom aralığı) + `settle_s` oturma. Preset

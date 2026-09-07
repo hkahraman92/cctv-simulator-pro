@@ -117,6 +117,37 @@ def camera_db_extended_field_specs() -> Tuple[Tuple[str, str], ...]:
     )
 
 
+_PTZ_HINTS = ("ptz", "speed dome", "hız kubbe", "hiz kubbe", "sürekli optik zoom",
+              "surekli optik zoom", "pan/tilt", "pan-tilt", "konumlandırıcı", "positioner")
+_FIXED_HINTS = ("sabit", "fixed", "bullet", "turret", "taret", "mini dome")
+
+
+def is_ptz_camera(model: Dict[str, Any]) -> bool:
+    """True when the camera model is a moving (PTZ / positioner) unit.
+
+    Reads the structured ``camera_type`` field first; falls back to keyword
+    sniffing the type / model name / brochure summary. A continuous optical-zoom
+    thermal (ASELSAN UMA T5/T10) counts as PTZ, a fixed bullet does not.
+    """
+    if not isinstance(model, dict):
+        return False
+    explicit = model.get("is_ptz")
+    if isinstance(explicit, bool):
+        return explicit
+    if isinstance(explicit, str) and explicit.strip():
+        return explicit.strip().casefold() in ("evet", "yes", "true", "1", "ptz")
+
+    blob = " ".join(str(model.get(k, "")) for k in
+                    ("camera_type", "kamera_tipi", "model_name", "product_name",
+                     "brochure_title", "ozet_paragraf", "overview")).casefold()
+    if any(h in blob for h in _PTZ_HINTS):
+        return True
+    ct = str(model.get("camera_type", "")).casefold()
+    if ct and any(h in ct for h in _FIXED_HINTS):
+        return False
+    return False
+
+
 def has_camera_db_value(value: Any) -> bool:
     if value is None:
         return False

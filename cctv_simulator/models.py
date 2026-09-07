@@ -30,6 +30,7 @@ class CameraConfig:
     # Measured MTF50/Nyquist ratio (cctv_iq). 1.0 = trust the label; < 1.0
     # shrinks the effective horizontal resolution the optic engine uses.
     effective_px_ratio: float = 1.0
+    camera_type: str = ""       # e.g. "Sabit (Bullet)", "PTZ / Speed Dome" — drives PTZ UI
 
 
 @dataclass
