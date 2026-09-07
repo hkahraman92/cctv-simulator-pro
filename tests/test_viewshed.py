@@ -108,5 +108,26 @@ def test_visible_cells_never_below_min_detect():
     res = calculate_3d_viewshed(terrain=terr, cam_x_m=300, cam_y_m=200, mast_height_m=8,
                                 camera=CAM, pan_deg=10, tilt_deg=-4, max_range_m=900)
     vis = res.visibility_mask
-    assert np.all(res.ppm_grid[vis] >= 20.0 - 1e-3)
+    # floor is now the EN 62676-4 Detection threshold (25 px/m)
+    assert np.all(res.ppm_grid[vis] >= 25.0 - 1e-3)
     assert set(np.unique(res.dori_grid[vis]).tolist()) <= {ZONE_DETECT, 3, 4, ZONE_IDENT}
+
+
+def test_vertical_fov_gates_the_grid():
+    """tilt/vfov must actually bound the coverage — a steep-down camera frames
+    only the near ground, a near-level one reaches far."""
+    terr = _flat()
+    steep = calculate_3d_viewshed(terrain=terr, cam_x_m=400, cam_y_m=100, mast_height_m=10,
+                                  camera=CAM, pan_deg=0, tilt_deg=-35, max_range_m=600)
+    level = calculate_3d_viewshed(terrain=terr, cam_x_m=400, cam_y_m=100, mast_height_m=10,
+                                  camera=CAM, pan_deg=0, tilt_deg=-2, max_range_m=600)
+    assert steep.max_los_reach_m < level.max_los_reach_m - 10.0
+    assert steep.visible_area_m2 > 0.0
+
+
+def test_near_dead_zone_is_out_of_frame():
+    terr = _flat()
+    res = calculate_3d_viewshed(terrain=terr, cam_x_m=400, cam_y_m=400, mast_height_m=12,
+                                camera=CAM, lens_mode="max", pan_deg=0, tilt_deg=-2, max_range_m=500)
+    # 10 m north of a 12 m mast, a -2 deg tele frame cannot include the ground
+    assert res.dori_grid[41, 40] == ZONE_OUT_OF_FOV

@@ -22,12 +22,13 @@ from .config import SENSOR_DIMS_MM, RESOLUTIONS
 from .atmosphere import band_for_camera, usable_range_m
 
 
-# DORI PPM Thresholds (EN 62676-4)
-PPM_IDENT = 250.0
-PPM_RECOG = 125.0
-PPM_OBSERVE = 62.5
-PPM_DETECT = 25.0
-PPM_OVERVIEW = 20.0
+# DORI PPM Thresholds (EN 62676-4:2015, Tablo B.1 — hedef düzleminde px/m)
+PPM_IDENT = 250.0       # Identification / Teşhis
+PPM_RECOG = 125.0       # Recognition / Tanıma
+PPM_OBSERVE = 62.5      # Observation / Gözlem
+PPM_DETECT = 25.0       # Detection / Algılama
+PPM_MONITOR = 12.5      # Monitoring and control / İzleme (DORI'nin en düşük seviyesi)
+PPM_OVERVIEW = PPM_MONITOR  # geriye dönük ad
 
 # Zone Codes
 ZONE_OUT_OF_FOV = 0
@@ -111,8 +112,10 @@ def calculate_3d_viewshed(terrain: TerrainData,
     # MTF50/Nyquist ratio (cctv_iq). Default 1.0 keeps output unchanged.
     res_w = res_w * max(getattr(camera, "effective_px_ratio", 1.0), 0.05)
 
-    # Minimum PPM threshold for detection
-    min_detect_ppm = 1.3 if is_thermal else PPM_OVERVIEW
+    # Floor PPM below which a cell is not worth showing. Non-thermal: the
+    # EN 62676-4 Detection threshold (25 px/m) — the viewshed then covers exactly
+    # the DORI-meaningful band (Detection and above), no arbitrary cut-off.
+    min_detect_ppm = 1.3 if is_thermal else PPM_DETECT
     optical_limit_m = (focal_mm * res_w) / (sw * min_detect_ppm)
 
     # Fog / rain / haze cap the range where target contrast survives the path.
@@ -153,11 +156,21 @@ def calculate_3d_viewshed(terrain: TerrainData,
     slant_dist_grid = np.zeros((rows, cols), dtype=np.float32)
 
     # 5. Raymarching Radial Scan
-    num_rays = max(180, int(hfov_deg * 4))
+    # Ray count so that even at the far edge the angular spacing lands < ~0.6
+    # cell apart — otherwise diverging rays skip grid cells inside the cone and
+    # coverage_pct reads low. Capped so the (R x S) work stays bounded.
+    span_need = half_hfov_rad * 2.0 * effective_max_range / max(cell_size * 0.6, 0.5)
+    num_rays = int(min(2200, max(180, hfov_deg * 4, span_need)))
     ray_angles = np.linspace(pan_rad - half_hfov_rad, pan_rad + half_hfov_rad, num_rays)
 
     R_EARTH = 6371000.0
     K_REFRACT = 0.13
+
+    # Vertical framing: a ground cell is only *seen* if its line from the lens
+    # falls between the bottom and top rays (tilt +/- vfov/2). Without this the
+    # grid reports coverage the camera never frames (near dead zone, far sky).
+    v_lo = math.radians(tilt_deg - vfov_deg / 2.0)     # bottom ray (steeper down)
+    v_hi = math.radians(tilt_deg + vfov_deg / 2.0)     # top ray
 
     step_size = max(ray_step_m, cell_size * 0.7)
     num_steps = max(int(effective_max_range / step_size), 1)
@@ -184,14 +197,21 @@ def calculate_3d_viewshed(terrain: TerrainData,
     ppm = (focal_mm * res_w) / (sw * np.maximum(slant, 1.0))
     ppm_ok = ppm >= min_detect_ppm
 
+    # Terrain occlusion is physical — a ridge blocks the sightline whether or not
+    # it sits inside the vertical frame, so the running horizon uses every valid
+    # step, not just the framed ones.
     tan_for_max = np.where(valid & ppm_ok, tan_angle, -1e18)
     horizon_before = np.empty_like(tan_for_max)
     horizon_before[:, 0] = -1e18
     horizon_before[:, 1:] = np.maximum.accumulate(tan_for_max, axis=1)[:, :-1]
-    visible = valid & ppm_ok & (tan_angle >= horizon_before)
+
+    elev_angle = np.arctan(tan_angle)                             # (-pi/2, pi/2)
+    in_vfov = (elev_angle >= v_lo) & (elev_angle <= v_hi)
+    framed = valid & ppm_ok & in_vfov
+    visible = framed & (tan_angle >= horizon_before)
 
     zone = np.zeros(ppm.shape, dtype=np.int32)                    # ZONE_OUT_OF_FOV
-    zone = np.where(valid & ppm_ok & ~visible, ZONE_OCCLUDED, zone)
+    zone = np.where(framed & ~visible, ZONE_OCCLUDED, zone)       # framed but ridge-blocked
     zone = np.where(visible, ZONE_DETECT, zone)
     zone = np.where(visible & (ppm >= PPM_OBSERVE), ZONE_OBSERVE, zone)
     zone = np.where(visible & (ppm >= PPM_RECOG), ZONE_RECOG, zone)
@@ -206,7 +226,16 @@ def calculate_3d_viewshed(terrain: TerrainData,
     dori_grid[vr, vc] = zone[m]
     vis_mask[vr, vc] = visible[m]
 
-    # Mask out anything not in the FOV cone
+    # Narrow the analytic cone to what the camera can actually FRAME (bottom/top
+    # ray), so coverage_pct is "of the frameable area" rather than of the whole
+    # horizontal wedge including the near dead zone and the far sky.
+    cell_dz = terrain.z_grid.astype(np.float64) - cam_z
+    if earth_curvature:
+        cell_dz -= (ground_dist ** 2) / (2.0 * R_EARTH) * (1.0 - K_REFRACT)
+    cell_elev_angle = np.arctan2(cell_dz, np.maximum(ground_dist, 0.1))
+    in_fov_cone &= (cell_elev_angle >= v_lo) & (cell_elev_angle <= v_hi)
+
+    # Mask out anything not in the (now vertically-bounded) FOV cone
     dori_grid[~in_fov_cone] = ZONE_OUT_OF_FOV
     vis_mask[~in_fov_cone] = False
 
