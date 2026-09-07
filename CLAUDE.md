@@ -289,7 +289,9 @@ etiketleme hattı. Tezgâhta "🧠 Eğitim Verisi Dışa Aktar". Fine-tune reçe
   parlama seviyeleri, yerel saat.
 - `test_compliance.py` / `test_compliance_io.py` — DORI ister çıkarım, optik
   gecti/kaldi, belirsizlik, EN 62676-4 beyan, ister şablonu roundtrip, Ollama
-  guard.
+  guard, "erişim kontrolü" sahte DORI üretmez, uzun cümle toleransı.
+- `test_engineering_report.py` — viewshed+kapsama+perimetre → ASELSAN PDF/CSV;
+  bölüm başlıkları, `%PDF-` başlığı, `is_measured` uyarısı / ÖLÇÜLMÜŞ DEM ayrımı.
 
 `network` işaretli test yok (hepsi monkeypatch'li). Canlı sunucu denemesi
 istersen elle: `py -3.13 -c "from cctv_simulator.online_map_loader import _fetch_tile; ..."`.
@@ -308,6 +310,20 @@ veya `--json` ile stdout'a sonuç. Tk yok, ekran yok.
 - `__main__.py` optik motoru koşturur, `analyze_dead_zone_coverage` çağırır,
   `exporters.py` yazıcılarını kullanır. Şema değişirse üç yeri de güncelle:
   `main_window.save_project`, `project_io`, gerekiyorsa `__main__._results_to_json`.
+
+## Görüş alanı / kapsama mühendislik raporu
+
+`exporters.export_engineering_report_pdf` / `_csv` — `map_3d_window` "📄 Mühendislik
+Raporu" düğmesi (`_export_engineering_report`) `ViewshedResult` + `CoverageGrid` +
+`PerimeterPlanResult`'ı **ASELSAN kurumsal formatında** (aynı navi banner,
+`_NumberedCanvas` üst/alt bilgi, gizlilik damgası) tek rapora aktarır. Bölümler:
+1 yönetici özeti + **kaynak kutusu** (`is_measured` False → kırmızı "ölçüm değil,
+bağlayıcı değil" uyarısı), 2 tekil viewshed (menzil sınırları, görünür/kör alan,
+DORI zone alan dökümü), 3 çok kameralı kapsama (DORI seviye %), 4 çevre çiti BOM
++ direk tablosu + boşluklar, 5 standart referansları. `_viewshed_rows` /
+`_coverage_rows` / `_perimeter_rows` hem PDF hem CSV'yi besler. ReportLab yoksa
+`write_simple_pdf`'e düşer. Emoji glyph YOK (Segoe UI'de tofu) — "UYARI —" /
+"DOĞRULANDI —" metin işaretçileri. Sadece GUI (proje şemasında arazi yok).
 
 ## DORI değerleri — tek kaynak
 

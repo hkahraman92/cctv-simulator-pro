@@ -479,6 +479,9 @@ class TerrainViewshedWindow:
         self._create_stat_row(grp_stats, "Net Görüş Oranı:", self.stat_coverage_var, ACCENT_AMBER)
         self._create_stat_row(grp_stats, "Max Görüş Menzili:", self.stat_max_reach_var, TEXT_WHITE)
 
+        StyledButton(grp_stats, text="📄 Mühendislik Raporu (PDF / CSV — ASELSAN)",
+                     command=self._export_engineering_report, bootstyle="primary-outline").pack(fill=tk.X, pady=(6, 0))
+
     def _build_perimeter_planner_tab(self, parent):
         grp_tools = ttk.LabelFrame(parent, text="Çit & Sınır Çizim Araçları", padding=6)
         grp_tools.pack(fill=tk.X, pady=(0, 6))
@@ -1165,6 +1168,49 @@ class TerrainViewshedWindow:
         self.bom_storage_var.set(f"{p.estimated_storage_30days_tb:.1f} TB")
 
         self.recalculate_viewshed()
+
+    def _export_engineering_report(self):
+        """Görüş alanı + birleşik kapsama + çevre çiti planını tek ASELSAN raporuna aktarır."""
+        viewshed = self.result
+        coverage = self._coverage_grid
+        perimeter = self.perimeter_plan if (self.perimeter_plan and self.perimeter_plan.placed_cameras) else None
+        if viewshed is None and coverage is None and perimeter is None:
+            messagebox.showwarning(
+                "Rapor",
+                "Rapora aktarılacak analiz yok.\nÖnce bir görüş alanı hesaplayın veya çevre çiti dizin.")
+            return
+
+        file_path = filedialog.asksaveasfilename(
+            title="Görüş Alanı & Kapsama Mühendislik Raporu",
+            defaultextension=".pdf",
+            filetypes=[("PDF Raporu", "*.pdf"), ("CSV (tablo)", "*.csv"), ("Tüm Dosyalar", "*.*")],
+        )
+        if not file_path:
+            return
+
+        try:
+            from ..exporters import export_engineering_report_csv, export_engineering_report_pdf
+            kw = dict(
+                project_name=getattr(self.app, "project_name", "") or "",
+                terrain=self.terrain,
+                camera=self.current_camera,
+                weather=self.weather_var.get(),
+                viewshed=viewshed,
+                coverage=coverage,
+                perimeter=perimeter,
+            )
+            if file_path.lower().endswith(".csv"):
+                export_engineering_report_csv(file_path, **kw)
+            else:
+                export_engineering_report_pdf(file_path, **kw)
+        except Exception as exc:
+            messagebox.showerror("Rapor Hatası", f"Rapor üretilemedi:\n{exc}")
+            return
+
+        note = "" if getattr(self.terrain, "is_measured", False) else (
+            "\n\n⚠ Arazi yükseltisi TEMSİLİ (ölçülmüş DEM değil). "
+            "Görüş alanı ve kapsama değerleri bağlayıcı değildir.")
+        messagebox.showinfo("Rapor Kaydedildi", f"Mühendislik raporu kaydedildi:\n{file_path}{note}")
 
     def _export_perimeter_bom(self):
         if not self.perimeter_plan or not self.perimeter_plan.placed_cameras:
