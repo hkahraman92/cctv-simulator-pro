@@ -68,3 +68,70 @@ def test_bilinear_elevation_matches_corners():
     assert terr.get_elevation_at(0.0, 0.0) == pytest.approx(0.0)
     # centre of the cell = mean of the four corners
     assert terr.get_elevation_at(0.5, 0.5) == pytest.approx(15.0)
+
+
+class _FakeAffine:
+    # a, b, c, d, e, f — north-up raster has e (row step) < 0
+    def __init__(self, a, e, c, f):
+        self.a, self.b, self.c = a, 0.0, c
+        self.d, self.e, self.f = 0.0, e, f
+
+
+class _FakeSrc:
+    def __init__(self, arr, transform, nodata=None):
+        self._arr = arr
+        self.transform = transform
+        self.nodata = nodata
+        self.height, self.width = arr.shape
+
+    def read(self, _band):
+        return self._arr.copy()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _install_fake_rasterio(monkeypatch, src):
+    import sys
+    import types
+    fake = types.ModuleType("rasterio")
+    fake.open = lambda *a, **k: src
+    monkeypatch.setitem(sys.modules, "rasterio", fake)
+
+
+def test_geotiff_north_up_is_flipped_to_south_first(monkeypatch, tmp_path):
+    from cctv_simulator import terrain_loader as TL
+
+    # projected (UTM) DEM, 30 m cells; row 0 = north = 900 m, ramp down to south.
+    arr = np.repeat(np.linspace(900.0, 0.0, 4).reshape(4, 1), 3, axis=1).astype(np.float32)
+    src = _FakeSrc(arr, _FakeAffine(a=30.0, e=-30.0, c=500000.0, f=4000120.0))
+    _install_fake_rasterio(monkeypatch, src)
+
+    p = tmp_path / "dem.tif"
+    p.write_bytes(b"stub")
+    terr = TL.load_geotiff_or_dem(p)
+
+    assert terr.is_measured is True
+    assert terr.cell_size_m == pytest.approx(30.0)
+    assert terr.origin_x == 0.0 and terr.origin_y == 0.0
+    # row 0 must now be the SOUTH edge (the 0 m end), last row the north (900 m)
+    assert float(terr.z_grid[0].mean()) < float(terr.z_grid[-1].mean())
+    assert float(terr.z_grid[-1].mean()) == pytest.approx(900.0)
+
+
+def test_geotiff_nodata_is_filled_not_propagated(monkeypatch, tmp_path):
+    from cctv_simulator import terrain_loader as TL
+
+    arr = np.full((4, 4), 100.0, dtype=np.float32)
+    arr[0, 0] = -9999.0
+    src = _FakeSrc(arr, _FakeAffine(a=10.0, e=-10.0, c=0.0, f=40.0), nodata=-9999.0)
+    _install_fake_rasterio(monkeypatch, src)
+
+    p = tmp_path / "dem.tif"
+    p.write_bytes(b"stub")
+    terr = TL.load_geotiff_or_dem(p)
+    assert not np.isnan(terr.z_grid).any()
+    assert terr.get_elevation_at(5.0, 5.0) == terr.get_elevation_at(5.0, 5.0)  # not NaN

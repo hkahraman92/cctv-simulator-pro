@@ -146,40 +146,75 @@ def generate_procedural_terrain(preset: str = "ridge_and_valley",
                        source_note="Prosedürel örnek arazi - ölçüm değildir.")
 
 
+def _terrain_from_rasterio(path: Path) -> Optional[TerrainData]:
+    """Real DEM via rasterio, or None when rasterio is missing / cannot open it.
+
+    A genuine data problem (all-nodata) is raised, not swallowed.
+    """
+    try:
+        import rasterio
+    except ImportError:
+        return None
+    try:
+        src_ctx = rasterio.open(path)
+    except Exception:
+        return None
+
+    with src_ctx as src:
+        z_grid = src.read(1).astype(np.float32)
+        if src.nodata is not None:
+            z_grid[z_grid == src.nodata] = np.nan
+        t = src.transform
+        px_w = float(abs(t.a))          # metres (or degrees) per column
+        px_h = float(abs(t.e))          # per row
+        y_step = float(t.e)             # signed: < 0 for a north-up raster
+
+        # Geographic (EPSG:4326, degrees) -> metres. Scale longitude by the
+        # cosine of the raster-centre latitude; 1 deg latitude ~ 111,320 m.
+        if px_w < 0.05:
+            lat_c = float(t.f) + float(t.e) * (src.height / 2.0)
+            cell_x_m = px_w * 111_320.0 * max(math.cos(math.radians(lat_c)), 0.1)
+            cell_y_m = px_h * 111_320.0
+            cell_size_m = (cell_x_m + cell_y_m) / 2.0
+        else:
+            cell_size_m = (px_w + px_h) / 2.0
+
+        # TerrainData indexes rows by increasing +Y (north) and the renderer
+        # flips on the way to an image. A north-up raster has row 0 = north, so
+        # it must be flipped here or the terrain comes out mirrored north-south
+        # (same fix as online_map_loader.download_terrain_dem).
+        if y_step < 0:
+            z_grid = np.flipud(z_grid).copy()
+        else:
+            z_grid = np.ascontiguousarray(z_grid)
+
+        # NaN (nodata) would propagate silently through the viewshed; fill it.
+        if np.isnan(z_grid).all():
+            raise ValueError("DEM'de geçerli yükselti değeri yok (tümü nodata).")
+        if np.isnan(z_grid).any():
+            z_grid = np.where(np.isnan(z_grid), np.nanmean(z_grid), z_grid).astype(np.float32)
+
+    # Local metre frame, SW corner at (0, 0) — consistent with the downloaded
+    # DEMs and with how the map window places cameras.
+    return TerrainData(
+        z_grid=z_grid,
+        cell_size_m=max(cell_size_m, 1.0),
+        origin_x=0.0,
+        origin_y=0.0,
+        name=path.stem,
+        is_measured=True,
+        source_note=f"GeoTIFF/DEM: {path.name}",
+    )
+
+
 def load_geotiff_or_dem(filepath: str | Path) -> TerrainData:
     path = Path(filepath)
     if not path.exists():
         raise FileNotFoundError(f"Arazi dosyası bulunamadı: {filepath}")
 
-    try:
-        import rasterio
-        with rasterio.open(path) as src:
-            z_grid = src.read(1).astype(np.float32)
-            if src.nodata is not None:
-                z_grid[z_grid == src.nodata] = np.nan
-            transform = src.transform
-            raw_cell_size = float(abs(transform[0]))
-            origin_x = float(transform[2])
-            origin_y = float(transform[5])
-
-            # Convert Geographic Coordinates (degrees EPSG:4326) to meters
-            if raw_cell_size < 0.05:
-                # 1 arc-second ~ 30.87m, 1 degree ~ 111,320m
-                cell_size_m = raw_cell_size * 111320.0
-            else:
-                cell_size_m = raw_cell_size
-
-            return TerrainData(
-                z_grid=z_grid,
-                cell_size_m=max(cell_size_m, 1.0),
-                origin_x=origin_x,
-                origin_y=origin_y,
-                name=path.stem,
-                is_measured=True,
-                source_note=f"GeoTIFF/DEM: {path.name}",
-            )
-    except Exception:
-        pass
+    terr = _terrain_from_rasterio(path)
+    if terr is not None:
+        return terr
 
     try:
         from PIL import Image
