@@ -21,13 +21,15 @@ DORI_PPM: Dict[str, float] = {
 }
 
 # Turkish task words -> DORI key. ANPR / face have their own de-facto targets.
+# Keep stems specific: "kontrol" ("erişim kontrolü", "giriş kontrol sistemi") and
+# a bare "tanı" ("tanımlı", "tanı" = diagnosis) fired spurious DORI requirements.
 _TASK_TR: Dict[str, str] = {
-    "izleme": "monitor", "kontrol": "monitor", "genel görünüm": "monitor",
+    "izleme": "monitor", "gözetleme": "monitor", "genel görünüm": "monitor",
     "algıla": "detect", "tespit": "detect", "sezme": "detect",
-    "gözlem": "observe", "takip": "observe",
-    "tanı": "recognize", "teşhis öncesi": "recognize",
-    "teşhis": "identify", "kimlik": "identify",
-    "inceleme": "inspect", "detaylı inceleme": "inspect",
+    "gözlem": "observe", "hareket takib": "observe",
+    "tanıma": "recognize", "teşhis öncesi": "recognize",
+    "teşhis": "identify", "kimlik belirle": "identify", "kimlik tespit": "identify",
+    "detaylı inceleme": "inspect", "adli inceleme": "inspect",
 }
 
 # Non-DORI but common numeric targets used in TR specs.
@@ -69,7 +71,17 @@ _VAGUE_RE = re.compile(
     r"(?<![\wğüşıöçĞÜŞİÖÇ])(" + "|".join(_VAGUE) + r")(?![\wğüşıöçĞÜŞİÖÇ])",
     re.IGNORECASE,
 )
-_HAS_NUMBER_NEAR = re.compile(r"\d")
+# A number that actually quantifies a requirement carries a unit. A bare count
+# ("1 adet ... kamera") does not make "yüksek çözünürlük" any less vague, so the
+# unit list is explicit and boundary-guarded (no bare "a"/"k"/"p" that would
+# swallow "1 adet", "1 kamera").
+_SPEC_NUMBER = re.compile(
+    r"\d+(?:[.,]\d+)?\s*"
+    r"(?:mp|megapiksel|metre|mm|cm|km|db|lux|lx|lümen|fps|hz|khz|px|piksel|%|gb|tb|"
+    r"mbps|kbps|kbit|mbit|kelvin|watt|volt|amper|ip\d\d?|ik\d\d?|nit|cd|m|k)"
+    r"(?![a-zçğıöşü])",
+    re.IGNORECASE,
+)
 
 
 def clause_for(category: str) -> Tuple[str, str]:
@@ -95,13 +107,13 @@ def find_ambiguities(spec_text: str) -> List[Dict[str, str]]:
     """Vague, unquantified requirements + a clarification question to send back.
 
     Works clause by clause: a vague adjective is flagged only when its own
-    clause carries no number.
+    clause carries no *unit-bearing* number ("1 adet" is a count, not a spec).
     """
     out: List[Dict[str, str]] = []
     seen = set()
     for clause in _CLAUSE_SPLIT.split(spec_text):
         clause = (clause or "").strip()
-        if len(clause) < 6 or _HAS_NUMBER_NEAR.search(clause):
+        if len(clause) < 6 or _SPEC_NUMBER.search(clause):
             continue
         m = _VAGUE_RE.search(clause)
         if not m:

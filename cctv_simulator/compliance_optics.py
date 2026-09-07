@@ -21,7 +21,9 @@ from .models import DEFAULT_LEVELS, CameraConfig
 _STD_POLE_M = 3.0
 _STD_TARGET_M = 1.6
 
-_TASK_WORDS = r"(teşhis|kimlik|tanı(?:ma)?|gözlem|takip|algıla(?:ma)?|tespit|izleme|kontrol|plaka|anpr|lpr|yüz\s*tanıma|yüz\s*teşhis|yüz\s*tespit)"
+# "kontrol" / bare "tanı" dropped — they matched "erişim kontrolü", "tanımlı" and
+# fired spurious DORI requirements (see compliance_standards._TASK_TR).
+_TASK_WORDS = r"(teşhis|kimlik\s*(?:tespit\w*|belirle\w*)|tanıma|gözlem|hareket\s*takib\w*|algıla(?:ma)?|tespit|izleme|gözetleme|plaka|anpr|lpr|yüz\s*tanıma|yüz\s*teşhis|yüz\s*tespit)"
 # distance: "30 m", "30m", "30 metre", "30 metrede", "30 metrelik" — but not "30 mm"
 _DIST = r"(\d+(?:[.,]\d+)?)\s*(?:metre\w{0,5}|m)(?![a-zğüşıöçA-ZĞÜŞİÖÇ])"
 _PPM = r"(\d+(?:[.,]\d+)?)\s*(?:ppm|px/m|piksel\s*/\s*metre|piksel/m)"
@@ -61,20 +63,23 @@ def extract_dori_requirements(spec_text: str, profile_id: str = "P1",
         })
         rid += 1
 
-    # "<task> ... <dist> m"  and  "<dist> m ... <task>"
-    for m in re.finditer(_TASK_WORDS + r"[^.\n]{0,40}?" + _DIST, spec_text, re.IGNORECASE):
+    # "<task> ... <dist> m"  and  "<dist> m ... <task>". Turkish tender sentences
+    # routinely put 60-80 chars between the task and the range ("...araçların
+    # plakalarını en az 25 metre mesafeden okuyabilecek..."), so the window is
+    # wide but still clause-bounded (no '.' or newline).
+    for m in re.finditer(_TASK_WORDS + r"[^.\n]{0,90}?" + _DIST, spec_text, re.IGNORECASE):
         hit = dori_ppm_for_task(m.group(1))
         if hit:
             add(hit[0], hit[1], _num(m.group(2)), m.group(0))
-    for m in re.finditer(_DIST + r"[^.\n]{0,40}?" + _TASK_WORDS, spec_text, re.IGNORECASE):
+    for m in re.finditer(_DIST + r"[^.\n]{0,90}?" + _TASK_WORDS, spec_text, re.IGNORECASE):
         hit = dori_ppm_for_task(m.group(2))
         if hit:
             add(hit[0], hit[1], _num(m.group(1)), m.group(0))
 
     # explicit "<ppm> PPM ... <dist> m" (either order)
-    for m in re.finditer(_PPM + r"[^.\n]{0,40}?" + _DIST, spec_text, re.IGNORECASE):
+    for m in re.finditer(_PPM + r"[^.\n]{0,60}?" + _DIST, spec_text, re.IGNORECASE):
         add(f"{_num(m.group(1)):g} px/m", _num(m.group(1)), _num(m.group(2)), m.group(0))
-    for m in re.finditer(_DIST + r"[^.\n]{0,40}?" + _PPM, spec_text, re.IGNORECASE):
+    for m in re.finditer(_DIST + r"[^.\n]{0,60}?" + _PPM, spec_text, re.IGNORECASE):
         add(f"{_num(m.group(2)):g} px/m", _num(m.group(2)), _num(m.group(1)), m.group(0))
 
     return reqs

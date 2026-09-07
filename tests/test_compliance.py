@@ -73,6 +73,29 @@ def test_task_and_clause_lookup():
     assert clause_for("dori")[0].startswith("EN 62676-4")
 
 
+def test_access_control_is_not_a_dori_task():
+    # "kontrol" / "tanımlı" used to resolve to monitor/recognize and fire
+    # spurious DORI requirements from unrelated sentences.
+    assert dori_ppm_for_task("erişim kontrolü sistemi ile entegre") is None
+    assert dori_ppm_for_task("önceden tanımlı kullanıcı listesi") is None
+    reqs = extract_dori_requirements(
+        "Kamera, geçiş kontrol sistemi ile 30 m mesafeden haberleşebilmelidir."
+    )
+    assert reqs == []
+
+
+def test_dori_extraction_tolerates_long_turkish_sentence():
+    spec = ("Sistem, tesis giriş kapısından geçen araçların ön ve arka "
+            "plakalarını en az 25 metre mesafeden okuyabilecek çözünürlükte olmalıdır.")
+    reqs = extract_dori_requirements(spec)
+    assert any(r["task"] in ("plaka", "anpr", "lpr") and r["distance_m"] == 25.0 for r in reqs)
+
+
+def test_ambiguity_not_silenced_by_a_bare_count():
+    amb = find_ambiguities("1 adet yüksek çözünürlüklü sabit kamera tesis edilecektir.")
+    assert any(a["term"] == "yüksek" for a in amb)
+
+
 def test_rule_based_compliance_emits_optics_rows_and_clarifications():
     spec = ("Sabit kamera. 30 m mesafede yüz teşhisi. En az 8 MP çözünürlük. "
             "IR en az 40 m. Yeterli gece görüş performansı olmalı.")
