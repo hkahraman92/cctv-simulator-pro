@@ -871,3 +871,262 @@ def export_compliance_excel(path: str, last_compliance_result: Dict[str, Any]):
         ws.column_dimensions[col_letter].width = max(max_len + 4, 12)
 
     wb.save(path)
+
+
+# ---------------------------------------------------------------------------
+# GÖRÜŞ ALANI / KAPSAMA MÜHENDİSLİK RAPORU (ASELSAN formatı)
+# ---------------------------------------------------------------------------
+_ZONE_LABELS = {
+    1: "Kör nokta (tepe arkası)",
+    2: "Algılama (Detection ≥ 25 px/m)",
+    3: "Gözlem (Observation ≥ 62,5 px/m)",
+    4: "Tanıma (Recognition ≥ 125 px/m)",
+    5: "Teşhis (Identification ≥ 250 px/m)",
+}
+
+
+def _fmt_area(m2: float) -> str:
+    return f"{m2 / 1e6:.3f} km²" if m2 >= 1e6 else f"{m2:,.0f} m²"
+
+
+def _viewshed_rows(viewshed, cell_size_m: float) -> List[List[str]]:
+    """Human-readable (etiket, değer) rows for a ViewshedResult."""
+    v = viewshed
+    rows = [
+        ["Kamera konumu (yerel)", f"X {v.cam_x_m:,.1f} m · Y {v.cam_y_m:,.1f} m"],
+        ["Bakış irtifası", f"{v.cam_ground_z_m:.1f} m zemin + {v.mast_height_m:.1f} m direk = {v.cam_total_z_m:.1f} m"],
+        ["Yönelim (pan / tilt)", f"{v.pan_deg:.1f}° / {v.tilt_deg:.1f}°"],
+        ["Görüş açısı (HFOV / VFOV)", f"{v.hfov_deg:.1f}° / {v.vfov_deg:.1f}°"],
+        ["Tanımlı analiz menzili", f"{v.max_range_m:,.0f} m"],
+        ["Optik çözünürlük sınırı", f"{v.optical_limit_m:,.0f} m (≥ 25 px/m)"],
+        ["Atmosferik menzil sınırı", f"{v.atmospheric_limit_m:,.0f} m (görüş {v.visibility_km:.1f} km)"],
+        ["FOV konisi alanı", _fmt_area(v.fov_area_m2)],
+        ["Görünür (çerçevelenen) alan", _fmt_area(v.visible_area_m2)],
+        ["Kör nokta — tepe arkası", _fmt_area(v.occluded_area_m2)],
+        ["Net görüş oranı", f"% {v.coverage_pct:.1f}"],
+        ["En uzak görüş erişimi (LOS)", f"{v.max_los_reach_m:,.1f} m"],
+    ]
+    try:
+        import numpy as _np
+        cell_a = cell_size_m * cell_size_m
+        dg = viewshed.dori_grid
+        for code, label in _ZONE_LABELS.items():
+            n = int(_np.count_nonzero(dg == code))
+            if n:
+                rows.append([f"  → {label}", _fmt_area(n * cell_a)])
+    except Exception:
+        pass
+    return rows
+
+
+def _coverage_rows(coverage) -> List[List[str]]:
+    p = coverage.pct_by_level
+    return [
+        ["Analiz edilen çit bandı hücresi", f"{coverage.analysed_cells:,}"],
+        ["Hücre boyutu", f"{coverage.cell_m:.1f} m"],
+        ["Arazi görüş hattı engeli", "dahil" if coverage.occlusion_applied else "uygulanmadı (düz zemin)"],
+        ["Teşhis (Identification) kapsaması", f"% {p.get('ident', 0.0):.1f}"],
+        ["Tanıma (Recognition) kapsaması", f"% {p.get('recog', 0.0):.1f}"],
+        ["Gözlem (Observation) kapsaması", f"% {p.get('observe', 0.0):.1f}"],
+        ["Algılama (Detection) kapsaması", f"% {p.get('detect', 0.0):.1f}"],
+    ]
+
+
+def _perimeter_rows(perim) -> List[List[str]]:
+    rows = [
+        ["Toplam çevre çiti", f"{perim.total_fence_length_m:,.0f} m"],
+        ["Kamera / direk adedi", f"{perim.camera_count}"],
+        ["Ortalama direk aralığı", f"{perim.avg_spacing_m:.1f} m"],
+        ["Hedef piksel yoğunluğu", f"{perim.target_ppm:g} px/m"],
+        ["Çit kapsaması (geometrik + LOS)", f"% {perim.coverage_percentage:.1f}"],
+        ["Tahmini ağ trafiği", f"{perim.estimated_bandwidth_mbps:.1f} Mbps"],
+        ["30 günlük RAID depolama", f"{perim.estimated_storage_30days_tb:.1f} TB"],
+    ]
+    if perim.gaps:
+        total_gap = sum(g.length_m for g in perim.gaps)
+        rows.append(["Kapsanmayan bölüm", f"{len(perim.gaps)} adet · toplam {total_gap:.0f} m"])
+        for i, g in enumerate(perim.gaps, 1):
+            rows.append([f"  → boşluk {i}",
+                         f"({g.start_x:.0f}, {g.start_y:.0f}) → ({g.end_x:.0f}, {g.end_y:.0f}) · {g.length_m:.0f} m"])
+    else:
+        rows.append(["Kapsanmayan bölüm", "yok — kesintisiz"])
+    return rows
+
+
+def _provenance_line(terrain) -> str:
+    if getattr(terrain, "is_measured", False):
+        return f"Yükselti verisi: ÖLÇÜLMÜŞ DEM ({getattr(terrain, 'source_note', '') or terrain.name})."
+    return ("Yükselti verisi: TEMSİLİ / PROSEDÜREL — ölçüm değildir. Görüş alanı, kör nokta "
+            "ve kapsama oranları bu arazi üzerinde BAĞLAYICI DEĞİLDİR; gerçek DEM ile "
+            "yeniden hesaplanmalıdır.")
+
+
+def export_engineering_report_csv(path: str, *, project_name: str, terrain, camera,
+                                  weather: str, viewshed=None, coverage=None, perimeter=None) -> None:
+    """Flat, sectioned CSV of the viewshed / coverage / perimeter engineering analysis."""
+    with open(path, "w", encoding="utf-8-sig", newline="") as f:
+        w = csv.writer(f, delimiter=";")
+        w.writerow(["# Rapor", "CCTV Görüş Alanı & Kapsama Mühendislik Analizi"])
+        w.writerow(["# Proje", project_name or "-"])
+        w.writerow(["# Tarih", datetime.now().strftime("%d.%m.%Y %H:%M")])
+        w.writerow(["# Kamera", getattr(camera, "name", "-")])
+        w.writerow(["# Sensör / Çözünürlük", f"{getattr(camera, 'sensor_name', '-')} / {getattr(camera, 'resolution_name', '-')}"])
+        w.writerow(["# Hava koşulu", weather or "Berrak"])
+        w.writerow(["# Arazi", terrain.name])
+        w.writerow(["# Yükselti verisi", "ÖLÇÜLMÜŞ DEM" if getattr(terrain, "is_measured", False)
+                    else "TEMSİLİ — ölçüm değil, sonuçlar bağlayıcı değildir"])
+        w.writerow([])
+        if viewshed is not None:
+            w.writerow(["=== GÖRÜŞ ALANI (VIEWSHED) ==="])
+            for k, val in _viewshed_rows(viewshed, terrain.cell_size_m):
+                w.writerow([k, val])
+            w.writerow([])
+        if coverage is not None:
+            w.writerow(["=== ÇOK KAMERALI BİRLEŞİK KAPSAMA ==="])
+            for k, val in _coverage_rows(coverage):
+                w.writerow([k, val])
+            w.writerow([])
+        if perimeter is not None:
+            w.writerow(["=== ÇEVRE ÇİTİ PLANI ==="])
+            for k, val in _perimeter_rows(perimeter):
+                w.writerow([k, val])
+            w.writerow([])
+            w.writerow(["Direk No", "X (m)", "Y (m)", "Zemin (m)", "Direk (m)",
+                        "Pan (°)", "Tilt (°)", "Odak (mm)", "HFOV (°)", "Menzil (m)", "Kör Nokta (m)"])
+            for c in perimeter.placed_cameras:
+                w.writerow([c.pole_id, c.x_m, c.y_m, c.ground_z_m, c.mast_height_m,
+                            c.pan_deg, c.tilt_deg, c.focal_mm, c.hfov_deg,
+                            c.effective_range_m, c.dead_zone_m])
+
+
+def export_engineering_report_pdf(path: str, *, project_name: str, terrain, camera,
+                                  weather: str, viewshed=None, coverage=None, perimeter=None) -> None:
+    """ASELSAN kurumsal formatında görüş alanı / kapsama mühendislik raporu.
+
+    ReportLab yoksa düz metin PDF'e (write_simple_pdf) düşer.
+    """
+    measured = bool(getattr(terrain, "is_measured", False))
+    now_str = datetime.now().strftime("%d.%m.%Y %H:%M")
+
+    if not _REPORTLAB_AVAILABLE:
+        lines = ["ASELSAN CCTV GÖRÜŞ ALANI & KAPSAMA MÜHENDİSLİK RAPORU",
+                 f"Proje: {project_name or '-'}", f"Tarih: {now_str}",
+                 f"Kamera: {getattr(camera, 'name', '-')}",
+                 f"Hava: {weather or 'Berrak'}", f"Arazi: {terrain.name}",
+                 _provenance_line(terrain), ""]
+        for title, rws in (("1. GÖRÜŞ ALANI", viewshed is not None and _viewshed_rows(viewshed, terrain.cell_size_m)),
+                           ("2. BİRLEŞİK KAPSAMA", coverage is not None and _coverage_rows(coverage)),
+                           ("3. ÇEVRE ÇİTİ PLANI", perimeter is not None and _perimeter_rows(perimeter))):
+            if rws:
+                lines.append(title)
+                lines.extend(f"  {k:<38} {val}" for k, val in rws)
+                lines.append("")
+        write_simple_pdf(path, "ASELSAN CCTV GÖRÜŞ ALANI & KAPSAMA RAPORU", lines)
+        return
+
+    _ensure_reportlab_fonts()
+    doc = SimpleDocTemplate(path, pagesize=A4, leftMargin=36, rightMargin=36,
+                            topMargin=46, bottomMargin=54)
+    page_w = 595.27 - 72
+    c_navy = rl_colors.HexColor("#002D62")
+    c_light = rl_colors.HexColor("#F4F6F9")
+    c_danger_bg = rl_colors.HexColor("#F8D7DA")
+    c_danger_fg = rl_colors.HexColor("#842029")
+    c_ok_bg = rl_colors.HexColor("#D1E7DD")
+
+    S = {
+        "title": ParagraphStyle("T", fontName=_FONT_FAMILY_BOLD, fontSize=15, leading=18, textColor=rl_colors.white),
+        "sub": ParagraphStyle("S", fontName=_FONT_FAMILY_BOLD, fontSize=8.5, leading=11, textColor=rl_colors.HexColor("#90CAF9")),
+        "sec": ParagraphStyle("H", fontName=_FONT_FAMILY_BOLD, fontSize=11, leading=14, textColor=c_navy, spaceBefore=10, spaceAfter=4),
+        "cell": ParagraphStyle("C", fontName=_FONT_FAMILY, fontSize=8, leading=10, textColor=rl_colors.HexColor("#212529")),
+        "cellb": ParagraphStyle("CB", fontName=_FONT_FAMILY_BOLD, fontSize=8, leading=10, textColor=rl_colors.HexColor("#212529")),
+        "cellh": ParagraphStyle("CH", fontName=_FONT_FAMILY_BOLD, fontSize=7.5, leading=9.5, textColor=rl_colors.white, alignment=1),
+    }
+    story: list = []
+
+    doc_no = f"ASELSAN-CCTV-VS-{datetime.now().strftime('%Y%m%d')}-01"
+    banner = Table([
+        [Paragraph("ASELSAN A.Ş.  •  SAVUNMA VE GÜVENLİK TEKNOLOJİLERİ SEKTÖR BAŞKANLIĞI", S["sub"]),
+         Paragraph(f"DOKÜMAN NO: {doc_no}", ParagraphStyle("D", fontName=_FONT_FAMILY_BOLD, fontSize=7.5, textColor=rl_colors.HexColor("#90CAF9"), alignment=2))],
+        [Paragraph("CCTV GÖRÜŞ ALANI, ARAZİ GÖRÜŞ HATTI VE ÇOK KAMERALI KAPSAMA MÜHENDİSLİK RAPORU", S["title"]),
+         Paragraph(f"GİZLİLİK: KURUMSAL / HİZMETE ÖZEL<br/>TARİH: {now_str}", ParagraphStyle("M", fontName=_FONT_FAMILY, fontSize=7.5, leading=10, textColor=rl_colors.white, alignment=2))],
+    ], colWidths=[page_w * 0.72, page_w * 0.28])
+    banner.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), c_navy),
+                                ("TOPPADDING", (0, 0), (-1, -1), 8), ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                                ("LEFTPADDING", (0, 0), (-1, -1), 10), ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                                ("VALIGN", (0, 0), (-1, -1), "MIDDLE")]))
+    story.append(banner)
+    story.append(Spacer(1, 8))
+
+    def _kv(title: str, rws: List[List[str]]):
+        story.append(Paragraph(title, S["sec"]))
+        data = [[Paragraph(str(k), S["cellb"]), Paragraph(str(v), S["cell"])] for k, v in rws]
+        t = Table(data, colWidths=[page_w * 0.42, page_w * 0.58])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (0, -1), c_light),
+            ("BOX", (0, 0), (-1, -1), 0.75, c_navy),
+            ("INNERGRID", (0, 0), (-1, -1), 0.25, rl_colors.HexColor("#CFD8DC")),
+            ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        story.append(t)
+        story.append(Spacer(1, 6))
+
+    _kv("1. YÖNETİCİ ÖZETİ VE ANALİZ PARAMETRELERİ", [
+        ["Proje", project_name or "—"],
+        ["Rapor tarihi", now_str],
+        ["Kamera modeli", getattr(camera, "name", "—")],
+        ["Sensör / çözünürlük", f"{getattr(camera, 'sensor_name', '—')} · {getattr(camera, 'resolution_name', '—')}"],
+        ["Odak aralığı", f"{getattr(camera, 'focal_min_mm', 0):g}–{getattr(camera, 'focal_max_mm', 0):g} mm"],
+        ["Hava koşulu (görüş)", weather or "Berrak hava"],
+        ["Arazi modeli", terrain.name],
+        ["Hücre çözünürlüğü", f"{terrain.cell_size_m:.1f} m/piksel · {terrain.width_m:,.0f} × {terrain.height_m:,.0f} m"],
+    ])
+
+    prov = _provenance_line(terrain)
+    prov_tbl = Table([[Paragraph(("UYARI — " if not measured else "DOĞRULANDI — ") + prov, S["cellb"])]], colWidths=[page_w])
+    prov_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), c_danger_bg if not measured else c_ok_bg),
+        ("TEXTCOLOR", (0, 0), (-1, -1), c_danger_fg if not measured else rl_colors.HexColor("#0F5132")),
+        ("BOX", (0, 0), (-1, -1), 1, c_danger_fg if not measured else rl_colors.HexColor("#0F5132")),
+        ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    story.append(prov_tbl)
+    story.append(Spacer(1, 8))
+
+    if viewshed is not None:
+        _kv("2. TEKİL KAMERA GÖRÜŞ ALANI (VIEWSHED) ANALİZİ", _viewshed_rows(viewshed, terrain.cell_size_m))
+    if coverage is not None:
+        _kv("3. ÇOK KAMERALI BİRLEŞİK KAPSAMA (EN 62676-4 DORI)", _coverage_rows(coverage))
+    if perimeter is not None:
+        _kv("4. ÇEVRE ÇİTİ KAMERA PLANI VE BOM", _perimeter_rows(perimeter))
+        if perimeter.placed_cameras:
+            head = ["Direk", "X", "Y", "Zemin", "Direk b.", "Pan°", "Tilt°", "Odak", "HFOV°", "Menzil", "Kör N."]
+            data = [[Paragraph(h, S["cellh"]) for h in head]]
+            for c in perimeter.placed_cameras:
+                data.append([Paragraph(str(x), S["cell"]) for x in (
+                    c.pole_id, f"{c.x_m:.0f}", f"{c.y_m:.0f}", f"{c.ground_z_m:.0f}", f"{c.mast_height_m:.1f}",
+                    f"{c.pan_deg:.0f}", f"{c.tilt_deg:.1f}", f"{c.focal_mm:g}", f"{c.hfov_deg:.0f}",
+                    f"{c.effective_range_m:.0f}", f"{c.dead_zone_m:.1f}")])
+            ct = Table(data, colWidths=[page_w / 11] * 11, repeatRows=1)
+            ct.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), c_navy),
+                ("BOX", (0, 0), (-1, -1), 0.5, c_navy),
+                ("INNERGRID", (0, 0), (-1, -1), 0.25, rl_colors.HexColor("#CFD8DC")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [rl_colors.white, c_light]),
+                ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+            ]))
+            story.append(ct)
+            story.append(Spacer(1, 6))
+
+    _kv("5. GEÇERLİLİK VE STANDART REFERANSLARI", [
+        ["Piksel yoğunluğu ölçütü", "EN 62676-4:2015 DORI (Monitoring 12,5 · Detection 25 · Observation 62,5 · Recognition 125 · Identification 250 px/m)"],
+        ["Görüş alanı yöntemi", "DEM üzerinde vektörel ışın yürütme; dünya eğriliği + atmosferik kırılma (k=0,13)"],
+        ["Atmosferik zayıflama", "Koschmieder (σ = 3,912 / V) + banda göre iletim; DORI menzilleri berrak havada tanımlıdır"],
+        ["Kısıt", "Görüş alanı arazi engellemesini modeller; bitki örtüsü, yapay engel ve sensör montaj toleransı dahil değildir"],
+    ])
+
+    doc.build(story, canvasmaker=_NumberedCanvas)
