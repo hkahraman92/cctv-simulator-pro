@@ -308,3 +308,113 @@ def calculate_3d_viewshed(terrain: TerrainData,
         atmospheric_limit_m=atmospheric_limit_m,
         visibility_km=visibility_km,
     )
+
+
+# ── Çoklu kamera birleşik görüş alanı ────────────────────────────────────────
+
+@dataclass
+class CameraPlacement:
+    """One camera pinned on the terrain for a combined-viewshed run."""
+    x_m: float
+    y_m: float
+    mast_height_m: float
+    camera: CameraConfig
+    lens_mode: str = "min"
+    pan_deg: float = 0.0
+    tilt_deg: float = -5.0
+    max_range_m: float = 2000.0
+    label: str = ""
+
+
+@dataclass
+class MultiViewshedResult:
+    """Best-of-all-cameras DORI / visibility over the whole terrain grid."""
+    dori_grid: np.ndarray             # ZONE_* — best level any camera achieves
+    ppm_grid: np.ndarray             # best px/m from any camera
+    visibility_mask: np.ndarray      # True where >= 1 camera has a clear framed LOS
+    best_cam_grid: np.ndarray        # 1-based index of the strongest camera, 0 = none
+    seen_count_grid: np.ndarray      # how many cameras cover the cell (redundancy)
+    per_camera: List[ViewshedResult]
+    labels: List[str]
+    cell_size_m: float
+    origin_x: float
+    origin_y: float
+
+    fov_area_m2: float               # union of every camera's frameable cone
+    visible_area_m2: float
+    occluded_area_m2: float          # in some cone, seen by nobody (terrain shadow)
+    coverage_pct: float              # visible / union-cone
+    overlap_area_m2: float           # cells seen by >= 2 cameras
+    single_cover_area_m2: float      # cells seen by exactly 1 (no redundancy)
+    pct_by_zone: Dict[str, float]    # ident/recog/observe/detect -> % of union cone
+
+
+def calculate_multi_camera_viewshed(terrain: TerrainData,
+                                    placements: List[CameraPlacement],
+                                    *,
+                                    earth_curvature: bool = True,
+                                    visibility_km: float = 40.0,
+                                    weather: str = "") -> Optional[MultiViewshedResult]:
+    """Runs the authoritative single-camera engine for each placement and merges
+    the grids: the combined map shows the best DORI level reachable at every
+    ground cell, plus how many cameras overlap there."""
+    if not placements:
+        return None
+
+    rows, cols = terrain.rows, terrain.cols
+    per: List[ViewshedResult] = []
+    for p in placements:
+        per.append(calculate_3d_viewshed(
+            terrain=terrain, cam_x_m=p.x_m, cam_y_m=p.y_m, mast_height_m=p.mast_height_m,
+            camera=p.camera, lens_mode=p.lens_mode, pan_deg=p.pan_deg, tilt_deg=p.tilt_deg,
+            max_range_m=p.max_range_m, earth_curvature=earth_curvature,
+            visibility_km=visibility_km, weather=weather,
+        ))
+
+    ppm = np.zeros((rows, cols), np.float32)
+    best_cam = np.zeros((rows, cols), np.int32)
+    vis = np.zeros((rows, cols), bool)
+    seen = np.zeros((rows, cols), np.int32)
+    union_cone = np.zeros((rows, cols), bool)
+
+    for i, r in enumerate(per, 1):
+        cam_vis = r.visibility_mask
+        better = cam_vis & (r.ppm_grid > ppm)
+        ppm = np.where(better, r.ppm_grid, ppm)
+        best_cam = np.where(better, i, best_cam)
+        vis |= cam_vis
+        seen += cam_vis.astype(np.int32)
+        union_cone |= (r.dori_grid != ZONE_OUT_OF_FOV)
+
+    occ = union_cone & ~vis
+    dori = np.zeros((rows, cols), np.int32)
+    dori = np.where(occ, ZONE_OCCLUDED, dori)
+    dori = np.where(vis, ZONE_DETECT, dori)
+    dori = np.where(vis & (ppm >= PPM_OBSERVE), ZONE_OBSERVE, dori)
+    dori = np.where(vis & (ppm >= PPM_RECOG), ZONE_RECOG, dori)
+    dori = np.where(vis & (ppm >= PPM_IDENT), ZONE_IDENT, dori)
+
+    cell_a = terrain.cell_size_m ** 2
+    union_cells = int(np.count_nonzero(union_cone))
+    denom = float(max(union_cells, 1))
+    vis_cells = int(np.count_nonzero(vis))
+    pct = {
+        "ident": 100.0 * np.count_nonzero(dori == ZONE_IDENT) / denom,
+        "recog": 100.0 * np.count_nonzero(dori >= ZONE_RECOG) / denom,
+        "observe": 100.0 * np.count_nonzero(dori >= ZONE_OBSERVE) / denom,
+        "detect": 100.0 * np.count_nonzero(dori >= ZONE_DETECT) / denom,
+    }
+
+    return MultiViewshedResult(
+        dori_grid=dori, ppm_grid=ppm, visibility_mask=vis, best_cam_grid=best_cam,
+        seen_count_grid=seen, per_camera=per,
+        labels=[p.label or f"K{i}" for i, p in enumerate(placements, 1)],
+        cell_size_m=terrain.cell_size_m, origin_x=terrain.origin_x, origin_y=terrain.origin_y,
+        fov_area_m2=union_cells * cell_a,
+        visible_area_m2=vis_cells * cell_a,
+        occluded_area_m2=int(np.count_nonzero(occ)) * cell_a,
+        coverage_pct=100.0 * vis_cells / denom,
+        overlap_area_m2=int(np.count_nonzero(seen >= 2)) * cell_a,
+        single_cover_area_m2=int(np.count_nonzero(seen == 1)) * cell_a,
+        pct_by_zone=pct,
+    )

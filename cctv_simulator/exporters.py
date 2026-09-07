@@ -919,6 +919,27 @@ def _viewshed_rows(viewshed, cell_size_m: float) -> List[List[str]]:
     return rows
 
 
+def _multi_viewshed_rows(mv) -> List[List[str]]:
+    p = mv.pct_by_zone
+    rows = [
+        ["Kamera adedi", f"{len(mv.per_camera)}"],
+        ["Birleşik FOV konisi", _fmt_area(mv.fov_area_m2)],
+        ["Görünür (en az 1 kamera)", _fmt_area(mv.visible_area_m2)],
+        ["Kör nokta (koni içi, görülemeyen)", _fmt_area(mv.occluded_area_m2)],
+        ["Birleşik net görüş oranı", f"% {mv.coverage_pct:.1f}"],
+        ["Örtüşen alan (≥ 2 kamera)", _fmt_area(mv.overlap_area_m2)],
+        ["Tek kamera kapsamı (yedeksiz)", _fmt_area(mv.single_cover_area_m2)],
+        ["Teşhis (Identification) kapsaması", f"% {p.get('ident', 0.0):.1f}"],
+        ["Tanıma (Recognition) kapsaması", f"% {p.get('recog', 0.0):.1f}"],
+        ["Gözlem (Observation) kapsaması", f"% {p.get('observe', 0.0):.1f}"],
+        ["Algılama (Detection) kapsaması", f"% {p.get('detect', 0.0):.1f}"],
+    ]
+    for label, r in zip(mv.labels, mv.per_camera):
+        rows.append([f"  → {label}", f"pan {r.pan_deg:.0f}° · tilt {r.tilt_deg:.1f}° · "
+                                     f"görünür {_fmt_area(r.visible_area_m2)} · LOS {r.max_los_reach_m:.0f} m"])
+    return rows
+
+
 def _coverage_rows(coverage) -> List[List[str]]:
     p = coverage.pct_by_level
     return [
@@ -962,7 +983,8 @@ def _provenance_line(terrain) -> str:
 
 
 def export_engineering_report_csv(path: str, *, project_name: str, terrain, camera,
-                                  weather: str, viewshed=None, coverage=None, perimeter=None) -> None:
+                                  weather: str, viewshed=None, coverage=None, perimeter=None,
+                                  multi_viewshed=None) -> None:
     """Flat, sectioned CSV of the viewshed / coverage / perimeter engineering analysis."""
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f, delimiter=";")
@@ -976,6 +998,11 @@ def export_engineering_report_csv(path: str, *, project_name: str, terrain, came
         w.writerow(["# Yükselti verisi", "ÖLÇÜLMÜŞ DEM" if getattr(terrain, "is_measured", False)
                     else "TEMSİLİ — ölçüm değil, sonuçlar bağlayıcı değildir"])
         w.writerow([])
+        if multi_viewshed is not None:
+            w.writerow(["=== ÇOKLU KAMERA BİRLEŞİK GÖRÜŞ ALANI ==="])
+            for k, val in _multi_viewshed_rows(multi_viewshed):
+                w.writerow([k, val])
+            w.writerow([])
         if viewshed is not None:
             w.writerow(["=== GÖRÜŞ ALANI (VIEWSHED) ==="])
             for k, val in _viewshed_rows(viewshed, terrain.cell_size_m):
@@ -1000,7 +1027,8 @@ def export_engineering_report_csv(path: str, *, project_name: str, terrain, came
 
 
 def export_engineering_report_pdf(path: str, *, project_name: str, terrain, camera,
-                                  weather: str, viewshed=None, coverage=None, perimeter=None) -> None:
+                                  weather: str, viewshed=None, coverage=None, perimeter=None,
+                                  multi_viewshed=None) -> None:
     """ASELSAN kurumsal formatında görüş alanı / kapsama mühendislik raporu.
 
     ReportLab yoksa düz metin PDF'e (write_simple_pdf) düşer.
@@ -1014,9 +1042,10 @@ def export_engineering_report_pdf(path: str, *, project_name: str, terrain, came
                  f"Kamera: {getattr(camera, 'name', '-')}",
                  f"Hava: {weather or 'Berrak'}", f"Arazi: {terrain.name}",
                  _provenance_line(terrain), ""]
-        for title, rws in (("1. GÖRÜŞ ALANI", viewshed is not None and _viewshed_rows(viewshed, terrain.cell_size_m)),
-                           ("2. BİRLEŞİK KAPSAMA", coverage is not None and _coverage_rows(coverage)),
-                           ("3. ÇEVRE ÇİTİ PLANI", perimeter is not None and _perimeter_rows(perimeter))):
+        for title, rws in (("1. ÇOKLU KAMERA BİRLEŞİK GÖRÜŞ ALANI", multi_viewshed is not None and _multi_viewshed_rows(multi_viewshed)),
+                           ("2. TEKİL GÖRÜŞ ALANI", viewshed is not None and _viewshed_rows(viewshed, terrain.cell_size_m)),
+                           ("3. BİRLEŞİK KAPSAMA", coverage is not None and _coverage_rows(coverage)),
+                           ("4. ÇEVRE ÇİTİ PLANI", perimeter is not None and _perimeter_rows(perimeter))):
             if rws:
                 lines.append(title)
                 lines.extend(f"  {k:<38} {val}" for k, val in rws)
@@ -1096,12 +1125,19 @@ def export_engineering_report_pdf(path: str, *, project_name: str, terrain, came
     story.append(prov_tbl)
     story.append(Spacer(1, 8))
 
+    _sec_n = 2
+    if multi_viewshed is not None:
+        _kv(f"{_sec_n}. ÇOKLU KAMERA BİRLEŞİK GÖRÜŞ ALANI (EN 62676-4 DORI)", _multi_viewshed_rows(multi_viewshed))
+        _sec_n += 1
     if viewshed is not None:
-        _kv("2. TEKİL KAMERA GÖRÜŞ ALANI (VIEWSHED) ANALİZİ", _viewshed_rows(viewshed, terrain.cell_size_m))
+        _kv(f"{_sec_n}. TEKİL KAMERA GÖRÜŞ ALANI (VIEWSHED) ANALİZİ", _viewshed_rows(viewshed, terrain.cell_size_m))
+        _sec_n += 1
     if coverage is not None:
-        _kv("3. ÇOK KAMERALI BİRLEŞİK KAPSAMA (EN 62676-4 DORI)", _coverage_rows(coverage))
+        _kv(f"{_sec_n}. ÇOK KAMERALI BİRLEŞİK KAPSAMA (EN 62676-4 DORI)", _coverage_rows(coverage))
+        _sec_n += 1
     if perimeter is not None:
-        _kv("4. ÇEVRE ÇİTİ KAMERA PLANI VE BOM", _perimeter_rows(perimeter))
+        _kv(f"{_sec_n}. ÇEVRE ÇİTİ KAMERA PLANI VE BOM", _perimeter_rows(perimeter))
+        _sec_n += 1
         if perimeter.placed_cameras:
             head = ["Direk", "X", "Y", "Zemin", "Direk b.", "Pan°", "Tilt°", "Odak", "HFOV°", "Menzil", "Kör N."]
             data = [[Paragraph(h, S["cellh"]) for h in head]]
@@ -1122,7 +1158,7 @@ def export_engineering_report_pdf(path: str, *, project_name: str, terrain, came
             story.append(ct)
             story.append(Spacer(1, 6))
 
-    _kv("5. GEÇERLİLİK VE STANDART REFERANSLARI", [
+    _kv(f"{_sec_n}. GEÇERLİLİK VE STANDART REFERANSLARI", [
         ["Piksel yoğunluğu ölçütü", "EN 62676-4:2015 DORI (Monitoring 12,5 · Detection 25 · Observation 62,5 · Recognition 125 · Identification 250 px/m)"],
         ["Görüş alanı yöntemi", "DEM üzerinde vektörel ışın yürütme; dünya eğriliği + atmosferik kırılma (k=0,13)"],
         ["Atmosferik zayıflama", "Koschmieder (σ = 3,912 / V) + banda göre iletim; DORI menzilleri berrak havada tanımlıdır"],
