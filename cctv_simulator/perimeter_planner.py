@@ -269,10 +269,11 @@ def generate_perimeter_plan(terrain: TerrainData,
         vx, vy = pts[vi]
         _place(vx, vy, h_out, reach=corner_range, dz=corner_dz, tilt=corner_tilt, note="köşe")
 
-    # Coverage / gap analysis along the fence line.
+    # Coverage / gap analysis along the fence line (with DEM line-of-sight).
     gaps, coverage_pct = _analyse_fence_coverage(
         pts, placed_cameras, visibility_km, weather,
         _atm.band_for_camera(camera.sensor_name, camera.model_name),
+        terrain=terrain,
     )
 
     # Compute BOM metrics
@@ -288,9 +289,9 @@ def generate_perimeter_plan(terrain: TerrainData,
         bitrate_mbps = 4.0
 
     total_bandwidth_mbps = num_cams * bitrate_mbps
-    # Storage for 30 days continuous recording (TB)
-    # 1 Mbps ~ 10.5 GB / day -> 30 days ~ 315 GB per camera per Mbps
-    storage_30days_tb = (total_bandwidth_mbps * 315.0 * 1.15) / 1024.0  # +15% RAID overhead
+    # Storage for 30 days continuous recording (TB).
+    # 1 Mbps = 1e6/8 B/s -> 10.8 GB/day -> 324 GB per Mbps over 30 days.
+    storage_30days_tb = (total_bandwidth_mbps * 324.0 * 1.15) / 1024.0  # +15% RAID overhead
 
     return PerimeterPlanResult(
         fence_points=pts,
@@ -311,15 +312,13 @@ def generate_perimeter_plan(terrain: TerrainData,
 def _analyse_fence_coverage(pts: List[Tuple[float, float]],
                             cams: List[PlacedCamera],
                             visibility_km: float, weather: str, band: str,
+                            terrain: Optional[TerrainData] = None,
                             sample_step_m: float = 2.0,
                             min_gap_m: float = 4.0) -> Tuple[List[FenceGap], float]:
     """Walk the fence polyline; a point is covered when some camera has it inside
-    its horizontal cone, past the dead zone and within the (weather-capped)
-    range. Returns the gap list and the covered percentage.
-
-    Terrain line-of-sight is intentionally not applied here — the coverage
-    heatmap (:func:`compute_coverage_grid`) carries the ridge occlusion; this
-    check is the geometric fence-continuity test.
+    its horizontal cone, past the dead zone, within the (weather-capped) range
+    and — when a ``terrain`` is given — with a clear DEM line of sight. Returns
+    the gap list and the covered percentage.
     """
     if len(pts) < 2 or not cams:
         return [], 0.0
@@ -327,15 +326,27 @@ def _analyse_fence_coverage(pts: List[Tuple[float, float]],
     prep = []
     for c in cams:
         rng = _atm.usable_range_m(c.effective_range_m, visibility_km, band, weather)
-        prep.append((c.x_m, c.y_m, c.pan_deg, c.hfov_deg / 2.0, c.dead_zone_m, rng))
+        prep.append((c.x_m, c.y_m, c.pan_deg, c.hfov_deg / 2.0, c.dead_zone_m, rng,
+                     c.ground_z_m + c.mast_height_m))
+
+    _los_ts = np.linspace(0.06, 0.97, 12)
+
+    def _los_clear(cx: float, cy: float, eye_z: float, px: float, py: float) -> bool:
+        if terrain is None:
+            return True
+        sx = cx + _los_ts * (px - cx)
+        sy = cy + _los_ts * (py - cy)
+        terr = _sample_terrain(terrain, sx, sy)
+        line = eye_z + _los_ts * (float(terrain.get_elevation_at(px, py)) - eye_z)
+        return not bool(np.any(terr > line + 0.5))
 
     def _covered(px: float, py: float) -> bool:
-        for cx, cy, pan, half_h, dz, rng in prep:
+        for cx, cy, pan, half_h, dz, rng, eye_z in prep:
             dist = math.hypot(px - cx, py - cy)
             if dist < dz or dist > rng:
                 continue
             az = (math.degrees(math.atan2(px - cx, py - cy)) + 360.0) % 360.0
-            if abs((az - pan + 180.0) % 360.0 - 180.0) <= half_h:
+            if abs((az - pan + 180.0) % 360.0 - 180.0) <= half_h and _los_clear(cx, cy, eye_z, px, py):
                 return True
         return False
 
@@ -439,11 +450,12 @@ def compute_coverage_grid(plan: PerimeterPlanResult, camera: CameraConfig,
 
     do_occ = terrain is not None and len(cams) <= 250
     if do_occ:
-        # ~1 sample per terrain cell along the ray, so a one-cell-wide ridge
-        # cannot slip between samples; scaled down when there are many cameras.
-        base = int(np.clip(reach / max(terrain.cell_size_m, 1.0), 12, 40))
-        n_samp = base if len(cams) <= 40 else (max(base // 2, 10) if len(cams) <= 120 else max(base // 3, 8))
-        ts = np.linspace(0.04, 0.985, n_samp)[:, None, None]
+        # ~1 sample per terrain cell along the ray so a one-cell-wide ridge
+        # cannot slip between samples (was capped at 40 -> ~12 m spacing on a
+        # long reach, thin ridges leaked through); scaled down for many cameras.
+        base = int(np.clip(reach / max(terrain.cell_size_m, 1.0), 16, 90))
+        n_samp = base if len(cams) <= 40 else (max(base // 2, 14) if len(cams) <= 120 else max(base // 3, 10))
+        ts = np.linspace(0.03, 0.985, n_samp)[:, None, None]
         cell_z = _sample_terrain(terrain, mx, my)
 
     for c in cams:

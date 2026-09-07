@@ -187,3 +187,25 @@ def test_coverage_percentage_reflects_gap_length(cam):
     open_line = generate_perimeter_plan(terr, [(0.0, 0.0), (300.0, 0.0)], cam,
                                         target_ppm=40.0, is_closed_loop=False)
     assert good.coverage_percentage > open_line.coverage_percentage
+
+
+def test_fence_gap_analysis_applies_terrain_line_of_sight():
+    import numpy as np
+
+    from cctv_simulator.perimeter_planner import PlacedCamera, _analyse_fence_coverage
+    from cctv_simulator.terrain_loader import TerrainData
+
+    fence = [(100.0, 20.0), (100.0, 380.0)]           # runs north along x = 100
+    tele = PlacedCamera(pole_id=1, x_m=100.0, y_m=20.0, ground_z_m=0.0, mast_height_m=6.0,
+                        pan_deg=0.0, tilt_deg=-1.0, focal_mm=25.0, hfov_deg=20.0, vfov_deg=8.0,
+                        effective_range_m=400.0, dead_zone_m=5.0, camera_model="t",
+                        sensor_name='1/2.8"', resolution_name="4 MP (2K - 2688x1520)")
+
+    flat = TerrainData(z_grid=np.zeros((50, 30), np.float32), cell_size_m=10.0)
+    wall = TerrainData(z_grid=np.zeros((50, 30), np.float32), cell_size_m=10.0)
+    wall.z_grid[18:20, :] = 40.0                      # a wall across the site at y ~ 190
+
+    _, pct_flat = _analyse_fence_coverage(fence, [tele], 40.0, "", "visible", terrain=flat)
+    g_wall, pct_wall = _analyse_fence_coverage(fence, [tele], 40.0, "", "visible", terrain=wall)
+    assert pct_wall < pct_flat - 10.0
+    assert any(g.length_m >= 4.0 for g in g_wall)

@@ -172,7 +172,9 @@ def calculate_3d_viewshed(terrain: TerrainData,
     v_lo = math.radians(tilt_deg - vfov_deg / 2.0)     # bottom ray (steeper down)
     v_hi = math.radians(tilt_deg + vfov_deg / 2.0)     # top ray
 
-    step_size = max(ray_step_m, cell_size * 0.7)
+    # 0.35-0.5 of a cell per step so a one-cell-wide ridge cannot fall between
+    # two samples on a diagonal ray (the old 0.7-cell step could skip it).
+    step_size = max(min(ray_step_m, cell_size * 0.5), cell_size * 0.35)
     num_steps = max(int(effective_max_range / step_size), 1)
     step_dists = np.arange(1, num_steps + 1) * step_size          # (S,)
 
