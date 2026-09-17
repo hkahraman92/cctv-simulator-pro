@@ -209,3 +209,58 @@ def test_fence_gap_analysis_applies_terrain_line_of_sight():
     g_wall, pct_wall = _analyse_fence_coverage(fence, [tele], 40.0, "", "visible", terrain=wall)
     assert pct_wall < pct_flat - 10.0
     assert any(g.length_m >= 4.0 for g in g_wall)
+
+
+# ── line_mode: border / highway (facility fences vs. straight boundary/road runs) ──
+
+def test_border_mode_faces_perpendicular_not_along_line(cam):
+    terr = generate_procedural_terrain("rolling_hills", grid_size=48, cell_size_m=10.0)
+    line = [(50.0, 200.0), (450.0, 200.0)]  # due east, heading == 90 deg
+    plan = generate_perimeter_plan(terr, line, cam, is_closed_loop=False,
+                                   line_mode="border", watch_side="right")
+    assert plan.line_mode == "border"
+    assert plan.placed_cameras
+    # Facing east (90 deg), "right" is south == bearing 180.
+    for c in plan.placed_cameras:
+        assert c.pan_deg == pytest.approx(180.0, abs=0.5)
+
+    left = generate_perimeter_plan(terr, line, cam, is_closed_loop=False,
+                                   line_mode="border", watch_side="left")
+    # "left" of the same eastward line is north == bearing 0.
+    for c in left.placed_cameras:
+        assert c.pan_deg == pytest.approx(0.0, abs=0.5)
+
+
+def test_highway_mode_faces_back_along_line(cam):
+    terr = generate_procedural_terrain("rolling_hills", grid_size=48, cell_size_m=10.0)
+    line = [(50.0, 200.0), (450.0, 200.0)]  # due east, heading == 90 deg
+    plan = generate_perimeter_plan(terr, line, cam, is_closed_loop=False, line_mode="highway")
+    assert plan.line_mode == "highway"
+    assert plan.placed_cameras
+    # Facing back the way the line was drawn (east, 90) -> west, 270.
+    for c in plan.placed_cameras:
+        assert c.pan_deg == pytest.approx(270.0, abs=0.5)
+
+
+def test_facility_mode_still_faces_along_line_by_default(cam):
+    terr = generate_procedural_terrain("rolling_hills", grid_size=48, cell_size_m=10.0)
+    line = [(50.0, 200.0), (450.0, 200.0)]
+    plan = generate_perimeter_plan(terr, line, cam, is_closed_loop=False)
+    assert plan.line_mode == "facility"
+    # Unmodified original behaviour: poles look along the fence (east, 90).
+    for c in plan.placed_cameras[:-1]:  # last one is the "uc" end pole, looks back
+        assert c.pan_deg == pytest.approx(90.0, abs=0.5)
+
+
+def test_border_and_highway_skip_corner_guards(cam):
+    terr = generate_procedural_terrain("rolling_hills", grid_size=64, cell_size_m=10.0)
+    # a sharp right-angle bend -- would normally trigger a facility corner guard
+    bent = [(50.0, 50.0), (300.0, 50.0), (300.0, 300.0)]
+
+    facility = generate_perimeter_plan(terr, bent, cam, is_closed_loop=False, line_mode="facility")
+    border = generate_perimeter_plan(terr, bent, cam, is_closed_loop=False, line_mode="border")
+    highway = generate_perimeter_plan(terr, bent, cam, is_closed_loop=False, line_mode="highway")
+
+    assert any("köşe" in c.camera_model for c in facility.placed_cameras)
+    assert not any("köşe" in c.camera_model for c in border.placed_cameras)
+    assert not any("köşe" in c.camera_model for c in highway.placed_cameras)

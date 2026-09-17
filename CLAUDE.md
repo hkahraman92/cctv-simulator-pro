@@ -407,6 +407,32 @@ boşluk çizgileri + BOM CSV başlığında boşluk listesi. `_analyse_fence_cov
 `terrain` verilince **DEM görüş hattı** de uygular (kamera gözünden çit noktasına
 12 örnek, sırt 0.5 m aşarsa o kamera o noktayı görmüyor).
 
+**Hat modu: tesis / sınır / otoyol.** `generate_perimeter_plan(..., line_mode=,
+watch_side=)` üç farklı kamera-yönlendirme sözleşmesi sunar — çizginin *şekli*
+değil, kameraların *neyi izlediği* farklı:
+- `"facility"` (varsayılan, eski davranış): kapalı/açık halka, her direk hat
+  boyunca bir sonraki direğe bakar (çiti tırmanma/kesme için izler), keskin
+  köşelerde "köşe" guard kamerası devreye girer.
+- `"border"`: her zaman açık çizgi mantığı; direkler hatta **dik**, `watch_side`
+  ("left"/"right", çizim yönüne göre sol/sağ el) ile seçilen tek tarafa bakar —
+  sınırın "içi" yok, ötesindeki bölge izlenir. Köşe guard'ı yok (bükülme, kapalı
+  alanın kenarı değil).
+- `"highway"`: direkler hattın **çizildiği yönün tersine** bakar (yaklaşan
+  trafiğe karşı, ANPR mantığı) — ters yön isteniyorsa çizgiyi ters yönde çizin.
+  Köşe guard'ı yok.
+
+`_pole_heading()` bu üçünü tek yerde çözer; "uç" direği (açık perimetre) de
+facility'de "son bacağa geri bak", diğer ikisinde normal direklerle aynı kuralı
+kullanır. `_analyse_fence_coverage`/`compute_coverage_grid` değişmedi — ikisi de
+zaten yerleşik `pan_deg`/`hfov_deg`/`vfov_deg` üzerinden çalışıyor, hangi
+sözleşmeyle konulduklarını bilmelerine gerek yok.
+
+`map_3d_window` "Çevre Çiti / Sınır / Otoyol" sekmesinde "🧭 Hat Modu" grubu:
+mod seçilince (facility dışı) `fence_closed_var` otomatik kapatılır (kullanıcı
+yine de kapalı halka seçebilir — örn. bir enklav sınırı). `export_terrain_state`/
+`import_terrain_state` `line_mode`/`watch_side`'ı da taşır. BOM CSV'de "# Hat
+Modu" satırı.
+
 ## Açık işler
 
 - Klasik `main_window` DORI tablosu hâlâ berrak hava (bilinçli — DORI berrak-hava

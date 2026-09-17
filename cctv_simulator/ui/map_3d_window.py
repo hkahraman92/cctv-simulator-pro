@@ -81,6 +81,18 @@ PERIMETER_PPM_OPTIONS: List[Tuple[str, float]] = [
 ]
 _PERIMETER_PPM_BY_LABEL = {lbl: ppm for lbl, ppm in PERIMETER_PPM_OPTIONS}
 
+# Hat modu: what the placed poles actually watch (see
+# perimeter_planner.generate_perimeter_plan for the geometry). (label, value).
+_LINE_MODE_LABELS: List[Tuple[str, str]] = [
+    ("Tesis Çevre Çiti (hat boyunca komşu direğe bakar)", "facility"),
+    ("Sınır Hattı (hatta dik, tek tarafa bakar)", "border"),
+    ("Otoyol / Güzergah (çizim yönüne ters, trafiğe karşı bakar)", "highway"),
+]
+_LINE_MODE_BY_LABEL = {lbl: val for lbl, val in _LINE_MODE_LABELS}
+_LINE_MODE_TO_LABEL = {val: lbl for lbl, val in _LINE_MODE_LABELS}
+_WATCH_SIDE_BY_LABEL = {"Sol": "left", "Sağ": "right"}
+_WATCH_SIDE_TO_LABEL = {v: k for k, v in _WATCH_SIDE_BY_LABEL.items()}
+
 
 # Color Tokens for CAD Topography
 BG_DARK = "#14171C"
@@ -187,6 +199,13 @@ class TerrainViewshedWindow:
         self.target_ppm_var = tk.StringVar(value=PERIMETER_PPM_OPTIONS[1][0])  # güçlendirilmiş çit (40)
         self.overlap_pct_var = tk.DoubleVar(value=15.0)
         self.fence_closed_var = tk.BooleanVar(value=True)
+        # Hat modu: "facility" (tesis çevre çiti, kamera hat boyunca komşu
+        # direğe bakar) vs. "border" (sınır hattı, hatta dik/tek tarafa bakar)
+        # vs. "highway" (otoyol, hattın çizildiği yöne ters/trafiğe karşı
+        # bakar). Yalnızca "border" watch_side kullanır. Bkz.
+        # perimeter_planner.generate_perimeter_plan docstring.
+        self.line_mode_var = tk.StringVar(value=_LINE_MODE_LABELS[0][0])
+        self.watch_side_var = tk.StringVar(value="Sağ")
         self.selected_pole_id: Optional[int] = None
         self.perimeter_plan: Optional[PerimeterPlanResult] = None
 
@@ -301,6 +320,8 @@ class TerrainViewshedWindow:
             "fence_closed": bool(self.fence_closed_var.get()),
             "target_ppm_label": self.target_ppm_var.get(),
             "overlap_pct": self.overlap_pct_var.get(),
+            "line_mode": _LINE_MODE_BY_LABEL.get(self.line_mode_var.get(), "facility"),
+            "watch_side": _WATCH_SIDE_BY_LABEL.get(self.watch_side_var.get(), "right"),
         }
 
     def import_terrain_state(self, state: dict) -> None:
@@ -336,6 +357,14 @@ class TerrainViewshedWindow:
                 self.target_ppm_var.set(str(state["target_ppm_label"]))
             if "overlap_pct" in state:
                 self.overlap_pct_var.set(float(state["overlap_pct"]))
+            line_mode_label = _LINE_MODE_TO_LABEL.get(str(state.get("line_mode", "")), None)
+            if line_mode_label:
+                self.line_mode_var.set(line_mode_label)
+            watch_side_label = _WATCH_SIDE_TO_LABEL.get(str(state.get("watch_side", "")), None)
+            if watch_side_label:
+                self.watch_side_var.set(watch_side_label)
+            if hasattr(self, "frame_watch_side"):
+                self._update_watch_side_visibility()
 
             placements = state.get("placements") or []
             if placements:
@@ -438,7 +467,7 @@ class TerrainViewshedWindow:
         self.tab_perimeter = ttk.Frame(self.mode_notebook, padding=6)
 
         self.mode_notebook.add(self.tab_single, text="⛰️ Tekil Kamera & Viewshed")
-        self.mode_notebook.add(self.tab_perimeter, text="🛡️ Çevre Çiti (50-100 Kamera)")
+        self.mode_notebook.add(self.tab_perimeter, text="🛡️ Çevre Çiti / Sınır / Otoyol")
         self.mode_notebook.bind("<<NotebookTabChanged>>", self._on_mode_tab_changed)
 
         # ── TAB 1: SINGLE CAMERA VIEWSHED (+ inline PTZ tour when a PTZ model) ──
@@ -661,6 +690,32 @@ class TerrainViewshedWindow:
         row_actions.pack(fill=tk.X, pady=2)
         StyledButton(row_actions, text="⚡ Otomatik Diz", command=self.distribute_perimeter_cameras, bootstyle="success").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
         StyledButton(row_actions, text="🗑️ Temizle", command=self._clear_fence, bootstyle="danger-outline").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
+
+        # Hat modu: tesis çevre çiti (kapalı halka, kamera hat boyunca komşu
+        # direğe bakar) vs. sınır hattı / otoyol (her zaman açık çizgi, kamera
+        # yönü hatta dik ya da çizim yönüne ters). Bu üç durumun kamera
+        # yönlendirmesi köklü biçimde farklı olduğu için ayrı bir grup olarak
+        # gösteriliyor — bkz. perimeter_planner.generate_perimeter_plan.
+        grp_line = ttk.LabelFrame(parent, text="🧭 Hat Modu (Tesis / Sınır / Otoyol)", padding=6)
+        grp_line.pack(fill=tk.X, pady=(0, 6))
+
+        ttk.Checkbutton(grp_line, text="Kapalı halka (tesis çevresini tamamen sarar)",
+                        variable=self.fence_closed_var,
+                        command=lambda: self.distribute_perimeter_cameras()).pack(anchor="w")
+
+        ttk.Label(grp_line, text="Kameralar ne izlesin:").pack(anchor="w", pady=(4, 0))
+        combo_line_mode = ttk.Combobox(grp_line, textvariable=self.line_mode_var,
+                                       values=[lbl for lbl, _ in _LINE_MODE_LABELS], state="readonly")
+        combo_line_mode.pack(fill=tk.X, pady=(2, 4))
+        combo_line_mode.bind("<<ComboboxSelected>>", self._on_line_mode_changed)
+
+        self.frame_watch_side = ttk.Frame(grp_line)
+        ttk.Label(self.frame_watch_side, text="İzlenecek Taraf:").pack(side=tk.LEFT)
+        combo_watch_side = ttk.Combobox(self.frame_watch_side, textvariable=self.watch_side_var,
+                                        values=["Sol", "Sağ"], state="readonly", width=8)
+        combo_watch_side.pack(side=tk.RIGHT)
+        combo_watch_side.bind("<<ComboboxSelected>>", lambda e: self.distribute_perimeter_cameras())
+        self._update_watch_side_visibility()
 
         grp_params = ttk.LabelFrame(parent, text="Dizilim & Güvenlik Kriterleri", padding=6)
         grp_params.pack(fill=tk.X, pady=(0, 6))
@@ -1399,6 +1454,23 @@ class TerrainViewshedWindow:
         self.lbl_overlap_val.configure(text=f"%{self.overlap_pct_var.get():.0f}")
         self.distribute_perimeter_cameras()
 
+    def _update_watch_side_visibility(self):
+        mode = _LINE_MODE_BY_LABEL.get(self.line_mode_var.get(), "facility")
+        if mode == "border":
+            self.frame_watch_side.pack(fill=tk.X, pady=2)
+        else:
+            self.frame_watch_side.pack_forget()
+
+    def _on_line_mode_changed(self, _e=None):
+        mode = _LINE_MODE_BY_LABEL.get(self.line_mode_var.get(), "facility")
+        if mode != "facility":
+            # A closed loop makes sense for a facility fence; a border/highway
+            # run is overwhelmingly an open line. Default it off but leave it
+            # togglable (an enclave border can legitimately be a closed ring).
+            self.fence_closed_var.set(False)
+        self._update_watch_side_visibility()
+        self.distribute_perimeter_cameras()
+
     def _draw_coverage_overlay(self, cv, w, h):
         """Blit the multi-camera coverage grid as a translucent DORI heatmap."""
         cov = self._coverage_grid
@@ -1510,6 +1582,8 @@ class TerrainViewshedWindow:
 
         weather = self.weather_var.get()
         vis_km = WEATHER_PRESETS.get(weather, 40.0)
+        line_mode = _LINE_MODE_BY_LABEL.get(self.line_mode_var.get(), "facility")
+        watch_side = _WATCH_SIDE_BY_LABEL.get(self.watch_side_var.get(), "right")
         self.perimeter_plan = generate_perimeter_plan(
             terrain=self.terrain,
             fence_points=self.fence_points,
@@ -1521,6 +1595,8 @@ class TerrainViewshedWindow:
             is_closed_loop=self.fence_closed_var.get(),
             visibility_km=vis_km,
             weather=weather,
+            line_mode=line_mode,
+            watch_side=watch_side,
         )
         self._recompute_coverage_grid()
 
@@ -1620,6 +1696,10 @@ class TerrainViewshedWindow:
         try:
             with open(file_path, "w", newline="", encoding="utf-8-sig") as f:
                 writer = csv.writer(f)
+                _mode_label = {"facility": "Tesis Çevre Çiti", "border": "Sınır Hattı",
+                              "highway": "Otoyol / Güzergah"}.get(
+                    self.perimeter_plan.line_mode, self.perimeter_plan.line_mode)
+                writer.writerow(["# Hat Modu", _mode_label])
                 writer.writerow(["# Arazi kaynağı", self.terrain.name])
                 writer.writerow(["# Yükselti verisi", "ÖLÇÜLMÜŞ DEM" if measured else "TEMSİLİ — ölçüm değil, sonuçlar bağlayıcı değildir"])
                 writer.writerow(["# Hava koşulu", self.weather_var.get()])

@@ -75,6 +75,8 @@ class PerimeterPlanResult:
     coverage_percentage: float = 100.0
     estimated_bandwidth_mbps: float = 0.0
     estimated_storage_30days_tb: float = 0.0
+    line_mode: str = "facility"      # "facility" | "border" | "highway"
+    watch_side: str = "right"        # only meaningful for line_mode == "border"
 
 
 def point_along_polyline(points: List[Tuple[float, float]],
@@ -167,8 +169,28 @@ def generate_perimeter_plan(terrain: TerrainData,
                             lens_mode: str = "min",
                             is_closed_loop: bool = True,
                             visibility_km: float = 40.0,
-                            weather: str = "") -> PerimeterPlanResult:
-    """Places cameras along fence line ensuring continuous dead-zone overlapping coverage."""
+                            weather: str = "",
+                            line_mode: str = "facility",
+                            watch_side: str = "right") -> PerimeterPlanResult:
+    """Places cameras along fence line ensuring continuous dead-zone overlapping coverage.
+
+    ``line_mode`` picks what the poles actually watch — the three use cases
+    need different camera orientations, not just a different polyline shape:
+
+    - ``"facility"`` (default, original behaviour): a fence around a compound.
+      Each pole looks *along* the fence at the next pole, the way you'd watch
+      a fence line for climbing/cutting. Corner guards fire on sharp turns.
+    - ``"border"``: a boundary line. There is no "inside" to ring, so poles
+      instead look *perpendicular* to the line, across the zone beyond it —
+      ``watch_side`` picks which side ("left"/"right" of the direction the
+      polyline was drawn in).
+    - ``"highway"``: a road/corridor. Poles look *back along* the line, i.e.
+      against the direction the polyline was drawn in (ANPR-style — draw the
+      line in the direction of travel you want the plates read from).
+
+    Corner-guard cameras (the sharp-turn wedge fix) only make sense for the
+    facility case and are skipped for "border"/"highway".
+    """
     if len(fence_points) < 2:
         return PerimeterPlanResult(
             fence_points=fence_points,
@@ -232,6 +254,18 @@ def generate_perimeter_plan(terrain: TerrainData,
         ))
         pole_counter += 1
 
+    def _pole_heading(seg_heading_deg: float) -> float:
+        if line_mode == "border":
+            # Facing the direction of travel (bearing seg_heading_deg), your
+            # left hand points to bearing seg_heading_deg - 90, your right
+            # hand to seg_heading_deg + 90 (e.g. walking east/90 deg: left
+            # is north/0 deg, right is south/180 deg).
+            offset = -90.0 if watch_side == "left" else 90.0
+            return (seg_heading_deg + offset) % 360.0
+        if line_mode == "highway":
+            return (seg_heading_deg + 180.0) % 360.0
+        return seg_heading_deg   # facility: look along the fence toward the next pole
+
     seg_headings: List[float] = []
     for (p1, p2, seg_len) in zip(pts[:-1], pts[1:], segment_lengths):
         if seg_len < 1e-6:
@@ -240,42 +274,50 @@ def generate_perimeter_plan(terrain: TerrainData,
         h = (math.degrees(math.atan2(p2[0] - p1[0], p2[1] - p1[1])) + 360.0) % 360.0
         seg_headings.append(h)
 
-    # Walk along each segment: a pole at the start vertex + evenly spaced poles,
-    # each looking forward along the fence toward the next pole.
-    for (p1, p2, seg_len), heading_deg in zip(zip(pts[:-1], pts[1:], segment_lengths), seg_headings):
+    # Walk along each segment: a pole at the start vertex + evenly spaced poles.
+    for (p1, p2, seg_len), seg_heading in zip(zip(pts[:-1], pts[1:], segment_lengths), seg_headings):
         if seg_len < 1.0:
             continue
         dx, dy = p2[0] - p1[0], p2[1] - p1[1]
+        pole_heading = _pole_heading(seg_heading)
         num_spans = max(1, int(math.ceil(seg_len / optimal_spacing)))
         for step_idx in range(num_spans):
             f = step_idx / num_spans
-            _place(p1[0] + f * dx, p1[1] + f * dy, heading_deg)
+            _place(p1[0] + f * dx, p1[1] + f * dy, pole_heading)
 
     # Open perimeter: the far endpoint is not the start of any segment, so add a
-    # pole there looking back along the last leg.
+    # pole there too. Facility mode looks back along the last leg (it's a dead
+    # end of fence to watch); border/highway keep the same orientation rule as
+    # every other pole on that leg.
     if not is_closed_loop and total_len > 1.0:
-        _place(pts[-1][0], pts[-1][1], (seg_headings[-1] + 180.0) % 360.0, note="uç")
+        end_heading = ((seg_headings[-1] + 180.0) % 360.0) if line_mode == "facility" \
+            else _pole_heading(seg_headings[-1])
+        _place(pts[-1][0], pts[-1][1], end_heading, note="uç")
 
     # Corner guards: at a sharp turn the vertex pole faces the *outgoing* leg but
     # its dead zone leaves the fence right at the corner uncovered, and the
     # incoming poles face away from the new leg. Add a wide-angle corner camera
     # on the vertex, aimed steeply down the outgoing leg so its dead zone shrinks
-    # to ~1 m and the corner wedge is covered.
-    n_vert = len(pts) - 1
-    corner_range = min(ground_reach, max(dead_zone * 6.0, 40.0))
-    corner_dz = max(dead_zone * 0.15, 1.0)
-    corner_tilt = -max(3.0, min(35.0, math.degrees(math.atan(mast_height_m / max(corner_range * 0.35, 3.0)))))
-    interior = list(range(1, n_vert))
-    if is_closed_loop:
-        interior.append(0)                       # the closing corner (last leg -> first leg)
-    for vi in interior:
-        h_in = seg_headings[vi - 1]               # vi == 0 -> seg_headings[-1], the last leg
-        h_out = seg_headings[vi % len(seg_headings)]
-        turn = abs((h_out - h_in + 180.0) % 360.0 - 180.0)
-        if turn < 20.0:
-            continue
-        vx, vy = pts[vi]
-        _place(vx, vy, h_out, reach=corner_range, dz=corner_dz, tilt=corner_tilt, note="köşe")
+    # to ~1 m and the corner wedge is covered. Facility-only: a border/highway
+    # bend doesn't create the same "wedge outside the enclosed area" blind spot,
+    # since every pole already watches perpendicular/backward rather than the
+    # fence itself.
+    if line_mode == "facility":
+        n_vert = len(pts) - 1
+        corner_range = min(ground_reach, max(dead_zone * 6.0, 40.0))
+        corner_dz = max(dead_zone * 0.15, 1.0)
+        corner_tilt = -max(3.0, min(35.0, math.degrees(math.atan(mast_height_m / max(corner_range * 0.35, 3.0)))))
+        interior = list(range(1, n_vert))
+        if is_closed_loop:
+            interior.append(0)                       # the closing corner (last leg -> first leg)
+        for vi in interior:
+            h_in = seg_headings[vi - 1]               # vi == 0 -> seg_headings[-1], the last leg
+            h_out = seg_headings[vi % len(seg_headings)]
+            turn = abs((h_out - h_in + 180.0) % 360.0 - 180.0)
+            if turn < 20.0:
+                continue
+            vx, vy = pts[vi]
+            _place(vx, vy, h_out, reach=corner_range, dz=corner_dz, tilt=corner_tilt, note="köşe")
 
     # Coverage / gap analysis along the fence line (with DEM line-of-sight).
     gaps, coverage_pct = _analyse_fence_coverage(
@@ -314,6 +356,8 @@ def generate_perimeter_plan(terrain: TerrainData,
         coverage_percentage=round(coverage_pct, 1),
         estimated_bandwidth_mbps=round(total_bandwidth_mbps, 1),
         estimated_storage_30days_tb=round(storage_30days_tb, 1),
+        line_mode=line_mode,
+        watch_side=watch_side,
     )
 
 

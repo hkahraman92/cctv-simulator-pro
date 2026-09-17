@@ -7,6 +7,34 @@ tetikleyici senaryo ile teyit edildi. "Şüpheli" işaretliler incelemeyi yapan
 ajanın güçlü emare bulduğu ama ek doğrulama gerektiren noktalar — ele alırken
 önce tekrar üretmeyi deneyin.
 
+## 0. Yeni özellik: Hat Modu — Tesis / Sınır / Otoyol — ✅ EKLENDİ (2026-09-17)
+
+Kullanıcı gözlemi doğru çıktı: `generate_perimeter_plan` (ve GUI'si) yalnız
+**tesis çevre çiti** senaryosunu varsayıyordu — her direk hat boyunca bir
+sonraki direğe bakıyordu (çiti tırmanma/kesme için izleme mantığı), kapalı
+halka UI'da varsayılan ve açık uç seçeneği için hiç kontrol yoktu. Sınır
+güvenliği (hatta dik, tek tarafı izleme) ve otoyol/güzergah gözetimi
+(trafiğe karşı ANPR mantığı) için ayrı bir kamera yönlendirme sözleşmesi
+yoktu.
+
+**Eklenen:** `perimeter_planner.generate_perimeter_plan(..., line_mode=
+"facility"|"border"|"highway", watch_side="left"|"right")`:
+- `facility` (varsayılan, eski davranış bit-aynı): hat boyunca bakış, köşe
+  guard kameraları.
+- `border`: direkler hatta **dik**, `watch_side` ile seçilen tek tarafa
+  bakar (çizim yönüne göre sol/sağ el kuralı), köşe guard'ı yok.
+- `highway`: direkler hattın **çizildiği yönün tersine** bakar (yaklaşan
+  trafiğe karşı), köşe guard'ı yok.
+
+`map_3d_window`'da "🧭 Hat Modu" grubu (kapalı halka onay kutusu — önceden
+hiç UI kontrolü yoktu — + hat modu/taraf seçici), `export_terrain_state`/
+`import_terrain_state` round-trip'i, BOM CSV'de "# Hat Modu" satırı, sekme
+başlığı "Çevre Çiti / Sınır / Otoyol" oldu. `tests/test_perimeter.py`'e 4
+yeni test (yön doğruluğu + köşe guard'ının border/highway'de devre dışı
+kalması). Tam `pytest` + `ruff` yeşil; Tk entegrasyon scriptiyle GUI
+tarafı da (mod değişimi → doğru pan_deg → export/import round-trip) elle
+doğrulandı. `CLAUDE.md`'ye kısa bir tasarım notu eklendi.
+
 ## 1. Kritik buglar (doğrulandı) — ✅ 5/5 DÜZELTİLDİ (2026-09-17)
 
 Beşi de düzeltildi ve doğrulandı: golden optik test (`tests/data/optics_golden.json`)
