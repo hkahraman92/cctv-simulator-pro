@@ -96,7 +96,15 @@ def ground_distance_for_ppm(result: OpticResult, ppm: float) -> float:
     drop = result.vertical_drop_m
     if optical <= drop:
         return 0.0
-    return min(_sqrt(optical * optical - drop * drop), result.max_geom_dist_m)
+    dist = min(_sqrt(optical * optical - drop * drop), result.max_geom_dist_m)
+    # BUGFIX: mirror calculate_for_camera's row loop (effective_dist <=
+    # dead_zone_m -> "Kor noktada", displayed as 0.0). Without this, a
+    # caller could get back a distance that falls inside the dead zone --
+    # "reachable" here while the main table marks the same distance
+    # unreachable for the identical camera/PPM.
+    if dist <= result.dead_zone_m:
+        return 0.0
+    return dist
 
 
 def mode_label(mode: str) -> str:

@@ -172,59 +172,64 @@ tilt'i üzerinden anlaşıyor. Fonksiyonun 3-elemanlı dönüş imzası (dolayı
 `tests/test_perimeter.py`'deki mevcut unpacking) değişmedi; ilişkisel
 testler (`test_spacing_matches_en62676_slant_formula` vb.) yeşil kaldı.
 
-## 2. Ek bulgular (şüpheli / ek doğrulama ister)
+## 2. Ek bulgular — ✅ 10/11 düzeltildi, 1/11 yanlış alarm (2026-09-17)
 
-Bu maddeler derin inceleme ajanları tarafından güçlü emarelerle raporlandı
-ancak zaman kısıtı nedeniyle satır satır teyit edilmedi. Ele alırken önce
-küçük bir repro (birim test veya elle senaryo) ile doğrulayın.
+Hepsi tek tek kodda doğrulanıp (gerekirse küçük bir repro/monkeypatch ile)
+ele alındı. Tam `pytest` + `ruff` yeşil.
 
-- **`viewshed_3d.py:215`** — Ufuk (horizon) birikimi `tan_for_max = np.where(valid
-  & ppm_ok, tan_angle, -1e18)` ile yalnız **çözünürlük eşiğini geçen** adımları
-  katıyor; yorum "her geçerli adımı" katmayı iddia ediyor. Yakın-dik bir sırt
-  `ppm_ok=False` olup ufuk hesabından düşerse, arkasındaki hücreler yanlışlıkla
-  görünür işaretlenebilir.
-- **`online_map_loader.py:324-336`** — İptal gerçek zamanlı değil:
-  `ThreadPoolExecutor.__exit__` tüm submit edilmiş karo indirmeleri bitene
-  kadar bekliyor; kullanıcı diyaloğu kapatsa bile arka planda dakikalarca
-  indirme sürebilir.
-- **`online_map_loader.py:359-368`** — 180° meridyeni kesen bbox'ta Mercator
-  X sarma (wrap) yapılmıyor; kırpma kutusu negatif genişlikli çıkıp mozaik
-  sessizce kırpılmadan dönebilir (Türkiye kapsamında düşük ihtimal).
-- **`calculations.py:87-99` (`ground_distance_for_ppm`)** — Ana tablo
-  (satır 157-174) kör nokta içine düşen mesafeleri "Kör noktada" işaretlerken,
-  `modern_window`'un PPM-eşiği-için-menzil sorgusunda kullandığı bu bağımsız
-  fonksiyon kör nokta kontrolü yapmadan ham geometrik mesafe döndürüyor —
-  tezgâh ve ana tablo aynı senaryoda farklı cevap verebilir.
-- **`ptz_tour.py:174` (`never_seen_area_m2`)** — `~covered & (dori_grid != 0)`
-  koşulunun, `dori_grid`'in de aynı per-camera maskelerden türetilmiş olması
-  nedeniyle pratikte hep boş küme dönebileceği (metrik hep 0 basar) şüphesi
-  var; `viewshed_3d.py`'deki `dori_grid` inşası ile çapraz kontrol gerekir.
-- **`perimeter_planner.py:343-351` (`_analyse_fence_coverage._covered`) vs
-  `compute_coverage_grid` (:470-477)** — Boşluk analizi yalnız yatay koni +
-  menzil + LOS kontrol ediyor, **dikey FOV/tilt kontrolü yok**; oysa
-  `compute_coverage_grid` aynı yerleşik kameralar için dikey çerçeveleme de
-  kontrol ediyor. İki fonksiyon "görülüyor mu" tanımında ayrışıyor — çit
-  boşluk raporu bazı noktaları yanlışlıkla "kapsanıyor" sayabilir.
-- **`ui/view_3d_window.py:82-101` (`schedule_render`)** — `_render_job` zaten
-  kuyruktaysa fonksiyon `_pending_fast`'ı güncellemeden erken döner. Bir
-  `fast=True` çağrısının kurduğu `_settle_job` (180ms sonra tam kalite),
-  aynı pencerede gelen bir `fast=False` çağrısı tarafından iptal edilip yerine
-  hiçbir şey konmayabilir → sürükleme bitince pencere kalıcı olarak
-  düşük-çözünürlükte kalabilir.
-- **`ui/main_window.py:~1679` (`export_pdf`)** — `export_csv`/`export_png`/
-  `export_excel`'in hepsinde `if not path: return` var, `export_pdf`'te bu
-  kontrol eksik; kullanıcı kaydetme diyaloğunu İptal ile kapatırsa boş yola
-  yazma denemesi hatayla sonuçlanabilir.
-- **`ui/map_3d_window.py:644,651` (`_placements_from_perimeter`)** —
-  `max_range_m=max(c.effective_range_m, rng)` içindeki `rng` yalnız **ilk**
-  yerleşik kameranın menzili; farklı odak/menzilli köşe/uç kameralarına da
-  taban olarak dayatılıyor.
-- **`ui/camera_db_window.py` (`save_model`)** — Yerleşik varsayılan bir
-  kamerayı yeniden adlandırınca eski isim JSON'dan silinemiyor (yalnız
-  dosyadaki kayıtlar `del` edilebiliyor); birleşimde eski+yeni isim aynı anda
-  kütüphanede kalıp kopya kayıt oluşabilir.
-- **`ptz_tour.py:~148`** — Preset maskesi `int64` bit kaydırmayla kuruluyor;
-  63'ten fazla preset varsa taşma riski (pratikte nadir).
+1. **`viewshed_3d.py:215` — ✅ düzeltildi.** Ufuk birikimi `tan_for_max =
+   np.where(valid & ppm_ok, tan_angle, -1e18)` yalnız çözünürlük eşiğini
+   geçen adımları katıyordu; yorum "her geçerli adım" diyordu ama kod
+   uymuyordu. `ppm_ok` şartı kaldırıldı (`np.where(valid, ...)`) — yakın-dik
+   bir sırt artık düşük çözünürlüklü olsa bile ufuk hesabına giriyor.
+2. **`online_map_loader.py:324-336` — ✅ düzeltildi.** `progress_callback`
+   iptal için exception fırlattığında artık tüm `futures` üzerinde `.cancel()`
+   çağrılıyor (henüz başlamamış indirmeler iptal), sonra yeniden raise
+   ediliyor — `with` bloğunun `shutdown(wait=True)`'ı artık yalnız o an
+   çalışan (`max_workers` kadar) indirmeyi bekliyor, kuyruktaki yüzlercesini
+   değil.
+3. **`online_map_loader.py:359-368` — ✅ düzeltildi.** `_download_mosaic`
+   başına açık bir doğrulama eklendi: bbox 180° meridyenini kesiyor veya
+   sınırların dışındaysa artık sessizce yanlış kırpmak yerine Türkçe
+   `RuntimeError` ile yüksek sesle başarısız oluyor (`calculate_bbox`
+   `center_lon ± delta_lon`'u hiç kelepçelemiyordu).
+4. **`calculations.py` `ground_distance_for_ppm` — ✅ düzeltildi.** Artık
+   hesapladığı mesafe `result.dead_zone_m` içine düşüyorsa `0.0` döndürüyor
+   — ana tablonun `effective_dist <= dead_zone_m → "Kör noktada"` kuralıyla
+   artık aynı fikirde.
+5. **`ptz_tour.py:174` (`never_seen_area_m2`) — ❌ yanlış alarm, kod
+   değişmedi.** `combined.dori_grid` (`calculate_multi_camera_viewshed`)
+   `ZONE_OCCLUDED`'ı tam olarak "en az bir preset'in konisinde ama hiçbirinde
+   görünür değil" hücrelerine atıyor — bu da `~covered` (mask==0) ile örtüşen
+   ayrı bir küme, aynı küme değil. Duvarlı bir arazide elle doğrulandı:
+   `never_seen_area_m2 = 44416.0` (sıfır değil) — metrik canlı ve doğru.
+6. **`perimeter_planner.py` `_analyse_fence_coverage._covered` vs
+   `compute_coverage_grid` — ✅ düzeltildi.** Boşluk analizine
+   `compute_coverage_grid` ile aynı dikey FOV kontrolü eklendi
+   (`tilt ± vfov/2` içindeki yükseliş açısı); artık iki fonksiyon aynı
+   yerleşik kameralar için aynı "görülüyor mu" tanımını kullanıyor.
+7. **`ui/view_3d_window.py:82-101` (`schedule_render`) — ✅ düzeltildi.**
+   `_render_job` zaten kuyruktaysa artık erken dönmeden önce
+   `_pending_fast = _pending_fast and fast` ile kuyruktaki işi güncelliyor —
+   `fast=True` sonrası gelen bir `fast=False` isteği artık kuyruktaki işi tam
+   kaliteye yükseltiyor, iptal edilen `_settle_job`'ın yerini sessizce boş
+   bırakmıyor.
+8. **`ui/main_window.py` `export_pdf` — ✅ düzeltildi.** Diğer `export_*`
+   fonksiyonlarındaki `if not path: return` eklendi.
+9. **`ui/map_3d_window.py` `_placements_from_perimeter` — ✅ düzeltildi.**
+   `max_range_m` artık her direğin kendi `effective_range_m`'i (ilk direğin
+   menziline taban olarak dayatılmıyor) — köşe/uç muhafız kameraları
+   birleşik viewshed'de artık olduğundan uzun menzilli görünmüyor.
+10. **`ui/camera_db_window.py` `save_model` — ✅ düzeltildi.** Yerleşik
+    (`DEFAULT_CAMERA_LIBRARY`) bir kamera yeniden adlandırıldığında artık
+    kullanıcı JSON'una `eski_isim: null` "mezar taşı" kaydı yazılıyor;
+    `database.load_camera_library` bunu görünce eski varsayılan adı
+    kütüphaneden düşürüyor (kopya kayıt kalmıyor). Monkeypatch'li testle
+    doğrulandı.
+11. **`ptz_tour.py` preset maskesi — ✅ düzeltildi.** `np.int64` yerine
+    `object` dtype (sınırsız Python int) kullanılıyor; 70 preset'lik bir
+    turla elle test edildi, çökme yok, artık pratik bir preset sayısı sınırı
+    kalmadı.
 
 ## 3. Yenilikçi özellik fikirleri
 

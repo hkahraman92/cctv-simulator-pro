@@ -11,7 +11,7 @@ from ..database import (
     load_camera_library,
     model_descriptor,
 )
-from ..config import get_admin_password, set_admin_password
+from ..config import get_admin_password, set_admin_password, DEFAULT_CAMERA_LIBRARY
 from ..theme import is_themed, COLORS, StyledButton, fit_and_center_window, set_window_icon
 
 
@@ -726,8 +726,16 @@ class CameraDatabaseWindow:
                 if not overwrite:
                     return
             data = read_camera_library_json()
-            if old_name and old_name != model_name and old_name in data:
-                del data[old_name]
+            if old_name and old_name != model_name:
+                if old_name in data:
+                    del data[old_name]
+                elif old_name in DEFAULT_CAMERA_LIBRARY:
+                    # BUGFIX: old_name lives in the built-in
+                    # DEFAULT_CAMERA_LIBRARY, not this JSON overlay, so there
+                    # was nothing here to delete -- load_camera_library()
+                    # then showed both the untouched default and the renamed
+                    # copy as two separate models. Tombstone it instead.
+                    data[old_name] = None
             data[model_name] = model
             write_camera_library_json(data)
             self.app.camera_library = load_camera_library()

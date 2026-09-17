@@ -1713,6 +1713,11 @@ class DualViewCCTVDesignApp:
             defaultextension=".pdf",
             filetypes=[("PDF", "*.pdf"), ("Tüm dosyalar", "*.*")],
         )
+        # BUGFIX: every other export_* here bails on a cancelled save dialog;
+        # this one didn't, so cancelling used to try to write to path="" and
+        # surface a write-error dialog for what was actually just a Cancel.
+        if not path:
+            return
         try:
             compliance_res = self.spec_window.last_compliance_result if getattr(self, "spec_window", None) else None
             export_pdf(

@@ -212,7 +212,12 @@ def calculate_3d_viewshed(terrain: TerrainData,
     # Terrain occlusion is physical — a ridge blocks the sightline whether or not
     # it sits inside the vertical frame, so the running horizon uses every valid
     # step, not just the framed ones.
-    tan_for_max = np.where(valid & ppm_ok, tan_angle, -1e18)
+    # BUGFIX: this used to also require ppm_ok, so a close, steep ridge whose
+    # own slant range pushed its pixel density below min_detect_ppm dropped out
+    # of the horizon entirely -- cells behind it could then read as visible
+    # even though that ridge physically blocks the sightline. Occlusion must
+    # only depend on being a real, in-bounds terrain sample.
+    tan_for_max = np.where(valid, tan_angle, -1e18)
     horizon_before = np.empty_like(tan_for_max)
     horizon_before[:, 0] = -1e18
     horizon_before[:, 1:] = np.maximum.accumulate(tan_for_max, axis=1)[:, :-1]

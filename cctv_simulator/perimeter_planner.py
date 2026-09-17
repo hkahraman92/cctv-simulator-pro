@@ -334,8 +334,9 @@ def _analyse_fence_coverage(pts: List[Tuple[float, float]],
     prep = []
     for c in cams:
         rng = _atm.usable_range_m(c.effective_range_m, visibility_km, band, weather)
+        half_vfov = c.vfov_deg / 2.0 if c.vfov_deg > 0 else 15.0
         prep.append((c.x_m, c.y_m, c.pan_deg, c.hfov_deg / 2.0, c.dead_zone_m, rng,
-                     c.ground_z_m + c.mast_height_m))
+                     c.ground_z_m + c.mast_height_m, c.tilt_deg, half_vfov, c.ground_z_m))
 
     _los_ts = np.linspace(0.06, 0.97, 12)
 
@@ -349,12 +350,25 @@ def _analyse_fence_coverage(pts: List[Tuple[float, float]],
         return not bool(np.any(terr > line + 0.5))
 
     def _covered(px: float, py: float) -> bool:
-        for cx, cy, pan, half_h, dz, rng, eye_z in prep:
+        # BUGFIX: this used to only check the horizontal cone + range + LOS,
+        # while compute_coverage_grid also requires the point to fall inside
+        # the vertical frame (tilt +/- vfov/2). A steeply tilted-down camera
+        # (tele lens, wide-angle corner guard) could "cover" a fence point
+        # here that it never actually frames -- the two coverage definitions
+        # disagreed on the exact same placed cameras.
+        pz = float(terrain.get_elevation_at(px, py)) if terrain is not None else None
+        for cx, cy, pan, half_h, dz, rng, eye_z, tilt, half_vfov, cam_ground_z in prep:
             dist = math.hypot(px - cx, py - cy)
             if dist < dz or dist > rng:
                 continue
             az = (math.degrees(math.atan2(px - cx, py - cy)) + 360.0) % 360.0
-            if abs((az - pan + 180.0) % 360.0 - 180.0) <= half_h and _los_clear(cx, cy, eye_z, px, py):
+            if abs((az - pan + 180.0) % 360.0 - 180.0) > half_h:
+                continue
+            ground_z = pz if pz is not None else cam_ground_z
+            elev_ang = math.degrees(math.atan2(ground_z - eye_z, max(dist, 0.1)))
+            if not (tilt - half_vfov <= elev_ang <= tilt + half_vfov):
+                continue
+            if _los_clear(cx, cy, eye_z, px, py):
                 return True
         return False
 

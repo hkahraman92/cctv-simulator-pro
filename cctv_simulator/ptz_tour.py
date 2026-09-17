@@ -143,10 +143,14 @@ def evaluate_ptz_tour(terrain: TerrainData, tour: PTZTour, *,
         zoom_tot += z
         settle_tot += st
 
-    # per-cell bitmask of which presets frame it
-    mask = np.zeros(combined.visibility_mask.shape, dtype=np.int64)
+    # per-cell bitmask of which presets frame it.
+    # BUGFIX: a fixed np.int64 mask overflows once a tour has 63+ presets
+    # (bit 63 is the sign bit, and shifting by >= 64 is undefined behaviour
+    # in numpy) -- object dtype holds arbitrary-precision Python ints, so
+    # the bitmask stays correct no matter how many presets a tour has.
+    mask = np.zeros(combined.visibility_mask.shape, dtype=object)
     for i, r in enumerate(combined.per_camera):
-        mask |= (r.visibility_mask.astype(np.int64) << i)
+        mask |= (r.visibility_mask.astype(object) << i)
 
     revisit = np.full(mask.shape, np.inf, dtype=np.float64)
     for m in np.unique(mask):

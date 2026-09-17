@@ -790,14 +790,20 @@ class TerrainViewshedWindow:
         from ..viewshed_3d import CameraPlacement
         if not self.perimeter_plan or not self.perimeter_plan.placed_cameras:
             return []
-        rng = self.perimeter_plan.placed_cameras[0].effective_range_m
         out = []
         for c in self.perimeter_plan.placed_cameras:
             lm = "max" if "köşe" not in c.camera_model else "min"
+            # BUGFIX: this used to floor every camera's range at the FIRST
+            # placed camera's effective_range_m (max(c.effective_range_m,
+            # rng)). Corner/end guards are deliberately placed with a much
+            # shorter corner_range (wide-angle, small dead zone); flooring
+            # them at pole #1's long-lens reach made the combined viewshed
+            # credit those corner cameras with coverage far past what they
+            # actually frame.
             out.append(CameraPlacement(
                 x_m=c.x_m, y_m=c.y_m, mast_height_m=c.mast_height_m, camera=self.current_camera,
                 lens_mode=lm, pan_deg=c.pan_deg, tilt_deg=c.tilt_deg,
-                max_range_m=max(c.effective_range_m, rng), label=f"Direk {c.pole_id}"))
+                max_range_m=c.effective_range_m, label=f"Direk {c.pole_id}"))
         return out
 
     def _run_multi_viewshed(self):

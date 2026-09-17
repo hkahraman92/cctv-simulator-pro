@@ -94,6 +94,17 @@ class Camera3DViewWindow:
         if fast:
             self._settle_job = self.window.after(self._SETTLE_MS, lambda: self._safe_render(fast=False))
         if self._render_job is not None:
+            # BUGFIX: a fast=True request already queued a 33ms job plus a
+            # 180ms "settle to full quality" safety net (_settle_job). If a
+            # fast=False request then arrived here, it cancelled that settle
+            # job above but, on the old early-return, never updated the
+            # already-queued job's fast-ness -- so the queued job still ran
+            # fast and no full-quality redraw was left scheduled at all. The
+            # view could get stuck low-res until something else happened to
+            # call schedule_render() again. Fold this request's urgency into
+            # the queued one instead: only stay "fast" if every coalesced
+            # call wanted fast.
+            self._pending_fast = getattr(self, "_pending_fast", False) and fast
             return
         if delay_ms is None:
             delay_ms = self._RENDER_INTERVAL_MS

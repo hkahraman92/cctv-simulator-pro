@@ -27,7 +27,13 @@ def load_camera_library() -> Dict[str, Any]:
     library = dict(DEFAULT_CAMERA_LIBRARY)
     extra_data = read_camera_library_json()
     for name, model in extra_data.items():
-        if isinstance(model, dict):
+        if model is None:
+            # Tombstone: hides a built-in DEFAULT_CAMERA_LIBRARY entry that
+            # was renamed. Written by camera_db_window.save_model when the
+            # renamed record was a shipped default rather than a prior JSON
+            # override (see the write side for why this is needed).
+            library.pop(name, None)
+        elif isinstance(model, dict):
             if name in library and isinstance(library[name], dict):
                 merged = dict(library[name])
                 merged.update(model)

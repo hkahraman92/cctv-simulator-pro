@@ -301,6 +301,18 @@ def _download_mosaic(source: str, zoom: int, bbox: Tuple[float, float, float, fl
     min_lat, min_lon, max_lat, max_lon = bbox
     cfg = TILE_SERVERS[source]
 
+    # BUGFIX: the Mercator crop math below (mercator_x on min_lon/max_lon)
+    # assumes a plain, non-wrapping box. calculate_bbox() never clamps
+    # center_lon +/- delta_lon to [-180, 180], so a region straddling the
+    # antimeridian (or otherwise malformed) used to silently crop to a
+    # negative-width / wrong-side box instead of failing loudly.
+    if not (-180.0 <= min_lon < max_lon <= 180.0 and -90.0 <= min_lat < max_lat <= 90.0):
+        raise RuntimeError(
+            "Geçersiz harita alanı: seçilen bölge 180. meridyeni (tarih değişim çizgisi) "
+            "kesiyor veya koordinat sınırlarının dışına taşıyor. Merkez konumu veya "
+            "genişliği değiştirip tekrar deneyin."
+        )
+
     x_min, y_min = lat_lon_to_tile(max_lat, min_lon, zoom)   # NW corner
     x_max, y_max = lat_lon_to_tile(min_lat, max_lon, zoom)   # SE corner
     if x_min > x_max:
@@ -324,15 +336,26 @@ def _download_mosaic(source: str, zoom: int, bbox: Tuple[float, float, float, fl
     with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(_fetch_tile, source, zoom, x, y) for x, y in tasks]
         done = 0
-        for future in concurrent.futures.as_completed(futures):
-            res = future.result()
-            if res is not None:
-                tx, ty, img = res
-                fetched[(tx, ty)] = img
-            done += 1
-            if progress_callback is not None:
-                # May raise (e.g. the dialog was closed); let it abort the download.
-                progress_callback(done, total_tiles)
+        try:
+            for future in concurrent.futures.as_completed(futures):
+                res = future.result()
+                if res is not None:
+                    tx, ty, img = res
+                    fetched[(tx, ty)] = img
+                done += 1
+                if progress_callback is not None:
+                    # May raise (e.g. the dialog was closed); let it abort the download.
+                    progress_callback(done, total_tiles)
+        except BaseException:
+            # BUGFIX: cancelling here only stops futures the pool hasn't
+            # started yet. Without it, exiting this "with" block still calls
+            # shutdown(wait=True), which blocks until every one of the (up
+            # to MAX_TILES) already-submitted downloads finishes -- so a
+            # closed progress dialog used to let the download keep running
+            # in the background for minutes instead of stopping.
+            for f in futures:
+                f.cancel()
+            raise
 
     if not fetched:
         raise RuntimeError(
