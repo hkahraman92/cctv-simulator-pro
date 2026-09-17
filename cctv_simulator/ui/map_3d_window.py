@@ -109,7 +109,7 @@ class _DownloadCancelled(Exception):
 class TerrainViewshedWindow:
     """Integrated 3D Topography, Satellite Imagery, Viewshed & Multi-Camera Perimeter Auto-Planner."""
 
-    def __init__(self, app=None):
+    def __init__(self, app=None, terrain_state: Optional[dict] = None):
         self.app = app
         self.root = app.root if app is not None else None
 
@@ -145,6 +145,10 @@ class TerrainViewshedWindow:
 
         # Terrain Calibration Var
         self.terrain_width_input_var = tk.StringVar(value=f"{self.terrain.width_m:.0f}")
+        # Path of the last locally-loaded GeoTIFF/DEM, if any (round-tripped
+        # through the project file's terrain.source/file -- see
+        # export_terrain_state / import_terrain_state).
+        self._loaded_terrain_file: str = ""
 
         # Single Camera Variables
         self.cam_x_var = tk.DoubleVar(value=self.terrain.width_m * 0.5)
@@ -216,6 +220,8 @@ class TerrainViewshedWindow:
         self._build_ui()
         self._sync_active_camera()
         self._init_default_fence_sample()
+        if terrain_state:
+            self.import_terrain_state(terrain_state)
         self.window.after(80, self.recalculate_viewshed)
 
         self.window.protocol("WM_DELETE_WINDOW", self.close)
@@ -235,6 +241,149 @@ class TerrainViewshedWindow:
         if self.app is not None and getattr(self.app, "viewshed_window", None) == self:
             self.app.viewshed_window = None
         self.window.destroy()
+
+    # ── Project save/load round-trip ──
+    # BUGFIX: main_window.save_project used to write no "terrain" key at all,
+    # so any fence/PTZ/placement work done in this window vanished the moment
+    # the project was saved (and the CLI's --viewshed/--ptz always failed
+    # afterwards with "terrain.placements listesi gerekli"). These two methods
+    # are the GUI side of the project_io.ProjectData.terrain_* schema.
+    def export_terrain_state(self) -> dict:
+        """Snapshot of this window's state as a project_io ``terrain`` block."""
+        cam_name = self.current_camera.name
+        placements: List[dict] = []
+        if self.planner_mode_var.get() == "perimeter" and self.perimeter_plan and self.perimeter_plan.placed_cameras:
+            lens = self.lens_mode_var.get()
+            for c in self.perimeter_plan.placed_cameras:
+                placements.append({
+                    "camera": cam_name, "label": f"Direk {c.pole_id}",
+                    "x_m": c.x_m, "y_m": c.y_m, "mast_m": c.mast_height_m,
+                    "pan_deg": c.pan_deg, "tilt_deg": c.tilt_deg,
+                    "range_m": c.effective_range_m, "lens_mode": lens,
+                })
+        else:
+            placements.append({
+                "camera": cam_name,
+                "x_m": self.cam_x_var.get(), "y_m": self.cam_y_var.get(),
+                "mast_m": self.mast_height_var.get(),
+                "pan_deg": self.pan_deg_var.get(), "tilt_deg": self.tilt_deg_var.get(),
+                "range_m": self.max_range_var.get(), "lens_mode": self.lens_mode_var.get(),
+            })
+
+        ptz: dict = {}
+        if len(self._ptz_presets) >= 2:
+            ptz = {
+                "camera": cam_name,
+                "x_m": self.cam_x_var.get(), "y_m": self.cam_y_var.get(),
+                "mast_m": self.mast_height_var.get(), "range_m": self.max_range_var.get(),
+                "presets": [
+                    {"name": n, "pan_deg": p, "tilt_deg": tl, "lens_mode": lm, "dwell_s": d}
+                    for (n, p, tl, lm, d) in self._ptz_presets
+                ],
+            }
+
+        return {
+            "source": "geotiff" if self._loaded_terrain_file else "procedural",
+            "preset": self.terrain_preset_var.get(),
+            "file": self._loaded_terrain_file,
+            "width_m": self.terrain.width_m,
+            "grid": self.terrain.cols,
+            "viewshed_range_m": self.max_range_var.get(),
+            "weather": self.weather_var.get(),
+            "placements": placements,
+            "ptz": ptz,
+            # GUI-only extras: project_io/CLI ignore unknown keys (see
+            # ``_prune``-free ``terr.get(...)`` reads in project_io.load_project),
+            # but this window uses them to restore itself faithfully.
+            "camera_name": cam_name,
+            "planner_mode": self.planner_mode_var.get(),
+            "fence_points": list(self.fence_points),
+            "fence_closed": bool(self.fence_closed_var.get()),
+            "target_ppm_label": self.target_ppm_var.get(),
+            "overlap_pct": self.overlap_pct_var.get(),
+        }
+
+    def import_terrain_state(self, state: dict) -> None:
+        """Best-effort restore of a previously-exported terrain block.
+
+        Never raises: an older/foreign project file must still open the
+        window with sane defaults rather than block it.
+        """
+        try:
+            preset = state.get("preset")
+            if preset:
+                self.terrain_preset_var.set(str(preset))
+            weather = state.get("weather")
+            if weather:
+                self.weather_var.set(str(weather))
+
+            camera_name = str(state.get("camera_name", "") or "")
+            if camera_name and self.app is not None:
+                match = next((c for c in getattr(self.app, "cameras", []) if c.name == camera_name), None)
+                if match is not None:
+                    self.current_camera = match
+                    if hasattr(self, "cam_model_var"):
+                        self.cam_model_var.set(match.name)
+
+            planner_mode = state.get("planner_mode")
+
+            fence_points = state.get("fence_points") or []
+            if fence_points:
+                self.fence_points = [(float(x), float(y)) for x, y in fence_points]
+            if "fence_closed" in state:
+                self.fence_closed_var.set(bool(state["fence_closed"]))
+            if "target_ppm_label" in state and state["target_ppm_label"]:
+                self.target_ppm_var.set(str(state["target_ppm_label"]))
+            if "overlap_pct" in state:
+                self.overlap_pct_var.set(float(state["overlap_pct"]))
+
+            placements = state.get("placements") or []
+            if placements:
+                first = placements[0]
+                self.cam_x_var.set(float(first.get("x_m", self.cam_x_var.get())))
+                self.cam_y_var.set(float(first.get("y_m", self.cam_y_var.get())))
+                self.mast_height_var.set(float(first.get("mast_m", self.mast_height_var.get())))
+                self.pan_deg_var.set(float(first.get("pan_deg", self.pan_deg_var.get())))
+                self.tilt_deg_var.set(float(first.get("tilt_deg", self.tilt_deg_var.get())))
+                self.max_range_var.set(float(first.get("range_m", self.max_range_var.get())))
+                lens_mode = first.get("lens_mode")
+                if lens_mode:
+                    self.lens_mode_var.set(str(lens_mode))
+
+            ptz = state.get("ptz") or {}
+            presets = ptz.get("presets") or []
+            if presets:
+                self._ptz_clear_presets()
+                for p in presets:
+                    name = str(p.get("name", ""))
+                    pan = float(p.get("pan_deg", 0.0))
+                    tilt = float(p.get("tilt_deg", -5.0))
+                    lens = str(p.get("lens_mode", "min"))
+                    dwell = float(p.get("dwell_s", 5.0))
+                    self._ptz_presets.append((name, pan, tilt, lens, dwell))
+                    if hasattr(self, "ptz_tree"):
+                        self.ptz_tree.insert("", "end", values=(pan, tilt, "Dar" if lens == "max" else "Geniş", dwell))
+                if "x_m" in ptz:
+                    self.cam_x_var.set(float(ptz["x_m"]))
+                if "y_m" in ptz:
+                    self.cam_y_var.set(float(ptz["y_m"]))
+                if "mast_m" in ptz:
+                    self.mast_height_var.set(float(ptz["mast_m"]))
+                if "range_m" in ptz:
+                    self.max_range_var.set(float(ptz["range_m"]))
+
+            # Switch the actual notebook tab rather than poking
+            # planner_mode_var directly: _on_mode_tab_changed is the only
+            # thing that keeps that var, the bottom-panel title, and (for
+            # perimeter) the auto-generated plan consistent with each other,
+            # and it fires (asynchronously) on notebook construction too --
+            # setting the var ourselves here would just get clobbered by
+            # that later event.
+            if planner_mode == "perimeter" and len(self.fence_points) >= 2:
+                self.mode_notebook.select(self.tab_perimeter)
+        except Exception as exc:
+            from ..errors import report
+            report(exc, "Arazi Projesi / Kaydedilmiş Durum Geri Yükleme")
 
     def _init_default_fence_sample(self):
         w, h = self.terrain.width_m, self.terrain.height_m
@@ -1551,6 +1700,7 @@ class TerrainViewshedWindow:
             return
         try:
             self.terrain = load_geotiff_or_dem(file_path)
+            self._loaded_terrain_file = file_path
             self.terrain_width_input_var.set(f"{self.terrain.width_m:.0f}")
             self.view_center_x = self.terrain.width_m * 0.5
             self.view_center_y = self.terrain.height_m * 0.5

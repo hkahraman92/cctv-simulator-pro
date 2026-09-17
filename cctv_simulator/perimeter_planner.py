@@ -129,9 +129,17 @@ def calculate_optimal_spacing(camera: CameraConfig,
     # Ground reach (Pythagoras with mast height)
     ground_reach = math.sqrt(max(max_slant_dist**2 - mast_height_m**2, 100.0))
 
-    # Dead zone under the pole (assuming standard ~15 deg downward tilt)
+    # Dead zone under the pole. BUGFIX: this used to assume a flat 15 deg
+    # downward tilt regardless of lens/mast, while generate_perimeter_plan
+    # actually points the camera at ~55% of ground_reach (near-flat for a
+    # tele lens, steep for a wide lens) -- the two disagreed on the very tilt
+    # the placed camera uses, so the BOM's dead-zone/spacing figures didn't
+    # match the cameras it went on to place. Mirror the same aim convention
+    # here (the dead_zone*2.0 floor term generate_perimeter_plan also applies
+    # isn't known yet at this point and is a rare-case clamp, not the driver).
     vfov_deg = math.degrees(2.0 * math.atan((sh / 2.0) / focal_mm))
-    tilt_deg = 15.0
+    aim_dist = max(ground_reach * 0.55, 5.0)
+    tilt_deg = max(1.5, min(25.0, math.degrees(math.atan(mast_height_m / aim_dist))))
     top_ray_angle_deg = tilt_deg + (vfov_deg / 2.0)
     bottom_ray_angle_deg = tilt_deg - (vfov_deg / 2.0)
 

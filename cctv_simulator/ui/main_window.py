@@ -611,7 +611,9 @@ class DualViewCCTVDesignApp:
             self.viewshed_window = None
 
         try:
-            self.viewshed_window = TerrainViewshedWindow(self)
+            terrain_state = getattr(self, "_pending_terrain_state", None)
+            self.viewshed_window = TerrainViewshedWindow(self, terrain_state=terrain_state)
+            self._pending_terrain_state = None
         except Exception as exc:
             from ..errors import report
             report(exc, "3D Arazi Analizi / Başlatma")
@@ -1596,9 +1598,30 @@ class DualViewCCTVDesignApp:
         )
         if not path:
             return
+
+        # BUGFIX: this used to omit "terrain" entirely, so any fence/PTZ/
+        # camera-placement work done in the "3D Arazi & Viewshed" window was
+        # silently dropped on save -- the CLI's --viewshed/--ptz would then
+        # always fail on the saved file. Pull the live state from that window
+        # when it's open, and make sure the camera it references is actually
+        # in the saved camera list (the map window can pick a model from its
+        # own library that never made it into self.cameras).
+        cameras = list(self.cameras)
+        terrain_block: dict = {}
+        vw = getattr(self, "viewshed_window", None)
+        if vw is not None:
+            try:
+                if vw.window.winfo_exists():
+                    terrain_block = vw.export_terrain_state()
+                    cam_name = terrain_block.get("camera_name", "")
+                    if cam_name and not any(c.name == cam_name for c in cameras):
+                        cameras = cameras + [vw.current_camera]
+            except Exception:
+                terrain_block = {}
+
         data = {
             "version": "2.0",
-            "cameras": [asdict(cam) for cam in self.cameras],
+            "cameras": [asdict(cam) for cam in cameras],
             "plan_path": self.plan_path,
             "plan_width_m": self.plan_width_m,
             "auto_view_scale": self.auto_view_scale.get(),
@@ -1608,6 +1631,8 @@ class DualViewCCTVDesignApp:
             "design_distance": self.design_distance_var.get(),
             "design_level": self.design_level_var.get(),
         }
+        if terrain_block:
+            data["terrain"] = terrain_block
         with open(path, "w", encoding="utf-8") as file:
             json.dump(data, file, ensure_ascii=False, indent=4)
         self.status_var.set(f"Proje kaydedildi: {Path(path).name}")
@@ -1638,6 +1663,10 @@ class DualViewCCTVDesignApp:
 
             self.design_distance_var.set(str(data.get("design_distance", "20.0")))
             self.design_level_var.set(str(data.get("design_level", "Ozel: TR Plaka")))
+            # Stashed here (not applied yet) so open_terrain_viewshed() can
+            # hand it to a freshly-opened window; see save_project's terrain
+            # block for the schema this restores.
+            self._pending_terrain_state = data.get("terrain") or {}
 
             self._set_entry(self.entry_plan_width, self.plan_width_m)
             self._set_entry(self.entry_target_name, self.target_point.name)

@@ -24,13 +24,25 @@ _STD_TARGET_M = 1.6
 # "kontrol" / bare "tanı" dropped — they matched "erişim kontrolü", "tanımlı" and
 # fired spurious DORI requirements (see compliance_standards._TASK_TR).
 _TASK_WORDS = r"(teşhis|kimlik\s*(?:tespit\w*|belirle\w*)|tanıma|gözlem|hareket\s*takib\w*|algıla(?:ma)?|tespit|izleme|gözetleme|plaka|anpr|lpr|yüz\s*tanıma|yüz\s*teşhis|yüz\s*tespit)"
+# Turkish-locale number: either "1.500" / "1.500,5" (dot-grouped thousands,
+# optional comma decimal) or a plain "30" / "30,5" / "30.5". Longest-first
+# so "1.500" isn't swallowed as bare "1" followed by ".500".
+_NUM = r"\d{1,3}(?:\.\d{3})+(?:,\d+)?|\d+(?:[.,]\d+)?"
 # distance: "30 m", "30m", "30 metre", "30 metrede", "30 metrelik" — but not "30 mm"
-_DIST = r"(\d+(?:[.,]\d+)?)\s*(?:metre\w{0,5}|m)(?![a-zğüşıöçA-ZĞÜŞİÖÇ])"
-_PPM = r"(\d+(?:[.,]\d+)?)\s*(?:ppm|px/m|piksel\s*/\s*metre|piksel/m)"
+_DIST = rf"({_NUM})\s*(?:metre\w{{0,5}}|m)(?![a-zğüşıöçA-ZĞÜŞİÖÇ])"
+_PPM = rf"({_NUM})\s*(?:ppm|px/m|piksel\s*/\s*metre|piksel/m)"
+
+_THOUSANDS_ONLY = re.compile(r"^\d{1,3}(?:\.\d{3})+$")
 
 
 def _num(s: str) -> float:
-    return float(s.replace(",", "."))
+    # BUGFIX: "1.500 metre" (Turkish thousands separator) was parsed as
+    # float("1.500") == 1.5 -- a 1000x undershoot on long-range requirements.
+    if _THOUSANDS_ONLY.match(s):
+        return float(s.replace(".", ""))
+    if "," in s:
+        return float(s.replace(".", "").replace(",", "."))
+    return float(s)
 
 
 def extract_dori_requirements(spec_text: str, profile_id: str = "P1",

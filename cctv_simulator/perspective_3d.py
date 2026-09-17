@@ -39,7 +39,12 @@ class Perspective3DEngine:
 
         self.sensor_w_mm, self.sensor_h_mm = SENSOR_DIMS_MM.get(camera.sensor_name, (5.37, 3.02))
         res_info = RESOLUTIONS.get(camera.resolution_name, (2688, 1520))
-        self.res_w, self.res_h = res_info
+        # BUGFIX: apply the measured MTF50/Nyquist ratio (k) like the optic
+        # engine (calculations.py) does, so this view's PPM/DORI never
+        # disagrees with the table/canvas for a camera with a measured k.
+        px_ratio = max(getattr(camera, "effective_px_ratio", 1.0), 0.05)
+        self.res_w = res_info[0] * px_ratio
+        self.res_h = res_info[1]
 
         self.pole_h_m = max(camera.pole_height_m, 0.1)
         self.tilt_deg = camera.tilt_deg

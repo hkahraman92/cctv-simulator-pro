@@ -13728,8 +13728,8 @@
      "focal_mm": 3.02,
      "hfov_deg": 129.477094,
      "vfov_deg": 115.646531,
-     "dead_zone_m": 999.0,
-     "dead_zone_area_m2": 1127642.124422,
+     "dead_zone_m": 0.0,
+     "dead_zone_area_m2": 0.0,
      "max_geom_dist_m": null,
      "vertical_drop_m": 8.72,
      "ppm_at_25m": 23.952747,
@@ -13739,78 +13739,78 @@
        "level": "Johnson: Araç Algılama (1.5 cyc)",
        "ppm": 1.3,
        "optical_distance_m": 487.846154,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 487.768215,
+       "status": "Aktif"
       },
       {
        "level": "Johnson: İnsan Algılama (1.5 cyc)",
        "ppm": 1.67,
        "optical_distance_m": 379.760479,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 379.660352,
+       "status": "Aktif"
       },
       {
        "level": "Algoritma: Araç Tespiti (%1.5 Kısa Kenar)",
        "ppm": 3.34,
        "optical_distance_m": 189.88024,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 189.679907,
+       "status": "Aktif"
       },
       {
        "level": "Algoritma: İnsan Tespiti (%1.5 Kısa Kenar)",
        "ppm": 4.27,
        "optical_distance_m": 148.52459,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 148.26839,
+       "status": "Aktif"
       },
       {
        "level": "Johnson: Araç Tanıma (6.0 cyc)",
        "ppm": 5.22,
        "optical_distance_m": 121.494253,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 121.180919,
+       "status": "Aktif"
       },
       {
        "level": "Johnson: İnsan Tanıma (6.0 cyc)",
        "ppm": 6.67,
        "optical_distance_m": 95.082459,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 94.681759,
+       "status": "Aktif"
       },
       {
        "level": "Johnson: Araç Teşhis (12.0 cyc)",
        "ppm": 10.43,
        "optical_distance_m": 60.805369,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 60.17686,
+       "status": "Aktif"
       },
       {
        "level": "Optik: İzleme / Monitoring (12,5 px/m)",
        "ppm": 12.5,
        "optical_distance_m": 50.736,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 49.981029,
+       "status": "Aktif"
       },
       {
        "level": "Johnson: İnsan Teşhis (12.0 cyc)",
        "ppm": 13.33,
        "optical_distance_m": 47.576894,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 46.770957,
+       "status": "Aktif"
       },
       {
        "level": "Optik: Algılama / Detection (25 px/m)",
        "ppm": 25,
        "optical_distance_m": 25.368,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 23.822196,
+       "status": "Aktif"
       },
       {
        "level": "Optik: Gözlem / Observation (62,5 px/m)",
        "ppm": 62.5,
        "optical_distance_m": 10.1472,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 5.189149,
+       "status": "Aktif"
       },
       {
        "level": "Optik: Tanıma / Recognition (125 px/m)",
@@ -16149,8 +16149,8 @@
      "focal_mm": 3.99,
      "hfov_deg": 116.118079,
      "vfov_deg": 100.529894,
-     "dead_zone_m": 999.0,
-     "dead_zone_area_m2": 1011295.766609,
+     "dead_zone_m": 0.0,
+     "dead_zone_area_m2": 0.0,
      "max_geom_dist_m": null,
      "vertical_drop_m": 2.21,
      "ppm_at_25m": 47.694009,
@@ -16160,106 +16160,106 @@
        "level": "Johnson: Araç Algılama (1.5 cyc)",
        "ppm": 1.3,
        "optical_distance_m": 920.769231,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 920.766579,
+       "status": "Aktif"
       },
       {
        "level": "Johnson: İnsan Algılama (1.5 cyc)",
        "ppm": 1.67,
        "optical_distance_m": 716.766467,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 716.76306,
+       "status": "Aktif"
       },
       {
        "level": "Algoritma: Araç Tespiti (%1.5 Kısa Kenar)",
        "ppm": 3.34,
        "optical_distance_m": 358.383234,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 358.376419,
+       "status": "Aktif"
       },
       {
        "level": "Algoritma: İnsan Tespiti (%1.5 Kısa Kenar)",
        "ppm": 4.27,
        "optical_distance_m": 280.327869,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 280.319157,
+       "status": "Aktif"
       },
       {
        "level": "Johnson: Araç Tanıma (6.0 cyc)",
        "ppm": 5.22,
        "optical_distance_m": 229.310345,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 229.299695,
+       "status": "Aktif"
       },
       {
        "level": "Johnson: İnsan Tanıma (6.0 cyc)",
        "ppm": 6.67,
        "optical_distance_m": 179.46027,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 179.446662,
+       "status": "Aktif"
       },
       {
        "level": "Johnson: Araç Teşhis (12.0 cyc)",
        "ppm": 10.43,
        "optical_distance_m": 114.765101,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 114.74382,
+       "status": "Aktif"
       },
       {
        "level": "Optik: İzleme / Monitoring (12,5 px/m)",
        "ppm": 12.5,
        "optical_distance_m": 95.76,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 95.734495,
+       "status": "Aktif"
       },
       {
        "level": "Johnson: İnsan Teşhis (12.0 cyc)",
        "ppm": 13.33,
        "optical_distance_m": 89.797449,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 89.77025,
+       "status": "Aktif"
       },
       {
        "level": "Optik: Algılama / Detection (25 px/m)",
        "ppm": 25,
        "optical_distance_m": 47.88,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 47.828969,
+       "status": "Aktif"
       },
       {
        "level": "Optik: Gözlem / Observation (62,5 px/m)",
        "ppm": 62.5,
        "optical_distance_m": 19.152,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 19.024064,
+       "status": "Aktif"
       },
       {
        "level": "Optik: Tanıma / Recognition (125 px/m)",
        "ppm": 125,
        "optical_distance_m": 9.576,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 9.317493,
+       "status": "Aktif"
       },
       {
        "level": "Optik: TR Plaka / ANPR (143 px/m)",
        "ppm": 143,
        "optical_distance_m": 8.370629,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 8.07362,
+       "status": "Aktif"
       },
       {
        "level": "Optik: Teşhis / Identification (250 px/m)",
        "ppm": 250,
        "optical_distance_m": 4.788,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 4.247451,
+       "status": "Aktif"
       },
       {
        "level": "Optik: Doğrulama / Validate (500 px/m)",
        "ppm": 500,
        "optical_distance_m": 2.394,
-       "ground_distance_m": 0.0,
-       "status": "Kör noktada"
+       "ground_distance_m": 0.9204,
+       "status": "Aktif"
       },
       {
        "level": "Optik: Yüz Tespiti (~800 px/m)",

@@ -126,7 +126,10 @@ def calculate_for_camera(
     top_ray_deg = camera.tilt_deg - half_vfov
 
     if bottom_ray_deg >= 89.9:
-        dead_zone_m = 999.0
+        # BUGFIX: near-straight-down bottom ray means the frame's bottom edge
+        # touches the pole base almost immediately -> dead zone ~0, not a
+        # 999 m sentinel (the previous code had this inverted).
+        dead_zone_m = 0.0
     elif bottom_ray_deg <= 0:
         dead_zone_m = 0.0
     else:
