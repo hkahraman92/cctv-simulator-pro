@@ -53,6 +53,7 @@ AMBER     = "#FFB300"   # secondary accent - attention, Recognition band
 # EN 62676-4 task bands
 C_IDENT   = "#00E676"   # Teşhis / Identification
 C_RECOG   = "#FFB300"   # Tanıma / Recognition
+C_OBSERVE = "#FF7043"   # Gözlem / Observation
 C_DETECT  = "#FF4D6D"   # Algılama / Detection
 C_DEAD    = "#FF4D6D"   # dead zone hatch
 
@@ -273,7 +274,7 @@ class DoriPlanView:
                 + self._arc_points(far_m, half_rad, segments)[::-1])
 
     # ── main draw ─────────────────────────────────────────────────────────
-    def draw(self, result: OpticResult, req_ppm: float, req_dist: float):
+    def draw(self, result: OpticResult, req_ppm: float, req_dist: float, ok: bool = True):
         cv = self.canvas
         cv.delete("all")
         w = cv.winfo_width()
@@ -288,6 +289,7 @@ class DoriPlanView:
         half_rad = math.radians(result.hfov_deg / 2.0)
         d_ident = ground_distance_for_ppm(result, PPM_IDENT)
         d_recog = ground_distance_for_ppm(result, PPM_RECOG)
+        d_observe = ground_distance_for_ppm(result, PPM_OBSERVE)
         d_detect = ground_distance_for_ppm(result, PPM_DETECT)
 
         span = max(d_detect * 1.10, req_dist * 1.15, result.dead_zone_m * 2.0, 8.0)
@@ -302,10 +304,17 @@ class DoriPlanView:
             "half_rad": half_rad, "plot": plot,
         }
 
+        # BUGFIX: this used to skip PPM_OBSERVE entirely and jump straight
+        # from Recognition to Detection, so any distance where the camera
+        # only reached the Observation threshold (62,5 px/m) got silently
+        # absorbed into the "ALGILAMA" (Detection, 25 px/m) band -- a viewer
+        # could read a weaker result as a stronger DORI level than EN
+        # 62676-4 actually certifies for that PPM.
         bands = [
-            ("TEŞHİS",   C_IDENT,  result.dead_zone_m, d_ident),
-            ("TANIMA",   C_RECOG,  d_ident,            d_recog),
-            ("ALGILAMA", C_DETECT, d_recog,            d_detect),
+            ("TEŞHİS",   C_IDENT,   result.dead_zone_m, d_ident),
+            ("TANIMA",   C_RECOG,   d_ident,             d_recog),
+            ("GÖZLEM",   C_OBSERVE, d_recog,              d_observe),
+            ("ALGILAMA", C_DETECT,  d_observe,            d_detect),
         ]
         bands = [b for b in bands if b[3] > b[2] + 1e-6]
 
@@ -333,7 +342,7 @@ class DoriPlanView:
         self._draw_frame_and_ruler(span, half_rad)
         self._draw_fov_edges(result, span, half_rad)
         self._draw_limits(result, half_rad, span)
-        self._draw_requirement(result, req_ppm, req_dist)
+        self._draw_requirement(result, req_ppm, req_dist, ok)
         self._draw_camera()
         self._draw_legend(bands, plot)
 
@@ -445,14 +454,19 @@ class DoriPlanView:
                            font=(self.font_mono, 9, "bold"),
                            text=f"GEOM. LİMİT {result.max_geom_dist_m:.1f} m")
 
-    def _draw_requirement(self, result, req_ppm: float, req_dist: float):
+    def _draw_requirement(self, result, req_ppm: float, req_dist: float, ok: bool):
         cv = self.canvas
         g = self.geometry
         if req_dist <= 0 or req_dist > g["span"]:
             return
         achieved = ppm_at_distance(result, req_dist)
-        ok = (achieved >= req_ppm
-              and result.dead_zone_m <= req_dist <= result.max_geom_dist_m)
+        # BUGFIX: `ok` used to be recomputed here from only PPM + dead-zone +
+        # geometric limit, while the "EN 62676-4 uygunluk" card below also
+        # factors in atmospheric range, IR range and min lux. In fog/low
+        # visibility (or IR-limited night range) the marker could show green
+        # ("UYGUN") right next to a card saying "UYGUN DEĞİL" for the exact
+        # same point. `ok` is now the one verdict _render() computed via
+        # _evaluate_requirement() -- both widgets read the same answer.
         color = C_IDENT if ok else C_DETECT
         x, y = self._world_to_px(0, req_dist)
         cv.create_oval(x - 7, y - 7, x + 7, y + 7, outline=color, width=2)
@@ -891,10 +905,45 @@ class _WorkbenchBody:
 
         req_ppm = TASKS[self.sel_task.get()]
         req_dist = float(self.req_dist_var.get())
-        self.plan.draw(self.result, req_ppm, req_dist)
-        self._update_cards(req_ppm, req_dist)
+        # Single verdict computation shared by the plot's target marker and
+        # the verdict card -- see _evaluate_requirement / _draw_requirement.
+        achieved, atm_limit, reasons = self._evaluate_requirement(req_ppm, req_dist)
+        self.plan.draw(self.result, req_ppm, req_dist, ok=not reasons)
+        self._update_cards(req_ppm, req_dist, achieved, atm_limit, reasons)
 
-    def _update_cards(self, req_ppm: float, req_dist: float):
+    def _evaluate_requirement(self, req_ppm: float, req_dist: float):
+        """(achieved px/m, atmospheric range limit, failure reasons) for
+        req_dist/req_ppm against the current camera/result/weather. The one
+        place that decides pass/fail so the plot marker and the verdict card
+        can't disagree (see _draw_requirement's BUGFIX note)."""
+        r = self.result
+        achieved = ppm_at_distance(r, req_dist)
+
+        weather = self.sel_weather.get()
+        vis_km = WEATHER_PRESETS.get(weather, 40.0)
+        atm_limit = float("inf")
+        if vis_km < 20.0:
+            band = band_for_camera(self.camera.sensor_name, self.camera.model_name)
+            atm_limit = usable_range_m(ground_distance_for_ppm(r, req_ppm), vis_km, band, weather)
+
+        reasons = []
+        if achieved < req_ppm:
+            reasons.append("piksel yoğunluğu yetersiz")
+        if req_dist > atm_limit:
+            reasons.append(f"atmosferik menzil aşıldı ({weather})")
+        if req_dist < r.dead_zone_m:
+            reasons.append("kör noktada")
+        if req_dist > r.max_geom_dist_m:
+            reasons.append("geometrik limit ötesinde")
+        if self.camera.ir_range_m > 0 and req_dist > self.camera.ir_range_m:
+            reasons.append("IR menzili dışında")
+        if self.camera.min_lux > 0.05 and (self.camera.ir_range_m <= 0
+                                           or req_dist > self.camera.ir_range_m):
+            reasons.append("düşük ışıkta yetersiz")
+        return achieved, atm_limit, reasons
+
+    def _update_cards(self, req_ppm: float, req_dist: float, achieved: float,
+                      atm_limit: float, reasons: List[str]):
         r = self.result
         self.card_fov.update_values(
             f"{r.hfov_deg:.1f}°",
@@ -915,37 +964,17 @@ class _WorkbenchBody:
         else:
             self.card_limit.update_values("AÇIK", "üst ışın ufkun üzerinde", CYAN)
 
-        achieved = ppm_at_distance(r, req_dist)
-        self.card_ppm.update_values(
-            f"{achieved:.0f} px/m",
-            f"{req_dist:.1f} m · gereken {req_ppm:g}",
-            C_IDENT if achieved >= req_ppm else C_DETECT)
-
         weather = self.sel_weather.get()
-        vis_km = WEATHER_PRESETS.get(weather, 40.0)
-        atm_limit = float("inf")
-        if vis_km < 20.0:
-            band = band_for_camera(self.camera.sensor_name, self.camera.model_name)
-            atm_limit = usable_range_m(ground_distance_for_ppm(r, req_ppm), vis_km, band, weather)
+        if math.isfinite(atm_limit):
             self.card_ppm.update_values(
                 f"{achieved:.0f} px/m",
                 f"{req_dist:.1f} m · {weather} · atm. menzil {atm_limit:.0f} m",
                 C_IDENT if (achieved >= req_ppm and req_dist <= atm_limit) else C_DETECT)
-
-        reasons = []
-        if achieved < req_ppm:
-            reasons.append("piksel yoğunluğu yetersiz")
-        if req_dist > atm_limit:
-            reasons.append(f"atmosferik menzil aşıldı ({weather})")
-        if req_dist < r.dead_zone_m:
-            reasons.append("kör noktada")
-        if req_dist > r.max_geom_dist_m:
-            reasons.append("geometrik limit ötesinde")
-        if self.camera.ir_range_m > 0 and req_dist > self.camera.ir_range_m:
-            reasons.append("IR menzili dışında")
-        if self.camera.min_lux > 0.05 and (self.camera.ir_range_m <= 0
-                                           or req_dist > self.camera.ir_range_m):
-            reasons.append("düşük ışıkta yetersiz")
+        else:
+            self.card_ppm.update_values(
+                f"{achieved:.0f} px/m",
+                f"{req_dist:.1f} m · gereken {req_ppm:g}",
+                C_IDENT if achieved >= req_ppm else C_DETECT)
 
         task = self.sel_task.get().split(" (")[0]
         if reasons:

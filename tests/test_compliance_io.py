@@ -50,7 +50,10 @@ def test_requirement_template_roundtrip(tmp_path, monkeypatch):
     monkeypatch.setattr(RL, "_dir", lambda: tmp_path)
     assert RL.list_templates() == []
     assert RL.save_template("Standart Dış Ortam", _RESULT["requirements"], {"k": "v"})
-    assert RL.list_templates() == ["standart-d-ortam"]
+    # BUGFIX: list_templates() used to return the slugified filename
+    # ("standart-d-ortam") instead of the name the user actually typed --
+    # a UI populating a picker from this list showed the ugly slug.
+    assert RL.list_templates() == ["Standart Dış Ortam"]
     loaded = RL.load_template("Standart Dış Ortam")
     assert loaded and len(loaded["requirements"]) == 2
     assert loaded["requirements"][0]["required_ppm"] == 250

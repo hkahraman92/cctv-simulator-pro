@@ -143,3 +143,65 @@ def test_geotiff_nodata_is_filled_not_propagated(monkeypatch, tmp_path):
     terr = TL.load_geotiff_or_dem(p)
     assert not np.isnan(terr.z_grid).any()
     assert terr.get_elevation_at(5.0, 5.0) == terr.get_elevation_at(5.0, 5.0)  # not NaN
+
+
+def test_geotiff_geographic_crs_sets_lat_lon_center(monkeypatch, tmp_path):
+    """BUGFIX: a locally-loaded GeoTIFF used to leave lat_center/lon_center
+    unset, silently disabling map_3d_window's glare/sun BOM column for
+    anyone using their own DEM instead of an online download."""
+    from cctv_simulator import terrain_loader as TL
+
+    arr = np.full((100, 100), 500.0, dtype=np.float32)
+    # degree-unit transform (px_w < 0.05 triggers the geographic branch):
+    # west edge lon=32.0, north edge lat=40.0, 0.001 deg/px, north-up.
+    src = _FakeSrc(arr, _FakeAffine(a=0.001, e=-0.001, c=32.0, f=40.0))
+    _install_fake_rasterio(monkeypatch, src)
+
+    p = tmp_path / "geo.tif"
+    p.write_bytes(b"stub")
+    terr = TL.load_geotiff_or_dem(p)
+
+    assert terr.lon_center == pytest.approx(32.05, abs=1e-6)
+    assert terr.lat_center == pytest.approx(39.95, abs=1e-6)
+
+
+def test_geotiff_projected_crs_reprojects_center_to_wgs84(monkeypatch, tmp_path):
+    """Projected (UTM-like) source: lat/lon comes from rasterio.warp.transform
+    on the raster centre, not the raw (metre) transform values."""
+    import sys
+    import types
+
+    from cctv_simulator import terrain_loader as TL
+
+    arr = np.full((10, 10), 500.0, dtype=np.float32)
+    src = _FakeSrc(arr, _FakeAffine(a=30.0, e=-30.0, c=500000.0, f=4000000.0))
+    src.crs = "EPSG:32636"  # any non-None sentinel; warp.transform is faked below
+    _install_fake_rasterio(monkeypatch, src)
+
+    fake_warp = types.ModuleType("rasterio.warp")
+    fake_warp.transform = lambda src_crs, dst_crs, xs, ys: ([29.5], [40.2])
+    monkeypatch.setitem(sys.modules, "rasterio.warp", fake_warp)
+
+    p = tmp_path / "utm.tif"
+    p.write_bytes(b"stub")
+    terr = TL.load_geotiff_or_dem(p)
+
+    assert terr.lon_center == pytest.approx(29.5)
+    assert terr.lat_center == pytest.approx(40.2)
+
+
+def test_geotiff_missing_crs_leaves_lat_lon_none(monkeypatch, tmp_path):
+    """No CRS on the source (or no rasterio.warp) must degrade gracefully,
+    not crash the whole DEM load."""
+    from cctv_simulator import terrain_loader as TL
+
+    arr = np.full((10, 10), 500.0, dtype=np.float32)
+    src = _FakeSrc(arr, _FakeAffine(a=30.0, e=-30.0, c=500000.0, f=4000000.0))
+    src.crs = None
+    _install_fake_rasterio(monkeypatch, src)
+
+    p = tmp_path / "nocrs.tif"
+    p.write_bytes(b"stub")
+    terr = TL.load_geotiff_or_dem(p)
+
+    assert terr.lat_center is None and terr.lon_center is None

@@ -30,10 +30,25 @@ def _slug(name: str) -> str:
 
 
 def list_templates() -> List[str]:
+    """Display names of saved templates.
+
+    BUGFIX: this used to return the slugified filename stem (save_template
+    writes "<slug>.json"), so a template saved as "Şirket A" showed up in
+    the UI as "sirket-a". load_template/delete_template re-slugify whatever
+    name they're given, so returning the real stored name here still finds
+    the same file -- it's a display-only fix.
+    """
     d = _dir()
     if d is None:
         return []
-    return sorted(p.stem for p in d.glob("*.json"))
+    names = []
+    for p in sorted(d.glob("*.json")):
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+            names.append(str(data.get("name") or p.stem))
+        except (OSError, ValueError):
+            names.append(p.stem)
+    return sorted(names)
 
 
 def save_template(name: str, requirements: List[Dict[str, Any]],

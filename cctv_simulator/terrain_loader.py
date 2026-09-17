@@ -181,13 +181,39 @@ def _terrain_from_rasterio(path: Path) -> Optional[TerrainData]:
 
         # Geographic (EPSG:4326, degrees) -> metres. Scale longitude by the
         # cosine of the raster-centre latitude; 1 deg latitude ~ 111,320 m.
+        lat_center: Optional[float] = None
+        lon_center: Optional[float] = None
         if px_w < 0.05:
             lat_c = float(t.f) + float(t.e) * (src.height / 2.0)
             cell_x_m = px_w * 111_320.0 * max(math.cos(math.radians(lat_c)), 0.1)
             cell_y_m = px_h * 111_320.0
             cell_size_m = (cell_x_m + cell_y_m) / 2.0
+            # The transform's own units are already degrees here, so the
+            # raster centre *is* a lat/lon pair -- no reprojection needed.
+            lat_center = lat_c
+            lon_center = float(t.c) + float(t.a) * (src.width / 2.0)
         else:
             cell_size_m = (px_w + px_h) / 2.0
+            # BUGFIX: a locally-loaded projected GeoTIFF (UTM etc.) never set
+            # lat_center/lon_center at all, so map_3d_window's glare/sun
+            # analysis silently disappeared for anyone using their own
+            # (likely more authoritative) DEM instead of an online download
+            # -- no warning, the BOM's "Güneş / Parlama" column just wasn't
+            # there. Best-effort reproject the raster centre to WGS84;
+            # missing CRS or a rasterio build without warp support just
+            # leaves glare analysis unavailable, same as before this fix.
+            try:
+                if src.crs is not None:
+                    # Full 6-parameter affine, spelled out rather than using
+                    # Affine.__mul__, so this only needs plain a..f attributes.
+                    col_c, row_c = src.width / 2.0, src.height / 2.0
+                    x_c = float(t.c) + float(t.a) * col_c + float(t.b) * row_c
+                    y_c = float(t.f) + float(t.d) * col_c + float(t.e) * row_c
+                    from rasterio.warp import transform as _rio_transform
+                    lons, lats = _rio_transform(src.crs, "EPSG:4326", [x_c], [y_c])
+                    lon_center, lat_center = float(lons[0]), float(lats[0])
+            except Exception:
+                pass
 
         # TerrainData indexes rows by increasing +Y (north) and the renderer
         # flips on the way to an image. A north-up raster has row 0 = north, so
@@ -214,6 +240,8 @@ def _terrain_from_rasterio(path: Path) -> Optional[TerrainData]:
         name=path.stem,
         is_measured=True,
         source_note=f"GeoTIFF/DEM: {path.name}",
+        lat_center=lat_center,
+        lon_center=lon_center,
     )
 
 

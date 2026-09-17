@@ -3,8 +3,21 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from tkinter import messagebox
+from xml.sax.saxutils import escape as _xml_escape
 from .config import TURKISH_TRANSLATION
 from .calculations import mode_label
+
+
+def _esc(value: Any) -> str:
+    """Escape free-text/user-controlled content before it goes into a
+    ReportLab ``Paragraph`` -- Paragraph interprets its string as a small
+    XML-like markup language ("<b>", "<font color=...>", ...), so a camera
+    name, PPM level name, target name, or LLM/spec-derived compliance quote
+    containing a literal "<", ">" or "&" (e.g. a spec sentence like
+    "mesafe < 30 m") crashes the whole PDF build instead of just rendering
+    that character. Never apply this to markup *we* write ourselves.
+    """
+    return _xml_escape(str(value))
 
 try:
     from PIL import ImageGrab
@@ -374,7 +387,7 @@ def export_pdf(
             Paragraph("Hesaplanan Optik Konfigürasyon", style_body_bold),
             Paragraph(f"<b>{active_res_count} Konfigürasyon</b>", style_body),
             Paragraph("Kontrol / Hedef Noktası", style_body_bold),
-            Paragraph(target_status_str, style_body),
+            Paragraph(_esc(target_status_str), style_body),
         ]
     ]
     kpi_table = Table(kpi_data, colWidths=[page_w * 0.25, page_w * 0.25, page_w * 0.25, page_w * 0.25])
@@ -401,10 +414,10 @@ def export_pdf(
         results = last_all_results.get(cam.name, [])
         hfov_str = f"{results[0].hfov_deg:.1f}° / {results[0].vfov_deg:.1f}°" if results else "-"
         cam_rows.append([
-            Paragraph(f"<b>{cam.name}</b>", style_cell_bold),
-            Paragraph(cam.model_name, style_cell),
-            Paragraph(cam.sensor_name, style_cell),
-            Paragraph(cam.resolution_name.split(" (")[0], style_cell),
+            Paragraph(f"<b>{_esc(cam.name)}</b>", style_cell_bold),
+            Paragraph(_esc(cam.model_name), style_cell),
+            Paragraph(_esc(cam.sensor_name), style_cell),
+            Paragraph(_esc(cam.resolution_name.split(" (")[0]), style_cell),
             Paragraph(f"{cam.focal_min_mm:g} - {cam.focal_max_mm:g}", style_cell),
             Paragraph(f"{cam.pole_height_m:g}", style_cell),
             Paragraph(f"{cam.tilt_deg:g}°", style_cell),
@@ -440,15 +453,15 @@ def export_pdf(
                 ground_str = "-" if row.ground_distance_m <= 0 else f"{row.ground_distance_m:.1f} m"
                 status_color = c_success_fg if "Aktif" in row.status or "Uyumlu" in row.status else (c_warning_fg if "limit" in row.status else c_danger_fg)
                 dori_rows.append([
-                    Paragraph(row.camera, style_cell),
-                    Paragraph(row.mode, style_cell),
-                    Paragraph(row.level, style_cell_bold),
-                    Paragraph(row.level_type, style_cell),
+                    Paragraph(_esc(row.camera), style_cell),
+                    Paragraph(_esc(row.mode), style_cell),
+                    Paragraph(_esc(row.level), style_cell_bold),
+                    Paragraph(_esc(row.level_type), style_cell),
                     Paragraph(f"{row.ppm:g}", style_cell_bold),
                     Paragraph(f"{row.optical_distance_m:.1f} m", style_cell),
                     Paragraph(ground_str, style_cell),
                     Paragraph(f"{res.dead_zone_m:.1f} m", style_cell),
-                    Paragraph(f"<font color='{status_color.hexval()}'><b>{row.status}</b></font>", style_cell),
+                    Paragraph(f"<font color='{status_color.hexval()}'><b>{_esc(row.status)}</b></font>", style_cell),
                 ])
 
     dori_table = Table(dori_rows, colWidths=[page_w * 0.11, page_w * 0.08, page_w * 0.22, page_w * 0.10, page_w * 0.08, page_w * 0.11, page_w * 0.11, page_w * 0.09, page_w * 0.10])
@@ -479,11 +492,11 @@ def export_pdf(
                 status = str(m_row.get("status", "Uyumsuz"))
                 st_color = c_success_fg if "Uyumlu" in status else (c_warning_fg if "Kısmi" in status else c_danger_fg)
                 comp_rows.append([
-                    Paragraph(str(m_row.get("profile_name", m_row.get("profile_id", ""))), style_cell),
-                    Paragraph(str(m_row.get("requirement", "")), style_cell),
-                    Paragraph(str(m_row.get("camera_model", "")), style_cell_bold),
-                    Paragraph(f"<font color='{st_color.hexval()}'><b>{status}</b></font>", style_cell),
-                    Paragraph(str(m_row.get("evidence", "")), style_cell),
+                    Paragraph(_esc(m_row.get("profile_name", m_row.get("profile_id", ""))), style_cell),
+                    Paragraph(_esc(m_row.get("requirement", "")), style_cell),
+                    Paragraph(_esc(m_row.get("camera_model", "")), style_cell_bold),
+                    Paragraph(f"<font color='{st_color.hexval()}'><b>{_esc(status)}</b></font>", style_cell),
+                    Paragraph(_esc(m_row.get("evidence", "")), style_cell),
                 ])
 
             comp_table = Table(comp_rows, colWidths=[page_w * 0.15, page_w * 0.32, page_w * 0.16, page_w * 0.10, page_w * 0.27])
@@ -507,7 +520,7 @@ def export_pdf(
     for cam_name, results in last_all_results.items():
         for res in results:
             for rec in res.recommendations:
-                recs.append(f"<b>[{cam_name} - {mode_label(res.mode)}]:</b> {rec}")
+                recs.append(f"<b>[{_esc(cam_name)} - {_esc(mode_label(res.mode))}]:</b> {_esc(rec)}")
 
     if not recs:
         recs.append("Optik analiz kriterlerine göre tüm kameralar nominal çalışma parametreleri içerisindedir.")
@@ -1121,7 +1134,10 @@ def export_engineering_report_pdf(path: str, *, project_name: str, terrain, came
 
     def _kv(title: str, rws: List[List[str]]):
         story.append(Paragraph(title, S["sec"]))
-        data = [[Paragraph(str(k), S["cellb"]), Paragraph(str(v), S["cell"])] for k, v in rws]
+        # Escaped: rws carries camera/terrain/target names and other
+        # free-text values a ReportLab Paragraph would otherwise try to
+        # parse as markup (see _esc's docstring).
+        data = [[Paragraph(_esc(k), S["cellb"]), Paragraph(_esc(v), S["cell"])] for k, v in rws]
         t = Table(data, colWidths=[page_w * 0.42, page_w * 0.58])
         t.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (0, -1), c_light),
@@ -1146,7 +1162,7 @@ def export_engineering_report_pdf(path: str, *, project_name: str, terrain, came
     ])
 
     prov = _provenance_line(terrain)
-    prov_tbl = Table([[Paragraph(("UYARI — " if not measured else "DOĞRULANDI — ") + prov, S["cellb"])]], colWidths=[page_w])
+    prov_tbl = Table([[Paragraph(("UYARI — " if not measured else "DOĞRULANDI — ") + _esc(prov), S["cellb"])]], colWidths=[page_w])
     prov_tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), c_danger_bg if not measured else c_ok_bg),
         ("TEXTCOLOR", (0, 0), (-1, -1), c_danger_fg if not measured else rl_colors.HexColor("#0F5132")),

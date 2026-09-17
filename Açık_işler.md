@@ -7,6 +7,89 @@ tetikleyici senaryo ile teyit edildi. "Şüpheli" işaretliler incelemeyi yapan
 ajanın güçlü emare bulduğu ama ek doğrulama gerektiren noktalar — ele alırken
 önce tekrar üretmeyi deneyin.
 
+## -1. İkinci tur derin inceleme — ✅ 13 bug bulundu ve düzeltildi (2026-09-17)
+
+İlk turda yüzeysel geçilen büyük dosyalar (compliance.py, exporters.py,
+spec_assistant.py, modern_window.py) ve viewshed_3d.py/terrain_loader.py'nin
+geri kalanı için beş yeni paralel inceleme ajanı çalıştırıldı. 13 gerçek bug
+bulundu, hepsi düzeltildi ve doğrulandı (tam `pytest` + `ruff` yeşil, çoğu
+için elle repro/adversarial test yazıldı). "Fizik/altyapı" turu
+(cctv_iq/solar/atmosphere/scene_render/i18n/errors/theme/models/config) ve
+compliance_eval.py/spec_pdf.py/project_io.py/**main**.py/database.py'de
+gerçek bug bulunamadı (temiz).
+
+1. **`compliance.py` IR regex kelime sınırı yok** — `(?:ir|ayd[ıi]nlatma)`
+   Türkçe "-ebilir/-ir" fiil ekiyle her yerde eşleşiyordu ("izlenebilir" gibi
+   çok yaygın bir ekten sahte IR isteri üretiyordu). `\bir\b` yapıldı.
+2. **`compliance.py` WDR regex'i bağlamsız "NN dB" yakalıyordu** — S/N oranı
+   gibi ilgisiz bir dB değeri sahte WDR isteri üretiyordu. Artık "wdr"/"hdr"
+   kelimesinin gerçekten yakınında (±20 karakter) bir dB arıyor.
+3. **`compliance.py` sıcaklık çıkarımı tüm belgeden derece-numaralı sayı
+   topluyordu** — FOV/tilt açıları gibi ilgisiz "derece" değerleri, belgede
+   herhangi bir yerde "sıcak" geçiyorsa sahte bir çalışma sıcaklığı aralığı
+   üretiyordu. Artık yalnız "sıcak..." geçen CÜMLE içindeki sayıları alıyor.
+4. **`exporters.py` — ReportLab XML/markup enjeksiyon çökmesi** — kamera adı,
+   PPM seviye adı, hedef adı, LLM'den gelen şartname uygunluk metni
+   (`requirement`/`evidence`) gibi serbest metinler kaçışsız `Paragraph()`'a
+   veriliyordu; içinde `<b>`/`<br>`/`<font>` gibi kapatılmamış bir "tag"
+   geçerse (örn. LLM'in ürettiği "< 30m" gibi bir ifade) **tüm PDF üretimi
+   çöküyordu**. `xml.sax.saxutils.escape` ile merkezi bir `_esc()` yardımcı
+   fonksiyonu eklendi, ~15 çağrı noktasında (her iki rapor motorunda) ve
+   `_kv()` yardımcısında (mühendislik raporunun tüm anahtar/değer
+   tablolarını tek yerden kapsıyor) uygulandı. Adversarial testle (kapanmamış
+   `<b>`/`<br>` içeren kamera/hedef/uygunluk verisiyle) doğrulandı — artık
+   çökmüyor.
+5. **`spec_assistant.py` blocker tespiti 10+ DORI isterinde bozuluyordu** —
+   `requirement_id[-2:-1] == "D"` yalnız tek haneli DORI rid'lerinde ("P1-D1")
+   doğru çalışıyordu; "P1-D10"dan itibaren yanlış karaktere bakıp
+   "Uyumsuz" bir DORI isterini blocker olarak işaretlemeyi bırakıyordu (skor
+   yanlışlıkla iyimser çıkabiliyordu). Sondaki rakamlar kırpılıp "D" ile
+   bitip bitmediğine bakılıyor artık.
+6. **`spec_assistant.py` async analiz (Gemini/Ollama) yanlış metni
+   loglayabiliyordu** — `apply_compliance_result`/`analyze_spec_rule_based`
+   şartname kutusunu **sonuç geldiğinde** (dakikalar sonra) yeniden
+   okuyordu; kullanıcı bu sırada kutuyu düzenlerse/temizlerse eğitim
+   logu (`training_log`) yanlış/boş metni doğru sonuçla eşleştiriyordu.
+   Artık analiz başlarken yakalanan metin callback'lere açıkça taşınıyor.
+7. **`modern_window.py` DORI grafiğinde "Gözlem" (Observation) bandı hiç
+   çizilmiyordu** — yalnız Teşhis/Tanıma/Algılama bantları vardı, 62,5 px/m
+   (Gözlem) sağlanan bir mesafe sessizce "Algılama" (25 px/m) bandına
+   yutuluyordu — kullanıcı zayıf bir sonucu güçlüymüş gibi görebiliyordu.
+   `PPM_OBSERVE`/`C_OBSERVE` ile 4. bant eklendi.
+8. **`modern_window.py` hedef işaretçisi ile "EN 62676-4 uygunluk" kartı
+   çelişebiliyordu** — işaretçinin `ok` hesabı yalnız PPM+kör nokta+geometrik
+   limit kontrol ediyordu, karttaki nihai karar ayrıca atmosfer/IR/lüks de
+   katıyordu; sisli havada veya yetersiz IR menzilinde işaretçi yeşil
+   gösterirken kart "UYGUN DEĞİL" yazabiliyordu. Tek bir `_evaluate_requirement()`
+   artık her ikisini de besliyor.
+9. **`terrain_loader.py` yerel GeoTIFF'te `lat_center`/`lon_center` hiç
+   yazılmıyordu** — çevrimiçi indirilen DEM'ler bu alanları dolduruyordu ama
+   kullanıcı kendi (muhtemelen daha güvenilir) dosyasını yüklerse
+   "☀️ Güneş / Parlama" analizi hiçbir uyarı vermeden sessizce kayboluyordu.
+   Coğrafi (derece) CRS'te doğrudan, projeksiyonlu (UTM vb.) CRS'te
+   `rasterio.warp.transform` ile WGS84'e çevrilip dolduruluyor artık; CRS
+   yoksa/dönüşüm başarısızsa eskisi gibi sessizce `None` kalıyor (çökme yok).
+   3 yeni test (coğrafi, projeksiyonlu, CRS'siz) eklendi.
+10. **`requirement_library.list_templates()` slug gösteriyordu, gerçek adı
+    değil** — "Şirket A" olarak kaydedilen bir şablon arayüzde "sirket-a"
+    diye listeleniyordu. Artık her JSON'un içindeki gerçek `name` alanı
+    okunup gösteriliyor (dosya adı hâlâ slug, sadece görünüm düzeldi).
+11. **`scripts/eval_compliance.py` boş `{}` kamera kütüphanesiyle
+    çalıştırılıyordu** — hem "rule" hem Ollama runner'ı `rule_based_compliance`/
+    `analyze_with_ollama`'ya boş kütüphane veriyordu; "rule" temelinde matris
+    hep `[]` kalıp "Matris durum doğruluğu" metriği sistematik olarak
+    yanıltıcı çıkıyordu. `database.load_camera_library()` ile gerçek
+    kütüphane veriliyor artık.
+
+Kod değiştirilmedi (yanlış alarm/zaten doğru bulundu):
+- `spec_assistant.py:530` override loglama — aynı desen ama düşük riskli,
+  fork'un notu doğrultusunda incelendi, ayrı bir düzeltme gerektirmedi.
+- `training_log.build_instruction_dataset`'in aynı `spec_sha` için yalnız ilk
+  analizi temel alması — belgelenmiş bir tasarım kısıtı, bug değil.
+- `_terrain_from_rasterio`'daki `px_w < 0.05` coğrafi/projeksiyon sezgisi —
+  teorik olarak çok yüksek çözünürlüklü (&lt;5 cm/piksel) projeksiyonlu yerel
+  bir DEM'i yanlış sınıflandırabilir, ama nadiren tetiklenir; not düşüldü.
+
 ## 0. Yeni özellik: Hat Modu — Tesis / Sınır / Otoyol — ✅ EKLENDİ (2026-09-17)
 
 Kullanıcı gözlemi doğru çıktı: `generate_perimeter_plan` (ve GUI'si) yalnız

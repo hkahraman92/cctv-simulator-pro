@@ -466,9 +466,13 @@ def extract_rule_requirements(
         )
         req_id += 1
 
+    # BUGFIX: "ir" had no \b, so it matched inside any Turkish verb ending
+    # in "-ebilir"/"-abilir" ("yapılabilir", "sağlanır" -> "...ilir" has
+    # "ir")  -- extremely common in spec prose -- turning an unrelated
+    # sentence with a nearby distance into a fabricated IR requirement.
     ir_values = [
         float(match.group(1).replace(",", "."))
-        for match in re.finditer(r"(?:(?:ir|ayd[ıi]nlatma).{0,35}?(\d+(?:[.,]\d+)?)\s*m)", text)
+        for match in re.finditer(r"(?:\bir\b|ayd[ıi]nlatma).{0,35}?(\d+(?:[.,]\d+)?)\s*m", text)
     ]
     if ir_values:
         requirements.append(
@@ -516,11 +520,20 @@ def extract_rule_requirements(
         )
         req_id += 1
 
-    temp_values = [
-        float(match.group(1).replace(",", "."))
-        for match in re.finditer(r"([-+]?\d+(?:[.,]\d+)?)\s*(?:°|derece|santigrat)", text)
-    ]
-    if "sıcak" in text and len(temp_values) >= 2:
+    # BUGFIX: this used to collect every degree-marked number in the WHOLE
+    # document (FOV/tilt/pan angles are also written "90°" etc.) and fire as
+    # long as the word "sıcak" appeared *anywhere* in the spec, with no
+    # positional relation between the two. Scope the numbers to sentences
+    # that actually mention "sıcak..." (sıcaklık/soğuk ortam/sıcak iklim),
+    # sentence-bounded like the DORI distance windows in compliance_optics.py.
+    temp_values: List[float] = []
+    for sentence in re.split(r"[.\n]", text):
+        if re.search(r"s[ıi]cak", sentence):
+            temp_values.extend(
+                float(m.group(1).replace(",", "."))
+                for m in re.finditer(r"([-+]?\d+(?:[.,]\d+)?)\s*(?:°|derece|santigrat)", sentence)
+            )
+    if len(temp_values) >= 2:
         requirements.append(
             {
                 "id": f"{profile_id}-R{req_id}",
@@ -535,11 +548,15 @@ def extract_rule_requirements(
         req_id += 1
 
     # 1. WDR / HDR
-    wdr_matches = re.finditer(r"(\d{2,3})\s*db\s*(?:wdr|hdr)?|(?:wdr|hdr)", text)
+    # BUGFIX: "(?:wdr|hdr)?" made the keyword optional, so ANY "NN dB" in the
+    # spec (S/N ratio, audio level, alarm sound) was captured as a WDR value.
+    # Require the keyword to actually be near the number instead.
     wdr_values = []
-    for match in wdr_matches:
-        if match.group(1):
-            wdr_values.append(float(match.group(1)))
+    for kw_match in re.finditer(r"wdr|hdr", text):
+        window = text[max(0, kw_match.start() - 20):kw_match.end() + 20]
+        db_match = re.search(r"(\d{2,3})\s*db", window)
+        if db_match:
+            wdr_values.append(float(db_match.group(1)))
     if wdr_values:
         req_wdr = max(wdr_values)
         requirements.append(

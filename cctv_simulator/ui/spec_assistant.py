@@ -345,11 +345,18 @@ class SpecAssistantWindow:
             method="POST",
         )
         self._analysis_source = "gemini"
+        # BUGFIX: on_success/on_failure used to be bound with no spec_text,
+        # so apply_compliance_result/analyze_spec_rule_based re-read the Text
+        # widget live -- minutes later, once Gemini actually replies. If the
+        # user edited or cleared the box while waiting, training_log ended up
+        # pairing the WRONG spec text with this result (or, if cleared,
+        # popped an unrelated "enter spec text" dialog mid-result). Bind the
+        # exact text that was actually sent to the API.
         run_gemini_in_thread(
             self.window,
             api_request,
-            on_success=self.apply_compliance_result,
-            on_failure=self.analyze_spec_rule_based
+            on_success=lambda result: self.apply_compliance_result(result, spec_text),
+            on_failure=lambda: self.analyze_spec_rule_based(spec_text),
         )
 
     def _run_ollama_in_thread(self, spec_text: str, local_model: str):
@@ -401,12 +408,14 @@ class SpecAssistantWindow:
                 messagebox.showwarning("Yerel model",
                                        f"Yerel model hatası:\n{box['err']}\n\nKurallı + fizik analizine dönülüyor.",
                                        parent=self.window)
-                self.analyze_spec_rule_based()
+                self.analyze_spec_rule_based(spec_text)
                 return
             res = box["res"]
             if res and res.get("matrix"):
                 self._analysis_source = "ollama"
-                self.apply_compliance_result(res)
+                # Same fix as the Gemini path: use the text actually sent to
+                # the model, not whatever is in the box now.
+                self.apply_compliance_result(res, spec_text)
                 return
             messagebox.showinfo(
                 "Yerel model",
@@ -414,7 +423,7 @@ class SpecAssistantWindow:
                 "Kurallı + fizik analizine dönülüyor.",
                 parent=self.window,
             )
-            self.analyze_spec_rule_based()
+            self.analyze_spec_rule_based(spec_text)
 
         def poll(t: threading.Thread):
             if not state["alive"]:
@@ -428,8 +437,14 @@ class SpecAssistantWindow:
         th.start()
         self.window.after(150, lambda: poll(th))
 
-    def analyze_spec_rule_based(self):
-        spec_text = self._get_spec_text()
+    def analyze_spec_rule_based(self, spec_text: Optional[str] = None):
+        # spec_text is passed explicitly when this is a Gemini/Ollama
+        # fallback (see analyze_spec_with_gemini/_run_ollama_in_thread) so it
+        # reuses the exact text that failed, not whatever is in the box now.
+        # A direct button click has no caller-supplied text, so fall back to
+        # reading the widget live.
+        if spec_text is None:
+            spec_text = self._get_spec_text()
         if not spec_text:
             return
         if self.loaded_file_mime == "application/pdf" and spec_text.startswith("[PDF yüklendi:"):
@@ -441,12 +456,20 @@ class SpecAssistantWindow:
             return
         self._analysis_source = "rule"
         result = rule_based_compliance(spec_text, self.app.camera_library)
-        self.apply_compliance_result(result)
+        self.apply_compliance_result(result, spec_text)
 
-    def apply_compliance_result(self, result: Dict[str, Any]):
+    def apply_compliance_result(self, result: Dict[str, Any], spec_text: Optional[str] = None):
         self.last_compliance_result = result
         try:
-            training_log.log_analysis(self._get_spec_text(), result, self._analysis_source)
+            # BUGFIX: used to re-read the Text widget here regardless of
+            # which analysis path produced `result` -- for the async
+            # Gemini/Ollama paths that's a live read taken well after the
+            # request was sent, so training_log could log a result against
+            # spec text the user had since edited or cleared. Callers now
+            # pass the exact text the analysis was run on; direct callers
+            # (e.g. a manual re-apply) still fall back to a live read.
+            training_log.log_analysis(
+                spec_text if spec_text is not None else self._get_spec_text(), result, self._analysis_source)
         except Exception:
             pass
 
@@ -567,7 +590,16 @@ class SpecAssistantWindow:
                 d["passed"] += w * 0.5
             elif st == "Bulunamadı":
                 d["passed"] += w * 0.15
-            if st == "Uyumsuz" and (m.get("requirement_id", "")[-2:-1] == "D" or "type" in str(m.get("requirement", "")).lower()):
+            # BUGFIX: requirement_id[-2:-1] == "D" only located the "D" of a
+            # DORI id ("P1-D1" -> "D") while the trailing number was a single
+            # digit. From the 10th DORI requirement in a profile ("P1-D10")
+            # the id is one character longer and [-2:-1] lands on "1"
+            # instead -- an "Uyumsuz" DORI result silently stopped acting as
+            # a blocker (capping score at 40 / forcing "Uyumsuz") from that
+            # point on. Strip the trailing digits and check the prefix.
+            req_id = str(m.get("requirement_id", ""))
+            is_dori_id = req_id.rstrip("0123456789").endswith("D")
+            if st == "Uyumsuz" and (is_dori_id or "type" in str(m.get("requirement", "")).lower()):
                 d["blocker"] = True
         rows = []
         for (pname, model), d in agg.items():

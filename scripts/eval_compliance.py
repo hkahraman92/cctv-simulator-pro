@@ -50,12 +50,21 @@ def _load_gold(path: Path):
 
 
 def _runner(name: str):
+    # BUGFIX: both runners used to pass an empty {} camera library, so
+    # rule_based_compliance's per-camera loop never ran (compliance.py:
+    # `compliance_cameras` is derived from this dict) and the "rule"
+    # baseline's matrix was always [] -- matrix_status_accuracy compared
+    # every gold row against "" and scored near 0 regardless of how the
+    # engine actually classified things. Load the real, shipped library.
+    from cctv_simulator.database import load_camera_library
+    camera_library = load_camera_library()
+
     if name == "rule":
         from cctv_simulator.compliance import rule_based_compliance
 
         def run(spec: str):
             try:
-                return rule_based_compliance(spec, {})
+                return rule_based_compliance(spec, camera_library)
             except Exception:
                 return None
         return run
@@ -63,7 +72,7 @@ def _runner(name: str):
     from cctv_simulator.compliance import analyze_with_ollama
 
     def run(spec: str):
-        return analyze_with_ollama(spec, {}, model=name)
+        return analyze_with_ollama(spec, camera_library, model=name)
     return run
 
 
