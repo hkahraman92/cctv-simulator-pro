@@ -1,3 +1,29 @@
+## -7. Yeni özellik: PDF raporuna yatay profil + kuş bakışı görüntüsü — ✅ eklendi (2026-09-18)
+
+Kullanıcı isteği: *"PDF raporuna yatay profil ve kuş bakışı resimleri de
+eklense güzel olur"*. `exporters.export_pdf` (klasik arayüzün "PDF Mühendislik
+Raporu" düğmesi) o ana kadar yalnızca tablolar üretiyordu, canlı tuval
+görünümünden hiç görsel almıyordu.
+
+`export_png`'nin zaten kullandığı `ImageGrab.grab(bbox=...)` ekran-yakalama
+tekniği (`main_window.canvas` tek bir tuval üzerinde profili üstte, kuş
+bakışını altta çizer — bkz. Kural, `split_y = height * 0.46`) paylaşılan bir
+`_capture_canvas_snapshot(root_win, canvas_widget)` yardımcısına çıkarıldı;
+hata durumunda (Pillow yok, pencere henüz ekranda değil) `None` döner ve rapor
+görsel bölümü atlanarak yine de üretilir — PDF export'un tamamını
+kırmaz. `export_pdf`'e opsiyonel `root_win=`/`canvas_widget=` parametreleri
+eklendi (`main_window.export_pdf` artık `self.root`/`self.canvas` geçiyor);
+verilirse yakalanan görüntü ReportLab `Image` flowable'ı olarak "2. YATAY
+PROFİL VE KUŞ BAKIŞI GÖRÜNÜMÜ" başlığı altına, sayfa genişliğine (523 pt) ve
+380 pt yükseklik tavanına en-boy oranı korunarak sığdırılıyor. Sonraki bölüm
+numaraları (Kamera Matrisi, DORI Analizi, Uygunluk Matrisi, Tavsiyeler) buna
+göre 3-6'ya kaydırıldı.
+
+Hem `root_win=None` (tablo-yalnız, eski davranış) hem gerçek bir Tk penceresi
++ tuvalle (ekran görüntüsü gömülü) elle doğrulandı: ikinci PDF'te
+`/Subtype /Image` nesnesi var, birincisinde yok. Tam `pytest` (159 test) +
+`ruff check` yeşil.
+
 ## -6. Tarama: bağımsız optik tezgâh başlatıcısı hata raporlamayı kurmuyordu — ✅ düzeltildi (2026-09-18)
 
 Kullanıcı sorusu üzerine ("açık işler neler kaldı, bug hala var mı") daha önce

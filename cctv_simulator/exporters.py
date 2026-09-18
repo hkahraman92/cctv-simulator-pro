@@ -1,4 +1,5 @@
 import csv
+import io
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -71,6 +72,28 @@ def export_png(path: str, root_win: Any, canvas_widget: Any):
     image.save(path)
 
 
+def _capture_canvas_snapshot(root_win: Any, canvas_widget: Any):
+    """Screen-grab the live profile+topdown canvas for embedding in the PDF.
+
+    Best-effort: on any failure (no Pillow, widget not yet mapped/visible,
+    off-screen window) returns None so the report still builds without the
+    image section, rather than crashing the whole PDF export.
+    """
+    if ImageGrab is None or root_win is None or canvas_widget is None:
+        return None
+    try:
+        root_win.update_idletasks()
+        x = canvas_widget.winfo_rootx()
+        y = canvas_widget.winfo_rooty()
+        w = canvas_widget.winfo_width()
+        h = canvas_widget.winfo_height()
+        if w <= 1 or h <= 1:
+            return None
+        return ImageGrab.grab(bbox=(x, y, x + w, y + h))
+    except Exception:
+        return None
+
+
 def pdf_hex_string(text: str) -> bytes:
     encoded = str(text).encode("utf-16-be")
     hex_body = encoded.hex().upper()
@@ -138,7 +161,7 @@ try:
     from reportlab.lib.units import cm, mm
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.platypus import (
-        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, KeepTogether, HRFlowable
+        SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, KeepTogether, HRFlowable, Image as RLImage
     )
     from reportlab.pdfgen import canvas as rl_canvas
     from reportlab.pdfbase import pdfmetrics
@@ -240,10 +263,15 @@ def export_pdf(
     selected_level_name: str,
     target_info_text: str,
     last_compliance_result: Optional[Dict[str, Any]] = None,
+    root_win: Any = None,
+    canvas_widget: Any = None,
 ):
     """
     ASELSAN Kurumsal Kimliğine ve Savunma Sanayii Mühendislik Standartlarına tam uyumlu
     profesyonel PDF Raporu üretir. ReportLab mevcut değilse yedek motora geçer.
+
+    ``root_win``/``canvas_widget`` (opsiyonel): verilirse canlı yatay profil +
+    kuş bakışı tuvali ekran görüntüsü olarak rapora gömülür (bkz. section 2).
     """
     if not _REPORTLAB_AVAILABLE:
         # Fallback to simple PDF generator
@@ -404,8 +432,21 @@ def export_pdf(
     story.append(kpi_table)
     story.append(Spacer(1, 8))
 
+    # ── 2. SIDE PROFILE + TOP-DOWN PLAN SNAPSHOT (IF A LIVE CANVAS WAS GIVEN) ──
+    canvas_snapshot = _capture_canvas_snapshot(root_win, canvas_widget)
+    if canvas_snapshot is not None:
+        story.append(Paragraph("2. YATAY PROFİL VE KUŞ BAKIŞI GÖRÜNÜMÜ", style_sec_heading))
+        img_w_px, img_h_px = canvas_snapshot.size
+        max_h_pt = 380.0
+        scale = min(page_w / img_w_px, max_h_pt / img_h_px)
+        buf = io.BytesIO()
+        canvas_snapshot.save(buf, format="PNG")
+        buf.seek(0)
+        story.append(RLImage(buf, width=img_w_px * scale, height=img_h_px * scale))
+        story.append(Spacer(1, 8))
+
     # ── 3. CAMERA HARDWARE & OPTICS MATRIX ──
-    story.append(Paragraph("2. KAMERA DONANIM VE OPTİK YAPILANDIRMA MATRİSİ", style_sec_heading))
+    story.append(Paragraph("3. KAMERA DONANIM VE OPTİK YAPILANDIRMA MATRİSİ", style_sec_heading))
 
     cam_headers = ["Kamera Adı", "Model / Ürün", "Sensör", "Çözünürlük", "Lens (mm)", "Direk (m)", "Tilt (°)", "HFOV / VFOV", "IR (m)"]
     cam_rows = [[Paragraph(h, style_cell_header) for h in cam_headers]]
@@ -442,7 +483,7 @@ def export_pdf(
     story.append(Spacer(1, 8))
 
     # ── 4. EN 62676-4 DORI MISSION & RANGE ANALYSIS ──
-    story.append(Paragraph("3. EN 62676-4 STANDARDI DORI GÖREV VE MENZİL ANALİZİ", style_sec_heading))
+    story.append(Paragraph("4. EN 62676-4 STANDARDI DORI GÖREV VE MENZİL ANALİZİ", style_sec_heading))
 
     dori_headers = ["Kamera", "Lens", "Görev / Standart", "Sınıf", "PPM", "Optik Menzil", "Etkin Zemin", "Kör Nokta", "Durum"]
     dori_rows = [[Paragraph(h, style_cell_header) for h in dori_headers]]
@@ -484,7 +525,7 @@ def export_pdf(
     if last_compliance_result and isinstance(last_compliance_result, dict):
         matrix = last_compliance_result.get("matrix", [])
         if matrix:
-            story.append(Paragraph("4. ŞARTNAME UYUMLULUK MATRİSİ (COMPLIANCE MATRIX)", style_sec_heading))
+            story.append(Paragraph("5. ŞARTNAME UYUMLULUK MATRİSİ (COMPLIANCE MATRIX)", style_sec_heading))
             comp_headers = ["Profil", "İster Tanımı", "Model", "Durum", "Mühendislik Kanıtı / Değerlendirme"]
             comp_rows = [[Paragraph(h, style_cell_header) for h in comp_headers]]
 
@@ -514,7 +555,7 @@ def export_pdf(
             story.append(Spacer(1, 8))
 
     # ── 6. ENGINEERING RECOMMENDATIONS & DEAD ZONE WARNINGS ──
-    story.append(Paragraph("5. OTOMATİK KURULUM VE MÜHENDİSLİK TAVSİYELERİ", style_sec_heading))
+    story.append(Paragraph("6. OTOMATİK KURULUM VE MÜHENDİSLİK TAVSİYELERİ", style_sec_heading))
 
     recs = []
     for cam_name, results in last_all_results.items():

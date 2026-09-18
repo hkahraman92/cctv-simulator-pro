@@ -1796,6 +1796,8 @@ class DualViewCCTVDesignApp:
                 selected_level_name=self._selected_design_level().name,
                 target_info_text=self.target_info_var.get(),
                 last_compliance_result=compliance_res,
+                root_win=self.root,
+                canvas_widget=self.canvas,
             )
             self.status_var.set(f"ASELSAN PDF Raporu kaydedildi: {Path(path).name}")
         except Exception as exc:
