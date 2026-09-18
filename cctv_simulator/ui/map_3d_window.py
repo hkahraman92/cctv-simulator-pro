@@ -236,12 +236,28 @@ class TerrainViewshedWindow:
         self._profile_plot: Optional[dict] = None
         self._profile_hover: Optional[dict] = None
 
-        self._build_ui()
-        self._sync_active_camera()
-        self._init_default_fence_sample()
-        if terrain_state:
-            self.import_terrain_state(terrain_state)
-        self.window.after(80, self.recalculate_viewshed)
+        # BUGFIX: this used to run _build_ui() etc. unguarded, so an
+        # exception partway through (this is the biggest window in the app,
+        # 2000+ lines of UI construction) propagated straight out of
+        # __init__ -- main_window.open_terrain_viewshed's except block
+        # reports it, but the assignment `self.viewshed_window = ...` never
+        # completes, so the half-built Toplevel is never destroyed and has
+        # no WM_DELETE_WINDOW handler yet (bound below): an empty, orphaned,
+        # often-unclosable window stays on screen. Every sibling window
+        # (camera_db_window, view_3d_window, spec_assistant, modern_window)
+        # already wraps its build in guarded_build for exactly this reason.
+        def _construct():
+            self._build_ui()
+            self._sync_active_camera()
+            self._init_default_fence_sample()
+            if terrain_state:
+                self.import_terrain_state(terrain_state)
+            self.window.after(80, self.recalculate_viewshed)
+
+        from ..errors import guarded_build
+        self.build_ok = guarded_build(self.window, _construct, "3D Arazi & Viewshed Analizi")
+        if not self.build_ok:
+            return
 
         self.window.protocol("WM_DELETE_WINDOW", self.close)
         try:

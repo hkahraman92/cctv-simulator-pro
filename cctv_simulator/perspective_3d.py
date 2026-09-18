@@ -233,10 +233,19 @@ def generate_ground_grid_lines(engine: Perspective3DEngine, max_dist_m: float = 
     return lines
 
 
-def generate_dori_ground_polygons(engine: Perspective3DEngine, ppm_levels: List[PPMLevel]) -> List[Dict[str, Any]]:
+def generate_dori_ground_polygons(engine: Perspective3DEngine, ppm_levels: List[PPMLevel],
+                                  max_dist_m: float = 100.0) -> List[Dict[str, Any]]:
     """Generates colored 3D ground zones corresponding to EN 62676-4 DORI PPM thresholds."""
     polygons = []
-    lateral_span = 20.0
+    # BUGFIX: every band used to be hard-capped at a literal 100 m regardless
+    # of camera range. generate_ground_grid_lines (same file) already scales
+    # up to 8000 m for a thermal/long-lens camera -- this stayed fixed, so a
+    # tele/thermal camera's Recognize/Observe/Detect bands (reached at
+    # hundreds-to-thousands of metres) all collapsed to zero-height polygons
+    # clipped at 100 m; only the first (Identify) band was ever visible.
+    long_range = engine._is_thermal or max_dist_m > 200.0
+    cap_m = max(100.0, max_dist_m) if long_range else 100.0
+    lateral_span = max(20.0, max_dist_m * 0.12) if long_range else 20.0
 
     # Calculate ground distances for each standard PPM level
     sorted_levels = sorted(ppm_levels, key=lambda lvl: lvl.ppm, reverse=True)
@@ -256,7 +265,7 @@ def generate_dori_ground_polygons(engine: Perspective3DEngine, ppm_levels: List[
 
         if ground_dist > prev_dist:
             d_start = prev_dist
-            d_end = min(ground_dist, 100.0)
+            d_end = min(ground_dist, cap_m)
 
             # 4 corners of ground band in 3D
             p1 = engine.project_point(Point3D(-lateral_span, d_start, 0.0))

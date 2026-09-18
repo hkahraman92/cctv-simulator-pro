@@ -89,12 +89,22 @@ def clause_for(category: str) -> Tuple[str, str]:
 
 
 def dori_ppm_for_task(text: str) -> Optional[Tuple[str, float]]:
-    """('recognize', 125.0) for a task phrase, or None."""
+    """('recognize', 125.0) for a task phrase, or None.
+
+    BUGFIX: this used to iterate _TASK_TR in dict-literal order and return
+    on the first substring hit. "tespit" ("detect", 25 px/m) is listed
+    before the more specific "kimlik tespit" ("identify", 250 px/m), and
+    "kimlik tespit" *contains* "tespit" -- a spec asking for "kimlik tespit"
+    matched the generic "tespit" first and silently graded against a 10x
+    weaker DORI threshold. Check longest phrases first so a specific
+    compound phrase always wins over a generic word it happens to contain,
+    regardless of dict insertion order (protects future additions too).
+    """
     low = text.casefold()
-    for phrase, ppm in SPECIAL_PPM.items():
+    for phrase, ppm in sorted(SPECIAL_PPM.items(), key=lambda kv: -len(kv[0])):
         if phrase in low:
             return phrase, ppm
-    for phrase, key in _TASK_TR.items():
+    for phrase, key in sorted(_TASK_TR.items(), key=lambda kv: -len(kv[0])):
         if phrase in low:
             return key, DORI_PPM[key]
     return None

@@ -1,3 +1,4 @@
+import re
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Dict, Any, Optional, Tuple
@@ -13,6 +14,25 @@ from ..database import (
 )
 from ..config import get_admin_password, set_admin_password, DEFAULT_CAMERA_LIBRARY
 from ..theme import is_themed, COLORS, StyledButton, fit_and_center_window, set_window_icon
+
+
+_TR_THOUSANDS_ONLY = re.compile(r"^\d{1,3}(?:\.\d{3})+$")
+
+
+def _parse_tr_number(raw: str) -> float:
+    """Parse a number typed in Turkish locale conventions.
+
+    BUGFIX: this used to be `float(raw.replace(",", "."))`, which only
+    swaps the decimal comma and leaves a Turkish thousands-separator dot
+    untouched -- "1.500" (meant as 1500, e.g. a white-light/DORI range in
+    metres) silently became 1.5. Same fix as compliance_optics._num.
+    """
+    raw = raw.strip()
+    if _TR_THOUSANDS_ONLY.match(raw):
+        return float(raw.replace(".", ""))
+    if "," in raw:
+        return float(raw.replace(".", "").replace(",", "."))
+    return float(raw)
 
 
 class CameraDatabaseWindow:
@@ -792,7 +812,7 @@ class CameraDatabaseWindow:
                 continue
             if key in numeric_keys:
                 try:
-                    value = float(raw.replace(",", "."))
+                    value = _parse_tr_number(raw)
                 except ValueError as exc:
                     raise ValueError(f"{key} sayısal olmalı.") from exc
                 model[key] = int(value) if value.is_integer() else value

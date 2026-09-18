@@ -168,6 +168,36 @@ class Camera3DViewWindow:
 
         if hasattr(self, "scale_dist"):
             self.scale_dist.configure(to=max_d)
+            # BUGFIX: ttk.Scale doesn't clamp its bound variable when `to`
+            # shrinks -- switching from a thermal/tele camera (target_dist_var
+            # e.g. 5000) to a short-range one left target_dist_var at 5000
+            # while the slider visually pinned at its new (much smaller) max.
+            # Render/HUD kept using the stale, out-of-range distance.
+            if self.target_dist_var.get() > max_d:
+                self.target_dist_var.set(max_d)
+                if hasattr(self, "lbl_dist_val"):
+                    self.lbl_dist_val.configure(text=f"{max_d:.1f} m")
+
+        # BUGFIX: scale_lateral was hardcoded to a fixed +/-25 m range and
+        # never resynced here, while _on_canvas_drag independently computed a
+        # much wider max_lat (up to +/-1200 m) for thermal/tele cameras and
+        # wrote it straight into target_lateral_offset_var. The slider then
+        # visually pinned at its edge (+/-25) while the actual offset used
+        # for rendering was far larger -- the widget lied about the state it
+        # supposedly controlled. Keep both derivations in one place.
+        if hasattr(self, "scale_lateral"):
+            max_lat = self._max_lateral_for(max_d)
+            self.scale_lateral.configure(from_=-max_lat, to=max_lat)
+            current = self.target_lateral_offset_var.get()
+            if abs(current) > max_lat:
+                self.target_lateral_offset_var.set(max(-max_lat, min(max_lat, current)))
+
+    @staticmethod
+    def _max_lateral_for(max_d: float) -> float:
+        """Lateral-offset slider half-range for a given max target distance --
+        shared by _sync_slider_limits (slider bounds) and _on_canvas_drag
+        (drag-to-offset scale) so they can't disagree."""
+        return 25.0 if max_d < 200 else (max_d * 0.15)
 
     def _build_ui(self):
         # ── Main layout: Top control bar, Center 3D Canvas, Bottom Info Bar ──
@@ -192,7 +222,7 @@ class Camera3DViewWindow:
 
         # Lateral Offset (Left / Right)
         ttk.Label(control_bar, text="Yanal Konum:").pack(side=tk.LEFT, padx=(0, 4))
-        scale_lateral = ttk.Scale(
+        self.scale_lateral = ttk.Scale(
             control_bar,
             from_=-25.0,
             to=25.0,
@@ -201,7 +231,7 @@ class Camera3DViewWindow:
             length=90,
             command=lambda v: self.schedule_render(fast=True),   # PERF: per-pixel -> per-frame
         )
-        scale_lateral.pack(side=tk.LEFT, padx=(0, 12))
+        self.scale_lateral.pack(side=tk.LEFT, padx=(0, 12))
 
         # Target Type Combobox
         ttk.Label(control_bar, text="Hedef:").pack(side=tk.LEFT, padx=(0, 4))
@@ -213,6 +243,15 @@ class Camera3DViewWindow:
             width=22,
         )
         combo_target.current(0)
+        # BUGFIX: .current(0) on a textvariable-bound Combobox writes the
+        # DISPLAY label ("🧍 İnsan Mankeni (1.8m)") into target_type_var,
+        # clobbering the internal code ("human") __init__ set. Only
+        # _on_target_type_selected() (fired by <<ComboboxSelected>>, i.e.
+        # only once the user actually touches the combo) normalizes it back
+        # -- until then target_type_var.get()=="human" is false for every
+        # branch, so target_h silently fell back to 1.0 m instead of 1.8 m
+        # on the very first render. Restore the code .current(0) just wiped.
+        self.target_type_var.set("human")
         combo_target.pack(side=tk.LEFT, padx=(0, 10))
         combo_target.bind("<<ComboboxSelected>>", self._on_target_type_selected)
 
@@ -245,6 +284,9 @@ class Camera3DViewWindow:
             width=18,
         )
         self.combo_palette.current(0)
+        # Same fix as target_type_var above: restore the internal code
+        # .current(0) just overwrote with the display label.
+        self.palette_mode_var.set("auto")
         self.combo_palette.pack(side=tk.LEFT, padx=(0, 10))
         self.combo_palette.bind("<<ComboboxSelected>>", self._on_palette_selected)
 
@@ -349,7 +391,7 @@ class Camera3DViewWindow:
 
         # Dragging X changes lateral offset
         norm_x = (event.x / w - 0.5) * 2.0
-        max_lat = 25.0 if max_d < 200 else (max_d * 0.15)
+        max_lat = self._max_lateral_for(max_d)
         self.target_lateral_offset_var.set(round(norm_x * max_lat, 1))
 
         # Dragging Y changes distance
@@ -403,7 +445,8 @@ class Camera3DViewWindow:
 
         # 3+4. Render the degraded camera frame (sky/ground, DORI bands, targets,
         # sensor+MTF resolution loss, palette) as one PIL image and blit it.
-        dori_polygons = generate_dori_ground_polygons(engine, self.app.ppm_levels)
+        _max_d = float(self.scale_dist.cget("to")) if hasattr(self, "scale_dist") else 100.0
+        dori_polygons = generate_dori_ground_polygons(engine, self.app.ppm_levels, max_dist_m=_max_d)
         weather = self.weather_var.get()
         vis_km = WEATHER_PRESETS.get(weather, 40.0)
         atm_band = band_for_camera(camera.sensor_name, camera.model_name, night_ir=is_night)
