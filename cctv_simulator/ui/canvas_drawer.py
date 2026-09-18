@@ -109,7 +109,7 @@ class CanvasDrawer:
             font=("Arial", 8, "bold"),
         )
 
-        max_draw_dist = self._get_max_draw_distance(plan_width_m, last_all_results)
+        max_draw_dist = self._get_max_draw_distance(plan_width_m, last_all_results, ppm_levels)
         if len(last_selected_results) == 2:
             top_lane = (0, 26, width, split_y // 2)
             bottom_lane = (0, split_y // 2, width, split_y - 4)
@@ -130,23 +130,39 @@ class CanvasDrawer:
             "max_draw_dist": max_draw_dist,
         }
 
-    def _get_max_draw_distance(self, plan_width_m: float, last_all_results: Dict[str, List[OpticResult]]) -> float:
+    # EN 62676-4's loosest DEFINED DORI tier (Monitoring). A "level" looser
+    # than this isn't a meaningful design distance for this 2D view -- see
+    # the BUGFIX note below.
+    _MIN_SCALE_PPM = 12.5
+
+    def _get_max_draw_distance(self, plan_width_m: float, last_all_results: Dict[str, List[OpticResult]],
+                               ppm_levels: List[PPMLevel]) -> float:
         # PERF: single running max instead of materialising a list of every
         # ground distance of every camera on every redraw.
-        # BUGFIX: this used to hard-clamp at 150 m ("if largest >= 150.0:
-        # return 150.0", then min(largest, 150.0)) regardless of what the
-        # camera actually needed. grid_step() below already has tick spacing
-        # for spans up to 5000+ m, so the cap wasn't a deliberate rendering
-        # limit -- it just silently truncated the profile/top-down views for
-        # any PTZ/tele/thermal camera whose DORI/geometric range reached
-        # past 150 m: everything beyond that distance was never drawn.
+        # BUGFIX (150 m cap): this used to hard-clamp at 150 m regardless of
+        # what the camera actually needed -- silently truncating the view for
+        # any PTZ/tele/thermal camera whose range reached past 150 m.
+        # BUGFIX (loose auxiliary levels): removing that cap then exposed a
+        # second bug. DEFAULT_LEVELS ships Johnson/Algorithm thermal
+        # *detection* criteria at extremely low PPM (as low as ~1.3 px/m,
+        # meant for long-range thermal target acquisition). Since PPM is
+        # proportional to 1/distance, ANY camera "satisfies" such a loose
+        # criterion at enormous range -- so an otherwise short-range camera
+        # (Detection/25px/m at 50 m) had its whole view, and the colour band
+        # for that loose level, stretched out to thousands of metres. Only
+        # levels at or above the loosest *official* DORI tier (Monitoring,
+        # 12.5 px/m) drive this view's scale; looser criteria still show in
+        # the results table, just don't dictate how far this canvas reaches.
+        ppm_by_key = {level.key: level.ppm for level in ppm_levels}
         largest = plan_width_m if plan_width_m > 15.0 else 15.0
         for results in last_all_results.values():
             for result in results:
                 candidate = result.dead_zone_m + 10.0
                 if candidate > largest:
                     largest = candidate
-                for dist in result.ground_distances.values():
+                for key, dist in result.ground_distances.items():
+                    if ppm_by_key.get(key, 0.0) < self._MIN_SCALE_PPM:
+                        continue
                     if dist > largest and math.isfinite(dist):
                         largest = dist
                 geom = result.max_geom_dist_m
@@ -199,7 +215,13 @@ class CanvasDrawer:
         self.canvas.create_line(origin_x, cam_y, x1, cam_y, fill="#CFD8DC", dash=(2, 4))
         self.canvas.create_text(x1 - 95, cam_y - 12, text="0° ufuk", fill="#90A4AE", font=("Arial", 7))
 
-        levels_by_dist = sorted(ppm_levels, key=lambda level: result.ground_distances.get(level.key, 0))
+        # BUGFIX: without this filter the loosest-PPM level (often an
+        # auxiliary Johnson/Algorithm thermal-detection criterion, not a
+        # meaningful design distance -- see _get_max_draw_distance) painted
+        # its colour all the way to the canvas edge, even though the scale
+        # itself no longer stretches to accommodate it.
+        eligible_levels = [lvl for lvl in ppm_levels if lvl.ppm >= self._MIN_SCALE_PPM]
+        levels_by_dist = sorted(eligible_levels, key=lambda level: result.ground_distances.get(level.key, 0))
         last_x = origin_x + result.dead_zone_m * px_per_m
         for level in levels_by_dist:
             dist = result.ground_distances.get(level.key, 0)
@@ -406,7 +428,12 @@ class CanvasDrawer:
             y += step
 
     def _draw_topdown_result(self, result: OpticResult, plot: Tuple[float, float, float, float], world: Tuple[float, float, float, float], ppm_levels: List[PPMLevel], outline_only=False, max_draw_dist=None):
-        levels_by_dist = sorted(ppm_levels, key=lambda level: result.ground_distances.get(level.key, 0))
+        # BUGFIX: same as _draw_side_lane -- a loose auxiliary level (e.g. a
+        # Johnson thermal-detection criterion at ~1-13 px/m) must not paint
+        # its wedge out to the canvas edge just because it's the "farthest"
+        # entry by raw (often huge) ground distance.
+        eligible_levels = [lvl for lvl in ppm_levels if lvl.ppm >= self._MIN_SCALE_PPM]
+        levels_by_dist = sorted(eligible_levels, key=lambda level: result.ground_distances.get(level.key, 0))
         last_dist = result.dead_zone_m
         for level in levels_by_dist:
             dist = result.ground_distances.get(level.key, 0)
