@@ -24,7 +24,17 @@ def main() -> int:
             return 1
         raise
     from cctv_simulator.errors import install_error_reporting
-    install_error_reporting()
+    # BUGFIX: install_error_reporting(root=None) only sets sys.excepthook --
+    # it skips the tk.Tk/tk.Toplevel.report_callback_exception class patch,
+    # so exceptions raised inside this workbench's own Tk callbacks (ctk.CTk
+    # is a tk.Tk subclass) were never caught in a windowed/frozen build.
+    # A throwaway root triggers that class-level patch before the real
+    # ModernOpticsWorkbench window (created inside launch()) exists.
+    import tkinter as tk
+    _bootstrap_root = tk.Tk()
+    _bootstrap_root.withdraw()
+    install_error_reporting(_bootstrap_root)
+    _bootstrap_root.destroy()
     initial_model = sys.argv[1] if len(sys.argv) > 1 else None
     launch(initial_model)
     return 0

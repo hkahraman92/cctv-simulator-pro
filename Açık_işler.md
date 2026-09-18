@@ -1,3 +1,30 @@
+## -6. Tarama: bağımsız optik tezgâh başlatıcısı hata raporlamayı kurmuyordu — ✅ düzeltildi (2026-09-18)
+
+Kullanıcı sorusu üzerine ("açık işler neler kaldı, bug hala var mı") daha önce
+incelenmemiş üç küçük dosya tarandı: `cctv_optics_workbench.py`,
+`cctv_simulator/__init__.py`, `cctv_simulator/ui/__init__.py`.
+
+**Bulgu:** `cctv_optics_workbench.py` (bağımsız `python
+cctv_optics_workbench.py` başlatıcısı) `install_error_reporting()`'i
+argümansız çağırıyordu. `errors.py`'deki bu fonksiyon, yalnızca bir Tk `root`
+verildiğinde `tk.Tk.report_callback_exception` / `tk.Toplevel.report_
+callback_exception`'ı **sınıf seviyesinde** yamalıyor — bu yama olmadan Tk
+widget callback'leri içinde atılan istisnalar hiçbir yere gitmiyor (donmuş/
+pencereli derlemede stderr yok, sessizce kayboluyor). Ana giriş noktası
+(`cctv_dual_view_simulator.py`) root'unu önce oluşturup doğru şekilde
+geçiyordu; bağımsız tezgâh başlatıcısı bunu atlamıştı çünkü kendi root'unu
+`launch()` içinde (`ui/modern_window.py`) gizlice oluşturuyor.
+`customtkinter.CTk`'nin `tkinter.Tk`'nin alt sınıfı olduğu doğrulandı, yani
+sınıf yaması doğru root ile çalışır.
+
+**Düzeltme:** `main()` gerçek pencereyi oluşturmadan önce atılabilir bir
+`tk.Tk()` kökü açıp `install_error_reporting(_bootstrap_root)` çağırıyor
+(sınıf yamasını tetiklemek için), sonra onu yok edip normal akışa devam
+ediyor. Elle doğrulandı: yama, geçici root yok edildikten sonra oluşturulan
+gerçek `ctk.CTk()` penceresine de uygulanıyor. `__init__.py`'lerin ikisi de
+temiz — kural 7'ye (tembel import) uygun, ek sorun yok. Tam `pytest` (159
+test) + `ruff check` yeşil.
+
 ## -4. Kullanıcı bildirimi: bir önceki 150m düzeltmesi kısa menzilli kameralarda yanlış ölçek yaratıyordu — ✅ düzeltildi (2026-09-18)
 
 Bir önceki -3 maddesindeki düzeltme (sabit 150 m tavanının kaldırılması)
