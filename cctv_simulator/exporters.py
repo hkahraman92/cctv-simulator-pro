@@ -229,7 +229,7 @@ class _NumberedCanvas(rl_canvas.Canvas if _REPORTLAB_AVAILABLE else object):
             self.rect(36, h - 38, w - 72, 2, fill=True, stroke=False)
             self.setFont(_FONT_FAMILY_BOLD, 8)
             self.setFillColor(rl_colors.HexColor("#002D62"))
-            self.drawString(36, h - 30, "ASELSAN A.Ş.  •  SAVUNMA VE GÜVENLİK SİSTEMLERİ")
+            self.drawString(36, h - 30, "ASELSAN - UGES")
             self.setFont(_FONT_FAMILY, 8)
             self.setFillColor(rl_colors.HexColor("#546E7A"))
             self.drawRightString(w - 36, h - 30, "CCTV Mühendislik & DORI Analiz Raporu")
@@ -240,7 +240,7 @@ class _NumberedCanvas(rl_canvas.Canvas if _REPORTLAB_AVAILABLE else object):
 
         self.setFont(_FONT_FAMILY_BOLD, 7)
         self.setFillColor(rl_colors.HexColor("#002D62"))
-        self.drawString(36, 30, "ASELSAN ELEKTRO-OPTİK & GÜVENLİK SİSTEMLERİ")
+        self.drawString(36, 30, "ASELSAN - UGES")
 
         self.setFont(_FONT_FAMILY, 7)
         self.setFillColor(rl_colors.HexColor("#B71C1C"))
@@ -376,7 +376,7 @@ def export_pdf(
 
     banner_data = [
         [
-            Paragraph("ASELSAN A.Ş.  •  SAVUNMA VE GÜVENLİK TEKNOLOJİLERİ SEKTÖR BAŞKANLIĞI", style_subtitle),
+            Paragraph("ASELSAN - UGES", style_subtitle),
             Paragraph(f"DOKÜMAN NO: {doc_no}", ParagraphStyle("DocNo", fontName=_FONT_FAMILY_BOLD, fontSize=7.5, textColor=rl_colors.HexColor("#90CAF9"), alignment=2))
         ],
         [
@@ -577,6 +577,15 @@ def export_pdf(
         ("RIGHTPADDING", (0, 0), (-1, -1), 8),
     ]))
     story.append(rec_table)
+
+    # ── SIGNATURE ──
+    story.append(Spacer(1, 12))
+    story.append(HRFlowable(width=page_w, thickness=0.75, color=c_border))
+    story.append(Spacer(1, 4))
+    story.append(Paragraph(
+        "Raporu Hazırlayan: <b>Harun KAHRAMAN</b> — Ürün Teknik Yöneticisi",
+        ParagraphStyle("PreparedBy", fontName=_FONT_FAMILY, fontSize=8.5, leading=11, textColor=c_dark, alignment=2),
+    ))
 
     # Build Document using NumberedCanvas
     doc.build(story, canvasmaker=_NumberedCanvas)
@@ -1161,7 +1170,7 @@ def export_engineering_report_pdf(path: str, *, project_name: str, terrain, came
 
     doc_no = f"ASELSAN-CCTV-VS-{datetime.now().strftime('%Y%m%d')}-01"
     banner = Table([
-        [Paragraph("ASELSAN A.Ş.  •  SAVUNMA VE GÜVENLİK TEKNOLOJİLERİ SEKTÖR BAŞKANLIĞI", S["sub"]),
+        [Paragraph("ASELSAN - UGES", S["sub"]),
          Paragraph(f"DOKÜMAN NO: {doc_no}", ParagraphStyle("D", fontName=_FONT_FAMILY_BOLD, fontSize=7.5, textColor=rl_colors.HexColor("#90CAF9"), alignment=2))],
         [Paragraph("CCTV GÖRÜŞ ALANI, ARAZİ GÖRÜŞ HATTI VE ÇOK KAMERALI KAPSAMA MÜHENDİSLİK RAPORU", S["title"]),
          Paragraph(f"GİZLİLİK: KURUMSAL / HİZMETE ÖZEL<br/>TARİH: {now_str}", ParagraphStyle("M", fontName=_FONT_FAMILY, fontSize=7.5, leading=10, textColor=rl_colors.white, alignment=2))],
@@ -1256,5 +1265,15 @@ def export_engineering_report_pdf(path: str, *, project_name: str, terrain, came
         ["Atmosferik zayıflama", "Koschmieder (σ = 3,912 / V) + banda göre iletim; DORI menzilleri berrak havada tanımlıdır"],
         ["Kısıt", "Görüş alanı arazi engellemesini modeller; bitki örtüsü, yapay engel ve sensör montaj toleransı dahil değildir"],
     ])
+
+    # ── SIGNATURE ──
+    story.append(Spacer(1, 12))
+    story.append(HRFlowable(width=page_w, thickness=0.75, color=rl_colors.HexColor("#CFD8DC")))
+    story.append(Spacer(1, 4))
+    story.append(Paragraph(
+        "Raporu Hazırlayan: <b>Harun KAHRAMAN</b> — Ürün Teknik Yöneticisi",
+        ParagraphStyle("PreparedBy2", fontName=_FONT_FAMILY, fontSize=8.5, leading=11,
+                       textColor=rl_colors.HexColor("#212529"), alignment=2),
+    ))
 
     doc.build(story, canvasmaker=_NumberedCanvas)

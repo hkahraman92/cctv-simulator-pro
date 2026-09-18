@@ -1,3 +1,22 @@
+## -8. PDF kurumsal marka metni + rapor imzası güncellendi (2026-09-18)
+
+Kullanıcı isteği: banner/başlık/altbilgideki uzun ASELSAN ünvan metinleri
+kısaltılsın (*"ASELSAN - UGES" olarak geçsin*) ve rapora hazırlayan bilgisi
+eklensin (*"Harun KAHRAMAN, Ürün Teknik Yöneticisi"*).
+
+`exporters.py`'deki 4 yer güncellendi — hem `export_pdf` (klasik "PDF
+Mühendislik Raporu") hem `export_engineering_report_pdf` (görüş alanı/kapsama
+raporu) aynı `_NumberedCanvas` sınıfını paylaştığı için üst bilgi (sayfa > 1
+başlık şeridi) + alt bilgi (her sayfa footer'ı) tek bir yerden, ayrıca her
+iki fonksiyonun kendi kapak banner'ı ayrı ayrı: "ASELSAN A.Ş. • SAVUNMA VE
+GÜVENLİK TEKNOLOJİLERİ SEKTÖR BAŞKANLIĞI" / "ASELSAN ELEKTRO-OPTİK & GÜVENLİK
+SİSTEMLERİ" → **"ASELSAN - UGES"**. Her iki raporun sonuna (son bölümden
+sonra, `doc.build`'den hemen önce) ince bir ayraç + sağa hizalı **"Raporu
+Hazırlayan: Harun KAHRAMAN — Ürün Teknik Yöneticisi"** imza satırı eklendi.
+
+`pytest` (159) + `ruff check` yeşil; hem `root_win=None` hem gerçek pencere
+yoluyla PDF üretimi elle doğrulandı.
+
 ## -7. Yeni özellik: PDF raporuna yatay profil + kuş bakışı görüntüsü — ✅ eklendi (2026-09-18)
 
 Kullanıcı isteği: *"PDF raporuna yatay profil ve kuş bakışı resimleri de
