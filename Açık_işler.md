@@ -7,6 +7,111 @@ tetikleyici senaryo ile teyit edildi. "Şüpheli" işaretliler incelemeyi yapan
 ajanın güçlü emare bulduğu ama ek doğrulama gerektiren noktalar — ele alırken
 önce tekrar üretmeyi deneyin.
 
+## -3. Kullanıcı bildirimi: PTZ/uzun menzilli kamerada profil ve kuşbakışı 150m'de kesiliyor — ✅ düzeltildi (2026-09-18)
+
+**`ui/canvas_drawer.py:133-150` (`_get_max_draw_distance`)**
+
+Klasik pencerenin "YATAY PROFİL" (kesit) ve "KUŞBAKIŞI / PLAN ÜSTÜ" çizimlerinde
+gösterim mesafesi kameranın gerçek menzili ne olursa olsun **sabit 150 m'de**
+kesiliyordu:
+
+```python
+if largest >= 150.0:
+    return 150.0        # already clamped, stop scanning
+return max(15.0, min(largest, 150.0))
+```
+
+**Tetikleyici senaryo:** PTZ/tele/termal gibi 150 m'nin çok ötesine görüş
+sağlayan bir kamerada, 150 m'den sonraki tüm PPM/DORI bantları (Tanıma,
+Gözlem, Algılama vb.) ve geometrik limit sessizce çizilmiyordu — kullanıcı
+"150m'den sonrası yok" olarak fark etti. `grid_step()` (aynı dosya) zaten
+5000 m+ mesafeler için ızgara adımı tanımlıyordu, yani bu bir render
+kısıtı değil, unutulmuş/yanlış bir tavandı.
+
+**Yapılan düzeltme:** Sabit 150 m tavanı kaldırıldı; `_get_max_draw_distance`
+artık kameranın gerçek `OpticResult` verisinden (kör nokta, PPM mesafeleri,
+geometrik limit) hesaplanan gerçek `largest` değerini olduğu gibi döndürüyor.
+Gerçek render motoru (tuval öğeleri doğrudan sorgulanarak, ekran görüntüsü
+almadan) test edildi: 110.769 m'lik gerçek bir PTZ menzilinde 18 DORI/kör-nokta
+poligonu tuvalin tamamına doğru yayılıyor, mesafe etiketleri gerçek uzak
+değerlere kadar çiziliyor. Tam `pytest` yeşil.
+
+## -2. Üçüncü tur derin inceleme — ✅ 9 bug bulundu ve düzeltildi (2026-09-17)
+
+Daha önce hiç ya da yalnız birkaç fonksiyonuyla incelenmiş büyük dosyalara
+(canvas_drawer.py, camera_db_window.py — tam, view_3d_window.py — tam,
+main_window.py — tam, compliance_standards.py — tam, perspective_3d.py'nin
+geri kalanı, config.py veri bütünlüğü) beş yeni paralel inceleme ajanı
+çalıştırıldı. 9 gerçek bug bulundu, hepsi düzeltildi. Tam `pytest` + `ruff`
+yeşil; çoğu için elle Tk entegrasyon testi yazıldı.
+
+1. **`camera_db_window.py` sayısal alanlarda Türkçe binlik nokta 1000× küçük
+   okunuyordu** — `compliance_optics.py`'de zaten düzeltilmiş **aynı bug
+   deseni**: `white_light_range_m`/`dori_identify_m` gibi alanlara "1.500"
+   (=1500 m) girilirse `float("1.500")=1.5` olarak kaydediliyordu, hiçbir
+   uyarı olmadan. Aynı `_parse_tr_number` yaklaşımı burada da uygulandı.
+2. **`canvas_drawer.py` — kamera listesi boşken manuel ölçek modunda
+   çöküyordu** — `auto_view_scale=False` dalında `min()/max()` boş
+   jeneratörle çağrılabiliyordu (`auto_view_scale=True` dalı zaten
+   korunuyordu, asimetrikti). `main_window.delete_camera` şu an son kamerayı
+   silmeye izin vermediği için bugün ulaşılamıyor ama savunma eklendi.
+3. **`canvas_drawer.py` ışın çizim eşiği (0.2°) motorun eşiğiyle (0.5°)
+   uyuşmuyordu** — `calculations.py` `top_ray_deg ≤ 0.5°`'yi "geometrik
+   limit yok" sayarken, kesit çizimi 0.2°'ye kadar sonlu bir "zemine değme"
+   noktası hesaplıyordu (Kural 1 ihlali). 0.5 ile hizalandı.
+4. **`view_3d_window.py` — hedef tipi/palet ilk açılışta yanlış
+   davranıyordu** — `.current(0)` bağlı `Combobox`'ta görünen metni
+   (`"🧍 İnsan Mankeni (1.8m)"`) doğrudan `target_type_var`'a yazıyordu,
+   `__init__`'in kurduğu iç kodu (`"human"`) eziyordu; normalizasyon yalnız
+   kullanıcı Combobox'a dokununca çalışıyordu. Sonuç: **ilk render'da**
+   `target_h` 1.8m yerine 1.0m'ye düşüyordu, termal kamera paleti
+   "auto"dan hiç `thermal_white`'a geçmiyordu. Aynı bug `palette_mode_var`
+   için de vardı. `.current(0)`'dan sonra iç kod açıkça geri yazılıyor artık.
+5. **`view_3d_window.py` — kamera değişince hedef mesafe slider'ı yeni
+   sınıra kelepçelenmiyordu** — tele/termal kamerada `target_dist_var=5000`
+   iken kısa menzilli bir kameraya geçilirse slider görsel olarak sona
+   yaslanıyordu ama değişken 5000'de kalıyor, render/HUD bu bayat değeri
+   kullanmaya devam ediyordu.
+6. **`view_3d_window.py` — yanal ofset slider'ı sabit ±25 aralığındaydı,
+   sürükleme mantığı çok daha geniş bir aralık (±1200'e kadar) yazabiliyordu**
+   — slider görsel olarak ±25'te tıkanmışken gerçek `target_lateral_offset_var`
+   çok daha büyük olabiliyordu, render bunu kullanıyordu. Artık
+   `_sync_slider_limits()` her iki slider'ı da (`_max_lateral_for` ortak
+   fonksiyonuyla) aynı formülle senkronluyor.
+7. **`map_3d_window.py` `TerrainViewshedWindow` `guarded_build` kullanmıyordu**
+   — diğer 4 alt pencerenin (camera_db_window, view_3d_window,
+   spec_assistant, modern_window) hepsi kullanıyor. En büyük pencerenin
+   (2000+ satır UI kurulumu) inşası sırasında bir istisna fırlarsa, yarım
+   kurulmuş, boş, kapatma protokolü bağlanmamış bir Toplevel ekranda asılı
+   kalıyordu. `guarded_build` ile sarmalandı, `main_window.open_terrain_viewshed`
+   diğer `open_*` fonksiyonlarıyla aynı `build_ok` desenine uyduruldu.
+8. **`compliance_standards.py` `_TASK_TR` sözlük sırası "kimlik tespit"i
+   "tespit" gölgeliyordu** — "tespit" (→Detection, 25 px/m) sözlükte "kimlik
+   tespit"ten (→Identification, 250 px/m) önce geliyordu; "kimlik tespit"
+   alt dizesi "tespit"i içerdiği için ilk-eşleşen-kazanır mantığı hep
+   "tespit"te duruyordu. Bir şartnamenin "kimlik tespit" görevi **10× daha
+   zayıf** bir eşikle doğrulanıyordu, sessizce. Artık en-uzun-ifade-önce
+   eşleşiyor (gelecekteki eklemelere karşı da korur).
+9. **`perspective_3d.py` `generate_dori_ground_polygons` zemin bantlarını
+   sabit 100 m'de kırpıyordu** — aynı dosyadaki `generate_ground_grid_lines`
+   termal/tele kameralar için 8000 m'ye kadar çiziyordu ama DORI renkli
+   zemin bantları hep 100 m'de kesiliyordu; uzun menzilli bir kamerada
+   (örn. termal 4km) Teşhis dışındaki tüm bantlar sıfır-yükseklikte
+   (görünmez) çıkıyordu. Artık `max_dist_m` (kameranın aktif menzil
+   slider'ından) parametre olarak geçiyor, termal/uzun-menzilli kameralarda
+   kırpma sınırı buna göre ölçekleniyor. Elle doğrulandı: termal kamerada
+   eskiden 3 farklı (çoğu sıfır-yükseklik) bant, düzeltmeden sonra 0.5m'den
+   4000m'ye kadar 8 ayrı, anlamlı genişlikte bant.
+
+Kod değiştirilmedi (yanlış alarm):
+- `cctv_dual_view_simulator.py`'de `DualViewCCTVDesignApp(root)` kurucusunun
+  `guarded_build`/try-except ile sarılmaması şüphesi araştırıldı —
+  `install_error_reporting(root)` zaten `sys.excepthook`'u koşulsuz kuruyor,
+  bu da Tk callback'leriyle sınırlı değil, ana script gövdesindeki HERHANGİ
+  bir yakalanmamış istisnayı da kapsıyor. Elle test edildi: kurucu içinde
+  fırlatılan bir istisna gerçekten hata diyaloğu + log dosyası üretiyor,
+  "sessizce hiç açılmama" senaryosu doğrulanamadı.
+
 ## -1. İkinci tur derin inceleme — ✅ 13 bug bulundu ve düzeltildi (2026-09-17)
 
 İlk turda yüzeysel geçilen büyük dosyalar (compliance.py, exporters.py,

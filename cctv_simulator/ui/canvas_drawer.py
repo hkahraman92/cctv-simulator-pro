@@ -133,6 +133,13 @@ class CanvasDrawer:
     def _get_max_draw_distance(self, plan_width_m: float, last_all_results: Dict[str, List[OpticResult]]) -> float:
         # PERF: single running max instead of materialising a list of every
         # ground distance of every camera on every redraw.
+        # BUGFIX: this used to hard-clamp at 150 m ("if largest >= 150.0:
+        # return 150.0", then min(largest, 150.0)) regardless of what the
+        # camera actually needed. grid_step() below already has tick spacing
+        # for spans up to 5000+ m, so the cap wasn't a deliberate rendering
+        # limit -- it just silently truncated the profile/top-down views for
+        # any PTZ/tele/thermal camera whose DORI/geometric range reached
+        # past 150 m: everything beyond that distance was never drawn.
         largest = plan_width_m if plan_width_m > 15.0 else 15.0
         for results in last_all_results.values():
             for result in results:
@@ -145,9 +152,7 @@ class CanvasDrawer:
                 geom = result.max_geom_dist_m
                 if geom > largest and math.isfinite(geom):
                     largest = geom
-                if largest >= 150.0:
-                    return 150.0        # already clamped, stop scanning
-        return max(15.0, min(largest, 150.0))
+        return max(15.0, largest)
 
     def _draw_side_lane(self, result: OpticResult, rect: Tuple[int, int, int, int], max_draw_dist: float, accent: str, ppm_levels: List[PPMLevel]):
         x0, y0, x1, y1 = rect
@@ -221,7 +226,12 @@ class CanvasDrawer:
         self.canvas.create_oval(origin_x - 5, cam_y - 5, origin_x + 5, cam_y + 5, fill="#D32F2F", outline="")
 
     def _draw_side_ray(self, result: OpticResult, angle_deg: float, origin_x: float, cam_y: float, target_y: float, px_per_m: float, max_draw_dist: float, color: str, dash=(4, 2)):
-        if angle_deg > 0.2:
+        # 0.5, not an independently-chosen 0.2: calculations.py treats
+        # top_ray_deg <= 0.5 as "no geometric limit" (max_geom_dist_m = inf)
+        # -- this ray-hits-the-ground branch should agree on where that line
+        # is, per Kural 1 (the UI re-expresses the engine's OpticResult, it
+        # doesn't re-derive its own physics/thresholds).
+        if angle_deg > 0.5:
             hit_m = result.vertical_drop_m / math.tan(math.radians(angle_deg))
             end_dist = min(hit_m, max_draw_dist)
             end_x = origin_x + end_dist * px_per_m
@@ -260,11 +270,21 @@ class CanvasDrawer:
         else:
             world_width = max(plan_width_m, max_draw_dist, 15.0)
             world_height = max(world_width * plot_h / plot_w, 10.0)
-            min_x = min(-2.0, min(camera.pos_x_m for camera in cameras) - 2.0)
-            max_x = max(world_width, max(camera.pos_x_m for camera in cameras) + max_draw_dist)
             half_h = world_height / 2
-            min_y = min(-half_h, min(camera.pos_y_m for camera in cameras) - half_h * 0.2)
-            max_y = max(half_h, max(camera.pos_y_m for camera in cameras) + half_h * 0.2)
+            # BUGFIX: min()/max() over an empty `cameras` raised ValueError
+            # here (the auto_view_scale branch above already guards this via
+            # _view_angle_world_bounds's `if not points: return (...)`).
+            # main_window.delete_camera() currently refuses to drop the last
+            # camera, so this is latent rather than reachable today -- kept
+            # as a defensive fallback for any other caller of this drawer.
+            if cameras:
+                min_x = min(-2.0, min(camera.pos_x_m for camera in cameras) - 2.0)
+                max_x = max(world_width, max(camera.pos_x_m for camera in cameras) + max_draw_dist)
+                min_y = min(-half_h, min(camera.pos_y_m for camera in cameras) - half_h * 0.2)
+                max_y = max(half_h, max(camera.pos_y_m for camera in cameras) + half_h * 0.2)
+            else:
+                min_x, max_x = -2.0, world_width
+                min_y, max_y = -half_h, half_h
             world = (min_x, max_x, min_y, max_y)
 
         self.canvas.create_rectangle(*plot, outline="#90A4AE")
