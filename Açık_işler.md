@@ -1,3 +1,56 @@
+## -4. Kullanıcı bildirimi: bir önceki 150m düzeltmesi kısa menzilli kameralarda yanlış ölçek yaratıyordu — ✅ düzeltildi (2026-09-18)
+
+Bir önceki -3 maddesindeki düzeltme (sabit 150 m tavanının kaldırılması)
+gerçek ama gizli ikinci bir bugı açığa çıkardı. Kullanıcı: *"25ppm'i 50 metre
+olan bir kamera için 3000m'de yeşil boyuyor"*.
+
+**Kök neden:** `models.DEFAULT_LEVELS` termal Johnson/Algoritma "tespit"
+kriterlerini de içeriyor — bazıları **1.3 px/m** gibi son derece düşük PPM
+değerlerinde (uzun menzilli termal hedef tespiti için, çıplak "bir şey var"
+seviyesinde). PPM ∝ 1/mesafe olduğu için, HERHANGİ bir kamera bu gevşek
+kriteri binlerce metrede "karşılıyor". 150 m tavanı kalkınca,
+`_get_max_draw_distance` artık bu aşırı gevşek yardımcı seviyeyi de "gerçek
+menzil" sayıp tüm görünümü ona göre binlerce metreye geriyordu — ve çizim
+döngüsü o mesafeye kadar o seviyenin rengini boyuyordu. Kullanıcının
+belirttiği "kameraların focal length'ine oranlı olmalı" tam da bunun
+karşılığı: yalnızca standart, anlamlı DORI kriterleri ölçeği belirlemeli.
+
+**Düzeltme:** `ui/canvas_drawer.py`'de `_get_max_draw_distance`,
+`_draw_side_lane` ve `_draw_topdown_result` artık yalnızca **EN 62676-4'ün
+en gevşek tanımlı DORI kademesi olan İzleme/Monitoring (12,5 px/m) ve üzeri**
+PPM seviyelerini ölçek/boyama için dikkate alıyor (`_MIN_SCALE_PPM = 12.5`,
+sabit; standarttan geliyor, keyfi değil). Daha gevşek yardımcı kriterler
+(Johnson/Algoritma) hâlâ sonuç tablosunda görünüyor, sadece görünümü
+germiyor/boyamıyor. Hem kısa menzilli (artık ~150 m'de makul kalıyor) hem
+gerçek uzun menzilli PTZ (hâlâ ~11.500 m'ye doğru genişleyebiliyor, -3
+maddesindeki düzeltme korunuyor) senaryolarıyla gerçek uygulama üzerinden
+elle doğrulandı. Tam `pytest` yeşil.
+
+## -5. Yeni özellik: "En İyi Kurulum" (odak + tilt birlikte) — ✅ eklendi (2026-09-18)
+
+Kullanıcı isteği: *"istediğim algoritmayı ve isteri belirtsem, bana en iyi
+tilt açısını ve focal length'i veren bir yapı"*. Gerekli parçaların çoğu
+zaten vardı, ayrı ayrı: `update_lens_suggestion` gereken odağı kapalı-form
+formülle hesaplıyordu, `optimize_tilt_calc` sabit lens ile tilt tarıyordu —
+ikisi birleştirilmemişti.
+
+`calculations.optimize_camera_setup(camera, distance, level, ppm_levels)`
+eklendi: önce gereken odağı analitik hesaplıyor (hedefin eğik mesafesi
+tilt'ten bağımsız olduğu için sweep gerekmiyor), kameranın kendi
+`focal_min_mm`/`focal_max_mm` aralığına kelepçeliyor, sonra o **tam odakla**
+`optimize_tilt_calc`'ı çağırıp en iyi tilt'i buluyor. Kapsam bilinçli olarak
+**mevcut kamera modelini** optimize ediyor (kütüphanede farklı model aramıyor
+— o `update_alternative_models`'ın işi, kullanıcı onu tercih etti).
+
+`ui/main_window.py`: "Asistan" sekmesinde "🎯 En İyi Kurulum (Odak + Tilt)"
+paneli — "Lens Önerisi" bölümündeki hedef mesafe + seçili PPM seviyesini
+kullanıyor, iki buton ("Hesapla" / "İkisini de Uygula"). Aralık dışına
+çıkarsa (gereken odak kameranın max'ından büyükse) açıkça "⚠ Lens yetersiz"
+uyarısı + en yakın ayarla ulaşılan gerçek PPM gösteriliyor. Gerçek uygulama
+üzerinden hem aralık-içi (15 m/Identification → 7.9 mm/23.0°, tam 250 px/m)
+hem aralık-dışı (80 m/Identification → gereken 41.7 mm, kelepçeli 12 mm/11.5°,
+yalnızca 72 px/m) senaryolarıyla elle doğrulandı. Tam `pytest` yeşil.
+
 # Açık İşler — Kod İncelemesi (2026-09-17)
 
 Aşağıdaki liste tüm `cctv_simulator/` kod tabanının (15.617 satır, 30+ modül) beş

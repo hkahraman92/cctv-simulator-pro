@@ -16,6 +16,7 @@ from ..calculations import (
     target_analysis_for_result,
     ppm_at_distance,
     optimize_tilt_calc,
+    optimize_camera_setup,
     angle_diff,
     mode_label,
 )
@@ -77,6 +78,7 @@ class DualViewCCTVDesignApp:
         self.lens_suggestion_var = tk.StringVar(value="")
         self.alternative_models_var = tk.StringVar(value="")
         self.optimization_var = tk.StringVar(value="")
+        self.setup_optimization_var = tk.StringVar(value="")
         self.dead_zone_var = tk.StringVar(value="Hesaplama bekleniyor...")
         self.design_distance_var = tk.StringVar(value="20.0")
         self.design_level_var = tk.StringVar(value="Ozel: TR Plaka")
@@ -496,6 +498,24 @@ class DualViewCCTVDesignApp:
             fill=tk.X, pady=(0, 4)
         )
         ttk.Label(optimize_frame, textvariable=self.optimization_var, wraplength=255, foreground="#4E342E").pack(
+            fill=tk.X
+        )
+
+        setup_frame = ttk.LabelFrame(self.tab_assistant, text=" 🎯 En İyi Kurulum (Odak + Tilt) ", padding=8)
+        setup_frame.pack(fill=tk.X, pady=(0, 8))
+        ttk.Label(
+            setup_frame,
+            text="\"Lens Önerisi\" bölümündeki hedef mesafe + seçili PPM seviyesini "
+                 "kullanır: önce gereken odağı hesaplar, sonra o odak için en iyi tilt'i tarar.",
+            wraplength=255, foreground="#616161", font=("Segoe UI", 8),
+        ).pack(fill=tk.X, pady=(0, 4))
+        ttk.Button(setup_frame, text="Odak + Tilt Hesapla", command=lambda: self.optimize_camera_setup_ui(False)).pack(
+            fill=tk.X, pady=(0, 4)
+        )
+        ttk.Button(setup_frame, text="İkisini de Uygula", command=lambda: self.optimize_camera_setup_ui(True)).pack(
+            fill=tk.X, pady=(0, 4)
+        )
+        ttk.Label(setup_frame, textvariable=self.setup_optimization_var, wraplength=255, foreground="#1B5E20").pack(
             fill=tk.X
         )
 
@@ -1341,6 +1361,45 @@ class DualViewCCTVDesignApp:
         self.optimization_var.set(text)
         if apply_value:
             self._set_entry(self.entry_tilt, f"{tilt:.1f}")
+            self.calculate(show_errors=True)
+
+    def optimize_camera_setup_ui(self, apply_value=False):
+        """"En İyi Kurulum": best (focal, tilt) pair for the design distance +
+        PPM level the user already set in "Lens Önerisi" -- see
+        calculations.optimize_camera_setup for the two-step method."""
+        if not self._commit_form_to_selected(show_errors=True):
+            return
+        try:
+            distance = self._read_float(self.entry_design_distance, "Hedef mesafe", 0.1)
+        except ValueError as exc:
+            messagebox.showerror("En İyi Kurulum", str(exc))
+            return
+        level = self._selected_design_level()
+        camera = self.cameras[self.selected_camera_index]
+        res = optimize_camera_setup(camera, distance, level, self.ppm_levels)
+        if not res:
+            self.setup_optimization_var.set("Hesaplanamadı (mesafe/PPM geçersiz).")
+            return
+        focal_used, focal_required, tilt, result, ppm = res
+        in_range = camera.focal_min_mm <= focal_required <= camera.focal_max_mm
+        if in_range:
+            text = (
+                f"Odak: {focal_used:.1f} mm | Tilt: {tilt:.1f}° | "
+                f"Kör nokta: {result.dead_zone_m:.1f} m | {distance:.1f} m hedefte {ppm:.0f} px/m"
+            )
+        else:
+            text = (
+                f"⚠ Lens yetersiz — gereken odak {focal_required:.1f} mm, "
+                f"kameranın aralığı {camera.focal_min_mm:g}-{camera.focal_max_mm:g} mm. "
+                f"En yakın ayar: {focal_used:.1f} mm / tilt {tilt:.1f}° "
+                f"({distance:.1f} m'de yalnız {ppm:.0f} px/m sağlanır, hedef {level.ppm:g} px/m)."
+            )
+        self.setup_optimization_var.set(text)
+        if apply_value:
+            self._set_entry(self.entry_lens_min, f"{focal_used:.2f}")
+            self._set_entry(self.entry_lens_max, f"{focal_used:.2f}")
+            self._set_entry(self.entry_tilt, f"{tilt:.1f}")
+            self.lens_mode.set("min")
             self.calculate(show_errors=True)
 
     def _on_canvas_motion(self, event):

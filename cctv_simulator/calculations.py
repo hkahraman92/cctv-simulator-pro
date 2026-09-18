@@ -378,3 +378,49 @@ def optimize_tilt_calc(
     tilt, result, ppm = best
     result.recommendations = build_recommendations(result, ppm_levels)
     return tilt, result, ppm
+
+
+def optimize_camera_setup(
+    camera: CameraConfig, distance: float,
+    level: PPMLevel, ppm_levels: List[PPMLevel],
+) -> Optional[Tuple[float, float, float, OpticResult, float]]:
+    """Best (focal_mm, tilt_deg) pair for one task (``level``) at one target
+    distance -- "verdiğim algoritma/isteri karşılayan en iyi odak ve tilt".
+
+    Focal length is solved first, analytically: for a target at a fixed
+    ground distance the slant range is set by mount/target height alone
+    (tilt only decides whether that point lands in frame, not how far away
+    it is), so PPM = f*res_w/(sw*slant) inverts cleanly for f. This is the
+    exact formula ui/main_window.update_lens_suggestion already shows the
+    user, restated here so the two can never drift apart. Only *then* does
+    optimize_tilt_calc's exhaustive sweep pick the tilt that best frames a
+    camera fixed at that focal length.
+
+    Scope: optimizes the CAMERA MODEL YOU HAVE. The required focal is
+    clamped to [camera.focal_min_mm, camera.focal_max_mm] -- if the true
+    requirement falls outside that range the returned focal_required_mm
+    will differ from focal_used_mm, and it's the caller's job to say so
+    ("lens yetersiz"). This does not shop the camera library for a better
+    model; see update_alternative_models for that separate feature.
+
+    Returns (focal_used_mm, focal_required_mm, tilt_deg, result,
+    achieved_ppm), or None if the geometry/level is degenerate.
+    """
+    if distance <= 0 or level.ppm <= 0:
+        return None
+    sensor_w_mm, _ = SENSOR_DIMS_MM[camera.sensor_name]
+    nominal_res_w, _ = RESOLUTIONS[camera.resolution_name]
+    px_ratio = camera.effective_px_ratio if camera.effective_px_ratio > 0 else 1.0
+    res_w = nominal_res_w * px_ratio
+    vertical_drop = max(camera.pole_height_m - camera.target_height_m, 0.05)
+    optical_distance = _hypot(distance, vertical_drop)
+
+    focal_required = (level.ppm * sensor_w_mm * optical_distance) / res_w
+    focal_used = max(camera.focal_min_mm, min(focal_required, camera.focal_max_mm))
+
+    trial = replace(camera, focal_min_mm=focal_used, focal_max_mm=focal_used)
+    tilt_result = optimize_tilt_calc(trial, "min", distance, level, ppm_levels)
+    if tilt_result is None:
+        return None
+    tilt, result, ppm = tilt_result
+    return focal_used, focal_required, tilt, result, ppm
