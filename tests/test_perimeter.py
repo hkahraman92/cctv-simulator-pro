@@ -162,8 +162,12 @@ def test_closed_perimeter_is_well_covered_with_corner_guards(cam):
     terr = generate_procedural_terrain("rolling_hills", grid_size=48, cell_size_m=10.0)
     square = [(60.0, 60.0), (360.0, 60.0), (360.0, 360.0), (60.0, 360.0)]
     plan = generate_perimeter_plan(terr, square, cam, target_ppm=40.0)
-    # straight legs are gap-free by construction, corner guards close the corners
-    assert plan.coverage_percentage >= 95.0
+    # straight legs are gap-free by construction, corner guards close the corners.
+    # BUGFIX: threshold was calibrated against a VFOV that assumed every
+    # sensor is 4:3 regardless of the selected (usually 16:9) resolution --
+    # now that VFOV correctly narrows for 16:9, corner-guard coverage is a
+    # hair lower (94.7 measured) but still well covered.
+    assert plan.coverage_percentage >= 94.0
     assert any("köşe" in c.camera_model for c in plan.placed_cameras)
     # pole ids stay contiguous even with the extra guards
     assert [c.pole_id for c in plan.placed_cameras] == list(range(1, len(plan.placed_cameras) + 1))

@@ -104,6 +104,25 @@ RESOLUTIONS = {
     "MWIR (1280x1024)": (1280, 1024),
 }
 
+
+def sensor_height_mm(sensor_w_mm: float, res_w_px: float, res_h_px: float, fallback_h_mm: float) -> float:
+    """Vertical sensor extent to use for VFOV, matched to the selected
+    resolution's pixel aspect ratio rather than SENSOR_DIMS_MM's stored height.
+
+    SENSOR_DIMS_MM's height is the legacy 4:3 broadcast-tube convention for
+    every '1/x"' format label -- no CCTV sensor actually sold under these
+    names today is 4:3, they're native to whichever resolution (usually
+    16:9) the datasheet advertises. A camera's VFOV must therefore track the
+    resolution the user picked, not a sensor-name-keyed constant, or a 16:9
+    camera gets an inflated 4:3 vertical FOV (and everything downstream of
+    it: dead zone, viewshed vertical cone, perimeter tilt/spacing).
+    Bit-identical for the two 4:3 resolutions already in RESOLUTIONS (5 MP,
+    12 MP), since those happen to share the legacy table's 4:3 ratio.
+    """
+    if res_w_px <= 0:
+        return fallback_h_mm
+    return sensor_w_mm * (res_h_px / res_w_px)
+
 DEFAULT_CAMERA_LIBRARY = {
     "Özel kamera": {},
     "ASELSAN UMA T10 (35-350mm Zoom Termal Kamera)": {

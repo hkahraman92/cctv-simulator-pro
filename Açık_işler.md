@@ -1,3 +1,46 @@
+## -9. Kullanıcı bildirimi: VFOV her yerde yanlış — sensör tablosu sabit 4:3 varsayıyordu — ✅ düzeltildi (2026-09-18)
+
+Kullanıcı, PDF'teki kamera matrisinde "HFOV / VFOV" sütununu inceleyip
+şüphelendi: *"oranı 16:9 olmuyor sanki bir sorun olabilir mi hesaplamada"*
+(1/2.8″ sensör, 3.2mm odak, 2MP/1080p kamera için HFOV=82.4° / VFOV=66.5°).
+
+**Kök neden:** `config.SENSOR_DIMS_MM` her `"1/x\""` sensör format etiketini
+**sabit 4:3 fiziksel oranla** kodluyor (örn. `1/2.8"` → 5.60×4.20mm,
+h/w=0,75 — eski analog yayın tüpü format geleneği). Ama bu isimle satılan
+gerçek CCTV/IP sensörlerin neredeyse tamamı **16:9** (1920×1080, 2688×1520,
+3840×2160 gibi çözünürlüklerle satılıyorlar). VFOV bu sabit 4:3 yükseklikten
+hesaplanıyordu, seçilen çözünürlüğün gerçek piksel en-boy oranı hiç dikkate
+alınmıyordu — ve `CameraConfig`'in varsayılan çözünürlüğü bile
+("4 MP 2K 2688×1520", oran 1,77) 4:3 değil, yani neredeyse HİÇBİR gerçekçi
+kurulum doğru VFOV almıyordu.
+
+Bu yalnız PDF'teki bir görüntü sorunu değildi — VFOV, kör nokta
+(`dead_zone_m`), geometrik menzil (`max_geom_dist_m`), çevre çiti
+kamera tilt'i/aralığı, 3B kamera görünümü ve arazi görüş alanının dikey
+konisi dahil **her yerde** bu hatalı sabit VFOV'u kullanıyordu.
+
+**Düzeltme:** `config.sensor_height_mm(sensor_w_mm, res_w_px, res_h_px,
+fallback_h_mm)` eklendi — sensör yüksekliğini artık sabit tablodan değil,
+sensör genişliği × seçilen çözünürlüğün piksel en-boy oranından türetiyor.
+Beş VFOV hesaplama noktası (`calculations.py`, `perimeter_planner.py` ×2,
+`perspective_3d.py`, `viewshed_3d.py`) bu ortak fonksiyona geçirildi; her
+birinde `effective_px_ratio` (yatay MTF düzeltmesi) uygulanmadan ÖNCEKİ
+ham çözünürlük oranı kullanıldığı doğrulandı (px_ratio yatay bir düzeltme,
+fiziksel sensör oranını değiştirmemeli).
+
+`optics_golden.json` yeniden üretildi: 150 senaryodan **96'sı** değişti
+(hepsi 16:9/non-4:3 çözünürlük kullananlar — HFOV hep aynı kaldı, yalnız
+VFOV ve ondan türeyen alanlar değişti), **54'ü** bit-aynı kaldı (gerçek 4:3
+çözünürlük seçenekleri: 5MP, 12MP). Diff elle örneklendi, beklenen desene
+tam uydu. `test_perimeter.py`'deki köşe-guard kapsama eşiği (≥95,0 → ≥94,0)
+küçük ve beklenen bir düşüşü (94,7 ölçüldü) yansıtacak şekilde güncellendi —
+daha dar/doğru VFOV, köşelerde biraz daha az dikey kapsama demek, bu gerçek
+fizik, test hatası değil.
+
+Kullanıcının örneğiyle elle doğrulandı: 1/2.8″, 3,2mm, 1080p → HFOV 82,4°
+(değişmedi), VFOV 66,5° → **52,4°** (doğru). Tam `pytest` (159) + `ruff
+check` yeşil.
+
 ## -8. PDF kurumsal marka metni + rapor imzası güncellendi (2026-09-18)
 
 Kullanıcı isteği: banner/başlık/altbilgideki uzun ASELSAN ünvan metinleri

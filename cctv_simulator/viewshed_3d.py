@@ -18,7 +18,7 @@ import numpy as np
 
 from .terrain_loader import TerrainData
 from .models import CameraConfig
-from .config import SENSOR_DIMS_MM, RESOLUTIONS
+from .config import SENSOR_DIMS_MM, RESOLUTIONS, sensor_height_mm
 from .atmosphere import band_for_camera, usable_range_m
 
 
@@ -111,8 +111,13 @@ def calculate_3d_viewshed(terrain: TerrainData,
         focal_mm = float(max(min(focal_mm_override, camera.focal_max_mm), camera.focal_min_mm))
     else:
         focal_mm = camera.focal_min_mm if lens_mode == "min" else camera.focal_max_mm
-    sw, sh = SENSOR_DIMS_MM.get(camera.sensor_name, (5.6, 4.2))
+    sw, sh_legacy = SENSOR_DIMS_MM.get(camera.sensor_name, (5.6, 4.2))
     res_w, res_h = RESOLUTIONS.get(camera.resolution_name, (1920, 1080))
+    # BUGFIX: VFOV must track the resolution's pixel aspect ratio, not
+    # SENSOR_DIMS_MM's legacy 4:3 height (see sensor_height_mm docstring) --
+    # derive before effective_px_ratio scales res_w below (that's a
+    # horizontal MTF correction, not a physical sensor aspect change).
+    sh = sensor_height_mm(sw, res_w, res_h, sh_legacy)
 
     is_thermal = ("LWIR" in camera.sensor_name.upper() or
                   "MWIR" in camera.sensor_name.upper() or

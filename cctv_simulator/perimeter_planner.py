@@ -19,7 +19,7 @@ import numpy as np
 from . import atmosphere as _atm
 from .terrain_loader import TerrainData
 from .models import CameraConfig
-from .config import SENSOR_DIMS_MM, RESOLUTIONS
+from .config import SENSOR_DIMS_MM, RESOLUTIONS, sensor_height_mm
 from .viewshed_3d import PPM_DETECT, PPM_IDENT, PPM_OBSERVE, PPM_RECOG
 
 
@@ -118,8 +118,13 @@ def calculate_optimal_spacing(camera: CameraConfig,
                               weather: str = "") -> Tuple[float, float, float]:
     """Calculates effective range, dead zone, and recommended pole spacing (meters)."""
     focal_mm = camera.focal_min_mm if lens_mode == "min" else camera.focal_max_mm
-    sw, sh = SENSOR_DIMS_MM.get(camera.sensor_name, (5.6, 4.2))
+    sw, sh_legacy = SENSOR_DIMS_MM.get(camera.sensor_name, (5.6, 4.2))
     res_w, res_h = RESOLUTIONS.get(camera.resolution_name, (2688, 1520))
+    # BUGFIX: VFOV must track the resolution's pixel aspect ratio, not
+    # SENSOR_DIMS_MM's legacy 4:3 height -- derive before effective_px_ratio
+    # scales res_w (that scaling is a horizontal MTF correction, not a
+    # physical sensor aspect change).
+    sh = sensor_height_mm(sw, res_w, res_h, sh_legacy)
     res_w = res_w * max(getattr(camera, "effective_px_ratio", 1.0), 0.05)
 
     # Optical slant range where resolution equals target PPM (EN 62676-4)
@@ -223,8 +228,11 @@ def generate_perimeter_plan(terrain: TerrainData,
     )
 
     focal_mm = camera.focal_min_mm if lens_mode == "min" else camera.focal_max_mm
-    sw, sh = SENSOR_DIMS_MM.get(camera.sensor_name, (5.6, 4.2))
+    sw, sh_legacy = SENSOR_DIMS_MM.get(camera.sensor_name, (5.6, 4.2))
     res_w, res_h = RESOLUTIONS.get(camera.resolution_name, (2688, 1520))
+    # BUGFIX: see calculate_optimal_spacing -- VFOV must track the
+    # resolution's pixel aspect ratio, not SENSOR_DIMS_MM's legacy 4:3 height.
+    sh = sensor_height_mm(sw, res_w, res_h, sh_legacy)
     hfov_deg = math.degrees(2.0 * math.atan((sw / 2.0) / focal_mm))
     vfov_deg = math.degrees(2.0 * math.atan((sh / 2.0) / focal_mm))
 

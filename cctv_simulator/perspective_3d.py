@@ -8,7 +8,7 @@ import math
 from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 
-from .config import SENSOR_DIMS_MM, RESOLUTIONS
+from .config import SENSOR_DIMS_MM, RESOLUTIONS, sensor_height_mm
 from .models import CameraConfig, PPMLevel, OpticResult
 
 
@@ -37,8 +37,11 @@ class Perspective3DEngine:
         self.focal_mm = focal_mm or camera.focal_min_mm
         self.viewport_w, self.viewport_h = viewport_size
 
-        self.sensor_w_mm, self.sensor_h_mm = SENSOR_DIMS_MM.get(camera.sensor_name, (5.37, 3.02))
+        self.sensor_w_mm, sensor_h_mm_legacy = SENSOR_DIMS_MM.get(camera.sensor_name, (5.37, 3.02))
         res_info = RESOLUTIONS.get(camera.resolution_name, (2688, 1520))
+        # BUGFIX: VFOV must track the resolution's pixel aspect ratio, not
+        # SENSOR_DIMS_MM's legacy 4:3 height (see sensor_height_mm docstring).
+        self.sensor_h_mm = sensor_height_mm(self.sensor_w_mm, res_info[0], res_info[1], sensor_h_mm_legacy)
         # BUGFIX: apply the measured MTF50/Nyquist ratio (k) like the optic
         # engine (calculations.py) does, so this view's PPM/DORI never
         # disagrees with the table/canvas for a camera with a measured k.

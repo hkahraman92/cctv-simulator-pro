@@ -8,7 +8,7 @@ import math
 from dataclasses import replace
 from typing import Dict, List, Any, Tuple, Optional
 from .models import CameraConfig, OpticResult, AnalysisRow, PPMLevel, TargetPoint
-from .config import SENSOR_DIMS_MM, RESOLUTIONS
+from .config import SENSOR_DIMS_MM, RESOLUTIONS, sensor_height_mm
 
 # PERF: bind hot math functions to module locals -> skips a global+attribute
 # lookup on every call inside the tight loops below.
@@ -119,8 +119,12 @@ def calculate_for_camera(
     with_recommendations: bool = True,   # PERF: optimize_tilt_calc throws these away
 ) -> OpticResult:
     focal_mm = camera.focal_min_mm if mode == "min" else camera.focal_max_mm
-    sensor_w_mm, sensor_h_mm = SENSOR_DIMS_MM[camera.sensor_name]
-    nominal_res_w, _ = RESOLUTIONS[camera.resolution_name]
+    sensor_w_mm, sensor_h_mm_legacy = SENSOR_DIMS_MM[camera.sensor_name]
+    nominal_res_w, nominal_res_h = RESOLUTIONS[camera.resolution_name]
+    # BUGFIX: VFOV must track the selected resolution's pixel aspect ratio,
+    # not SENSOR_DIMS_MM's legacy 4:3 height (see sensor_height_mm docstring)
+    # -- a 16:9 camera was getting an inflated 4:3 vertical FOV.
+    sensor_h_mm = sensor_height_mm(sensor_w_mm, nominal_res_w, nominal_res_h, sensor_h_mm_legacy)
     # Effective horizontal resolution: the label pixels narrowed by the measured
     # MTF50/Nyquist ratio (cctv_iq). Default 1.0 keeps output bit-identical.
     px_ratio = camera.effective_px_ratio if camera.effective_px_ratio > 0 else 1.0
