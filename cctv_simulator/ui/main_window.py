@@ -164,10 +164,14 @@ class DualViewCCTVDesignApp:
 
         try:
             from ..config import resource_path
-            logo_path = resource_path("assets/cctv_logo_36.png")
+            logo_path = resource_path("assets/cctv_logo_48.png")
             if logo_path.exists():
                 self.logo_img = tk.PhotoImage(file=str(logo_path), master=self.root)
-                ttk.Label(top_info, image=self.logo_img).pack(side=tk.LEFT, padx=(0, 8))
+                ttk.Label(top_info, image=self.logo_img).pack(side=tk.LEFT, padx=(0, 6))
+                ttk.Label(
+                    top_info, text="CCTV Simulator",
+                    font=("Segoe UI", 12, "bold"), foreground=COLORS["accent"],
+                ).pack(side=tk.LEFT, padx=(0, 12))
         except Exception:
             pass
 
@@ -612,7 +616,11 @@ class DualViewCCTVDesignApp:
 
         try:
             terrain_state = getattr(self, "_pending_terrain_state", None)
-            self.viewshed_window = TerrainViewshedWindow(self, terrain_state=terrain_state)
+            window = TerrainViewshedWindow(self, terrain_state=terrain_state)
+            # A failed build destroys its own window; do not keep a dead
+            # handle, or the next click finds a stale object and silently
+            # does nothing (same pattern as open_3d_view/open_optics_workbench).
+            self.viewshed_window = window if getattr(window, "build_ok", True) else None
             self._pending_terrain_state = None
         except Exception as exc:
             from ..errors import report
