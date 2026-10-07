@@ -21,6 +21,7 @@ from ..calculations import (
     mode_label,
 )
 from ..exporters import export_csv, export_png, export_pdf, export_excel
+from ..spec_writer import write_requirement_docx
 from ..theme import COLORS, StyledButton, fit_and_center_window
 from .canvas_drawer import CanvasDrawer, canvas_to_world, top_plot_from_rect
 from .spec_assistant import SpecAssistantWindow
@@ -571,11 +572,23 @@ class DualViewCCTVDesignApp:
         StyledButton(self.tab_export, text=_t("PDF Mühendislik Raporu (ASELSAN Formatı)"), command=self.export_pdf, bootstyle="danger").pack(fill=tk.X, pady=(0, 6))
         StyledButton(self.tab_export, text=_t("CSV Tablo Dışa Aktar"), command=self.export_csv, bootstyle="info").pack(fill=tk.X, pady=(0, 6))
         StyledButton(self.tab_export, text=_t("PNG Görsel Dışa Aktar"), command=self.export_png, bootstyle="info").pack(fill=tk.X, pady=(0, 10))
+        StyledButton(
+            self.tab_export, text=_t("Taslak Teknik Şartname (Word, TR+EN)"),
+            command=self.export_spec_docx, bootstyle="warning",
+        ).pack(fill=tk.X, pady=(0, 6))
         export_note = (
             "PDF Raporu ASELSAN Kurumsal Kimliği ve Savunma Sanayii standartlarında, "
             "DORI menzilleri, kamera matrisi, kör nokta ve şartname uyumluluk tablolarını içeren resmi mühendislik raporu olarak üretilir."
         )
         ttk.Label(self.tab_export, text=export_note, wraplength=260, foreground="#002D62").pack(fill=tk.X)
+        spec_note = (
+            "Taslak Şartname, seçili kameranın veritabanı broşür bilgilerini ve "
+            "mevcut kurulumla hesaplanan DORI menzillerini 'en az ... olmalıdır' "
+            "madde listesine çevirip Türkçe + İngilizce iki ayrı .docx dosyası "
+            "üretir. Bir ihale/teklif şartnamesi olarak kullanılmadan önce "
+            "incelenmesi gereken bir taslaktır."
+        )
+        ttk.Label(self.tab_export, text=spec_note, wraplength=260, foreground="#8A6100").pack(fill=tk.X, pady=(6, 0))
 
         lang_frame = ttk.LabelFrame(self.tab_export, text="🌐 " + _t("Dil / Language"), padding=6)
         lang_frame.pack(fill=tk.X, pady=(12, 0))
@@ -1827,3 +1840,28 @@ class DualViewCCTVDesignApp:
             self.status_var.set(f"Excel kaydedildi: {Path(path).name}")
         except Exception as exc:
             messagebox.showerror("Excel dışa aktar", str(exc))
+
+    def export_spec_docx(self):
+        if not self.last_all_results:
+            self.calculate(show_errors=True)
+        camera = self._get_active_camera()
+        path = filedialog.asksaveasfilename(
+            title="Taslak teknik şartname (Word) dışa aktar",
+            defaultextension=".docx",
+            initialfile=f"{camera.name}-sartname.docx",
+            filetypes=[("Word belgesi", "*.docx"), ("Tüm dosyalar", "*.*")],
+        )
+        if not path:
+            return
+        base = Path(path)
+        stem = base.stem
+        path_tr = base.with_name(f"{stem}-TR.docx")
+        path_en = base.with_name(f"{stem}-EN.docx")
+        try:
+            model = load_camera_library().get(camera.model_name, {})
+            results = self.last_all_results.get(camera.name, [])
+            write_requirement_docx(str(path_tr), camera, model, results, lang="tr")
+            write_requirement_docx(str(path_en), camera, model, results, lang="en")
+            self.status_var.set(f"Taslak şartname kaydedildi: {path_tr.name}, {path_en.name}")
+        except Exception as exc:
+            messagebox.showerror("Taslak teknik şartname", str(exc))

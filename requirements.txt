@@ -6,6 +6,7 @@ numpy>=1.24
 openpyxl>=3.1
 reportlab>=4.0
 pypdf>=4.0        # PDF şartname metin çıkarımı (kural tabanlı analiz). Yoksa yalnız Gemini yolu.
+python-docx>=1.1  # Taslak teknik şartname (.docx) üretimi (spec_writer.py). Yoksa yalnız o düğme devre dışı.
 
 # Optional: real GeoTIFF / DEM file loading in terrain_loader.load_geotiff_or_dem().
 # Without it the app falls back to reading the file as a greyscale heightmap,

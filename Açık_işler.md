@@ -1,3 +1,49 @@
+## -10. Yeni özellik: Taslak Teknik Şartname oluşturucu (Word, TR+EN) — ✅ eklendi (2026-10-07)
+
+Kullanıcı isteği: *"Kameraların taslak teknik isterler dokümanı yazan bir
+modül... seçtiğim kameranın teknik isterler şartname formatında Türkçe ve
+İngilizce dokümanını versin."* Kapsam önceden iki soruyla netleştirildi:
+içerik **broşür verisi + hesaplanan DORI performansı** birlikte, çıktı
+**Word (.docx)**.
+
+`cctv_simulator/spec_writer.py` (yeni, Tk'siz): kamera veritabanının ~70
+alanlık genişletilmiş broşür şemasını (`database.camera_db_extended_field_
+specs`) 7 bölüme ayırıp her dolu alanı "en az X (veya dengi/üstü)
+sağlanmalıdır" madde cümlesine çeviriyor; **Bölüm 2 (Optik Performans)**
+broşürden değil doğrudan `calculate_for_camera`'nın o kameranın **mevcut
+kurulumuyla** (odak/tilt/direk) hesapladığı `OpticResult` satırlarından
+geliyor — yalnızca gerçekten ulaşılabilen (`status == "Aktif"`) EN 62676-4
+DORI kademeleri (`compliance_standards.DORI_PPM`'den, tek kaynak) "X
+metrede en az Y px/m" cümlesi olarak yazılıyor; kamera karşılayamadığı bir
+seviye asla ister olarak uydurulmuyor. İngilizce için her alan için ayrı
+bir etiket sözlüğü var; serbest metin broşür değerleri (sertifika kodu,
+codec adı, protokol listesi vb.) çevrilmiyor — zaten büyük ölçüde dil
+nötr teknik kısaltmalar.
+
+`main_window.py` "Çıktı" sekmesine "Taslak Teknik Şartname (Word, TR+EN)"
+düğmesi eklendi; seçili kamera + `database.load_camera_library()`'den o
+modelin broşür kaydı + `last_all_results`'tan hesaplanmış DORI sonuçlarıyla
+iki ayrı dosya (`<ad>-TR.docx`, `<ad>-EN.docx`) üretiyor. `python-docx`
+yeni bir çalışma-zamanı bağımlılığı (`requirements.txt`'e eklendi); eksikse
+yalnızca bu düğme `RuntimeError` ile başarısız olup mesaj kutusu gösteriyor,
+uygulamanın geri kalanı etkilenmiyor (Kural 7).
+
+**Gerçek UI akışıyla (sahte veri değil) uçtan uca doğrulama sırasında bir
+bug bulundu ve düzeltildi:** termal kameralar (örn. ASELSAN UMA T10)
+kütüphanede `ir_range_m=0` / `min_lux=0`'ı kasıtlı "uygulanamaz" işareti
+olarak kullanıyor (pasif sensör, aktif IR aydınlatıcı yok) — ilk sürüm bunu
+"en az 0 m / 0 lux sağlanmalıdır" diye anlamsız bir ister satırına
+çeviriyordu, çünkü broşür sözlüğündeki ham `0.0` değeri `has_camera_db_
+value`'ya "dolu" görünüyordu ve CameraConfig tarafındaki doğru atlama
+mantığını by-pass ediyordu. Çekirdek alanlar (`sensor_name`,
+`resolution_name`, `ir_range_m`, `min_lux`) artık yalnızca `CameraConfig`'in
+kendi (uygulanmış) değerinden okunuyor, ham broşür sözlüğüne asla geri
+düşmüyor. `tests/test_spec_writer.py` (6 test) bu senaryoyu da kapsıyor.
+
+Tam `pytest` (165) + `ruff check` yeşil; gerçek Tk penceresi üzerinden
+(withdraw değil, gerçek geometriyle) kamera modeli seçilip düğmeye
+basıldığında TR/EN dosyaların doğru üretildiği doğrulandı.
+
 ## -9. Kullanıcı bildirimi: VFOV her yerde yanlış — sensör tablosu sabit 4:3 varsayıyordu — ✅ düzeltildi (2026-09-18)
 
 Kullanıcı, PDF'teki kamera matrisinde "HFOV / VFOV" sütununu inceleyip
