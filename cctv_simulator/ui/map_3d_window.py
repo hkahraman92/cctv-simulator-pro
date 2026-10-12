@@ -103,6 +103,12 @@ _CUE_LEVELS: List[Tuple[str, float]] = [
     ("Gözlem (Observation, 62,5 px/m)", 62.5),
 ]
 _CUE_PPM_BY_LABEL = {lbl: ppm for lbl, ppm in _CUE_LEVELS}
+# Mixed perimeter (fixed + PTZ on every Nth pole).
+_PTZ_NONE = "— PTZ yok —"
+_PATROL_SPANS = [("360° sürekli dönüş", 360.0),
+                 ("İzlenen tarafa 180° sektör", 180.0),
+                 ("İzlenen tarafa 90° sektör", 90.0)]
+_PATROL_SPAN_BY_LABEL = dict(_PATROL_SPANS)
 _WATCH_SIDE_TO_LABEL = {v: k for k, v in _WATCH_SIDE_BY_LABEL.items()}
 
 
@@ -201,6 +207,11 @@ class TerrainViewshedWindow:
         self.mc_stat_var = tk.StringVar(value="-")
         self.mc_overlap_var = tk.StringVar(value="-")
         self.ptz_stat_var = tk.StringVar(value="Henüz hesaplanmadı.")
+        self.mix_ptz_model_var = tk.StringVar(value=_PTZ_NONE)
+        self.mix_every_n_var = tk.IntVar(value=4)
+        self.mix_patrol_var = tk.StringVar(value=_PATROL_SPANS[1][0])
+        self.mix_stat_var = tk.StringVar(value="Henüz hesaplanmadı.")
+        self._mixed = None               # perimeter_ptz.MixedPerimeterResult
         self.ptz_dwell_var = tk.DoubleVar(value=6.0)
         # PTZ modes beyond the preset tour (ptz_schedule / ptz_fusion)
         self.ptz_mode_var = tk.StringVar(value=_PTZ_MODES[0])
@@ -217,7 +228,7 @@ class TerrainViewshedWindow:
         self._sweep_result = None        # ptz_schedule.SweepResult
         self._cue_result = None          # ptz_fusion.CueResponse
         self._cue_grid = None            # response grid shown (maybe limited to detected cells)
-        self._ptz_layer = "tour"         # which PTZ result the "revisit" layer shows
+        self._ptz_layer = "tour"         # which PTZ result the "revisit" layer shows ("tour" / "sweep" / "mixed")
         self._bg_busy = False
         import datetime as _dtmod
         self.glare_date_var = tk.StringVar(value=str(_dtmod.date.today()))
@@ -367,6 +378,11 @@ class TerrainViewshedWindow:
             "overlap_pct": self.overlap_pct_var.get(),
             "line_mode": _LINE_MODE_BY_LABEL.get(self.line_mode_var.get(), "facility"),
             "watch_side": _WATCH_SIDE_BY_LABEL.get(self.watch_side_var.get(), "right"),
+            "mixed_ptz": {
+                "camera": "" if self.mix_ptz_model_var.get() == _PTZ_NONE else self.mix_ptz_model_var.get(),
+                "every_n": self._read_int_safe(self.mix_every_n_var, 4),
+                "patrol_span_deg": _PATROL_SPAN_BY_LABEL.get(self.mix_patrol_var.get(), 180.0),
+            },
         }
 
     def import_terrain_state(self, state: dict) -> None:
@@ -410,6 +426,15 @@ class TerrainViewshedWindow:
                 self.watch_side_var.set(watch_side_label)
             if hasattr(self, "frame_watch_side"):
                 self._update_watch_side_visibility()
+            mixed = state.get("mixed_ptz") or {}
+            if mixed.get("camera") in self.camera_library:
+                self.mix_ptz_model_var.set(str(mixed["camera"]))
+            if "every_n" in mixed:
+                self.mix_every_n_var.set(max(1, int(mixed["every_n"])))
+            span_label = next((lbl for lbl, v in _PATROL_SPANS
+                               if v == float(mixed.get("patrol_span_deg", -1))), None)
+            if span_label:
+                self.mix_patrol_var.set(span_label)
 
             placements = state.get("placements") or []
             if placements:
@@ -803,6 +828,8 @@ class TerrainViewshedWindow:
         scale_ph = ttk.Scale(grp_params, from_=3.0, to=12.0, variable=self.mast_height_var, orient=tk.HORIZONTAL, command=self._on_slider_changed)
         scale_ph.pack(fill=tk.X, pady=(0, 4))
 
+        self._build_mixed_ptz_group(parent)
+
         grp_cov = ttk.LabelFrame(parent, text="🗺️ Birleşik Kapsama (çok kameralı)", padding=6)
         grp_cov.pack(fill=tk.X, pady=(0, 6))
         ttk.Checkbutton(grp_cov, text="Kapsama ısı haritasını göster",
@@ -832,6 +859,97 @@ class TerrainViewshedWindow:
 
         StyledButton(parent, text="💾 Kamera Listesi & BOM İndir (.xlsx / .csv)", command=self._export_perimeter_bom, bootstyle="primary-outline").pack(fill=tk.X, pady=(4, 0))
         self._build_combined_panel(parent)
+
+    # ── mixed perimeter: PTZ co-mounted on every Nth fixed pole ──
+    def _ptz_library_models(self):
+        from ..database import is_ptz_camera
+        return [n for n, d in self.camera_library.items() if is_ptz_camera(dict(d, model_name=n))]
+
+    def _camera_from_library(self, name):
+        data = self.camera_library.get(name)
+        if data is None:
+            return None
+        cam = CameraConfig(name=name, model_name=name,
+                           focal_min_mm=float(data.get("focal_min_mm", 4.0)),
+                           focal_max_mm=float(data.get("focal_max_mm", 12.0)),
+                           camera_type=str(data.get("camera_type", "")),
+                           effective_px_ratio=float(data.get("effective_px_ratio", 1.0) or 1.0))
+        if data.get("sensor_name") in SENSOR_DIMS_MM:
+            cam.sensor_name = data["sensor_name"]
+        if data.get("resolution_name") in RESOLUTIONS:
+            cam.resolution_name = data["resolution_name"]
+        return cam
+
+    def _build_mixed_ptz_group(self, parent):
+        grp = ttk.LabelFrame(parent, text="🔄 Karma Dizilim: Sabit + PTZ", padding=6)
+        grp.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(grp, text="PTZ modeli:").pack(anchor="w")
+        combo = ttk.Combobox(grp, textvariable=self.mix_ptz_model_var, state="readonly",
+                             values=[_PTZ_NONE] + self._ptz_library_models())
+        combo.pack(fill=tk.X, pady=(2, 4))
+        combo.bind("<<ComboboxSelected>>", lambda e: self.distribute_perimeter_cameras())
+        row = ttk.Frame(grp)
+        row.pack(fill=tk.X, pady=2)
+        ttk.Label(row, text="Her N direkte bir PTZ:").pack(side=tk.LEFT)
+        ttk.Spinbox(row, from_=1, to=50, increment=1, width=6, textvariable=self.mix_every_n_var,
+                    command=self.distribute_perimeter_cameras).pack(side=tk.RIGHT)
+        ttk.Label(grp, text="Devriye:").pack(anchor="w")
+        combo_p = ttk.Combobox(grp, textvariable=self.mix_patrol_var, state="readonly",
+                               values=[lbl for lbl, _ in _PATROL_SPANS])
+        combo_p.pack(fill=tk.X, pady=(2, 4))
+        combo_p.bind("<<ComboboxSelected>>", lambda e: self.distribute_perimeter_cameras())
+        wrap_label(ttk.Label(grp, foreground=TEXT_MUTED, text=(
+            "PTZ aynı direğe takılır. Çit kapsaması ve boşluklar yalnız sabit kameralardan "
+            "(PTZ bir yeri ancak zaman zaman görür); PTZ'nin katkısı aşağıdaki hesapta.")),
+            ).pack(fill=tk.X, pady=(0, 4))
+        StyledButton(grp, text="🔄 Karma Kapsamayı Hesapla (devriye + tespit→teşhis)",
+                     command=self._run_mixed_perimeter, bootstyle="success").pack(fill=tk.X, pady=(0, 4))
+        self._mix_stat_label = wrap_label(ttk.Label(grp, textvariable=self.mix_stat_var,
+                                                    foreground=ACCENT_CYAN))
+        self._mix_stat_label.pack(fill=tk.X)
+
+    def _mixed_ptz_camera(self):
+        name = self.mix_ptz_model_var.get()
+        return None if name == _PTZ_NONE else self._camera_from_library(name)
+
+    def _run_mixed_perimeter(self):
+        from ..perimeter_ptz import evaluate_mixed_perimeter
+        plan = self.perimeter_plan
+        ptz_cam = self._mixed_ptz_camera()
+        if not plan or not plan.ptz_cameras or ptz_cam is None:
+            messagebox.showinfo("Karma Kapsama",
+                                "Önce bir PTZ modeli seçip 'Otomatik Diz' ile çiti dizin.",
+                                parent=self.window)
+            return
+        weather = self.weather_var.get()
+        terrain, fixed_cam = self.terrain, self.current_camera
+
+        def compute():
+            return evaluate_mixed_perimeter(terrain, plan, fixed_cam, ptz_cam,
+                                            visibility_km=WEATHER_PRESETS.get(weather, 40.0),
+                                            weather=weather)
+
+        def done(r):
+            self._mixed = r
+            self._multi_vs = r.static
+            self._cue_grid = r.detect_to_identify_s
+            self._ptz_layer = "mixed"
+            f = r.fused
+            d2i = (f"tespit edilen {r.detected_area_m2 / 1e4:.1f} ha'nın %{r.identifiable_pct:.0f}'inde "
+                   f"teşhis medyan {r.median_d2i_s:.1f} / %90 {r.p90_d2i_s:.1f} / en kötü "
+                   f"{r.worst_d2i_s:.1f} sn" if r.identifiable_area_m2 else
+                   "sabit kameraların tespit ettiği hiçbir yerde PTZ teşhise ulaşamıyor")
+            self.mix_stat_var.set(
+                f"{plan.ptz_count} PTZ · Algılama: sürekli {f.continuous_area_m2['detect'] / 1e4:.1f} ha"
+                f" + yalnız PTZ {f.intermittent_area_m2['detect'] / 1e4:.1f} ha (en kötü revizit "
+                f"{f.worst_intermittent_revisit_s['detect']:.0f} sn) · {d2i}")
+            if r.static is not None:
+                self.mc_stat_var.set(f"%{r.static.coverage_pct:.1f} ({len(plan.placed_cameras)} sabit kamera)")
+            self.show_multi_var.set(True)
+            self.multi_overlay_var.set("fused")
+            self._on_overlay_changed()
+
+        self._run_in_background("Karma kapsama", compute, done, stat_var=self.mix_stat_var)
 
     # ── inline PTZ preset-tour panel (single-camera tab; shown only for PTZ) ──
     def _build_ptz_panel(self, parent):
@@ -969,24 +1087,14 @@ class TerrainViewshedWindow:
 
     # ── multi-camera unified viewshed ──
     def _placements_from_perimeter(self):
-        from ..viewshed_3d import CameraPlacement
+        # perimeter_ptz.plan_placements evaluates each pole at the focal the
+        # planner used. BUGFIX: this used to pass lens_mode="max" for every
+        # non-corner pole, so a plan laid out with the wide lens was scored
+        # at full zoom (different FOV, range and dead zone than planned).
+        from ..perimeter_ptz import plan_placements
         if not self.perimeter_plan or not self.perimeter_plan.placed_cameras:
             return []
-        out = []
-        for c in self.perimeter_plan.placed_cameras:
-            lm = "max" if "köşe" not in c.camera_model else "min"
-            # BUGFIX: this used to floor every camera's range at the FIRST
-            # placed camera's effective_range_m (max(c.effective_range_m,
-            # rng)). Corner/end guards are deliberately placed with a much
-            # shorter corner_range (wide-angle, small dead zone); flooring
-            # them at pole #1's long-lens reach made the combined viewshed
-            # credit those corner cameras with coverage far past what they
-            # actually frame.
-            out.append(CameraPlacement(
-                x_m=c.x_m, y_m=c.y_m, mast_height_m=c.mast_height_m, camera=self.current_camera,
-                lens_mode=lm, pan_deg=c.pan_deg, tilt_deg=c.tilt_deg,
-                max_range_m=c.effective_range_m, label=f"Direk {c.pole_id}"))
-        return out
+        return plan_placements(self.perimeter_plan, self.current_camera)
 
     def _run_multi_viewshed(self):
         from ..viewshed_3d import calculate_multi_camera_viewshed, placement_bounds_warnings
@@ -1083,16 +1191,17 @@ class TerrainViewshedWindow:
         self._render_map_canvas()
 
     # ── background work (sweep / slew-to-cue) ──
-    def _run_in_background(self, label, compute, on_done):
+    def _run_in_background(self, label, compute, on_done, stat_var=None):
         """Run ``compute()`` (numpy only -- it must not touch Tk) on a worker
         thread; poll from the Tk loop and hand the result to ``on_done``.
         Polling instead of after(0) from the worker, and the error copied to
         a string before the except block ends (CLAUDE.md "Tk iş parçacığı")."""
+        stat_var = stat_var or self.ptz_stat_var
         if self._bg_busy:
-            self.ptz_stat_var.set("Önceki hesap sürüyor…")
+            stat_var.set("Önceki hesap sürüyor…")
             return
         self._bg_busy = True
-        self.ptz_stat_var.set(f"{label} hesaplanıyor…")
+        stat_var.set(f"{label} hesaplanıyor…")
         self.window.config(cursor="watch")
         box = {}
 
@@ -1115,7 +1224,7 @@ class TerrainViewshedWindow:
             self._bg_busy = False
             self.window.config(cursor="")
             if "error" in box:
-                self.ptz_stat_var.set("Hata: " + box["error"])
+                stat_var.set("Hata: " + box["error"])
                 messagebox.showerror(label, box["error"], parent=self.window)
                 return
             on_done(box["result"])
@@ -1246,6 +1355,8 @@ class TerrainViewshedWindow:
         from ..ptz_fusion import PTZCoverage, fuse_coverage
         if self._multi_vs is None:
             return None
+        if self._ptz_layer == "mixed" and self._mixed is not None and self._mixed.static is self._multi_vs:
+            return self._mixed.fused
         if self._ptz_layer == "sweep" and self._sweep_result is not None:
             ptz = PTZCoverage.from_sweep(self._sweep_result)
         elif self._ptz_result is not None:
@@ -1276,7 +1387,11 @@ class TerrainViewshedWindow:
         ov = np.zeros((rows, cols, 4), dtype=np.uint8)
         if mode == "revisit":
             glimpse = None
-            if self._ptz_layer == "sweep" and self._sweep_result is not None:
+            if self._ptz_layer == "mixed" and self._mixed is not None:
+                sw = self._mixed.sweeps
+                g = np.minimum.reduce([x.revisit_grid for x in sw])
+                glimpse = np.logical_or.reduce([x.glimpse_mask for x in sw]) & ~np.isfinite(g)
+            elif self._ptz_layer == "sweep" and self._sweep_result is not None:
                 g, glimpse = self._sweep_result.revisit_grid, self._sweep_result.glimpse_mask
             elif self._ptz_result is not None:
                 g = self._ptz_result.revisit_grid
@@ -1944,11 +2059,19 @@ class TerrainViewshedWindow:
             weather=weather,
             line_mode=line_mode,
             watch_side=watch_side,
+            ptz_camera=self._mixed_ptz_camera(),
+            ptz_every_n=max(1, int(self._read_int_safe(self.mix_every_n_var, 4))),
+            ptz_patrol_span_deg=_PATROL_SPAN_BY_LABEL.get(self.mix_patrol_var.get(), 180.0),
         )
+        self._mixed = None
+        self.mix_stat_var.set("Henüz hesaplanmadı." if self.perimeter_plan.ptz_cameras else "PTZ yok.")
         self._recompute_coverage_grid()
 
         p = self.perimeter_plan
-        self.bom_cam_count_var.set(f"{p.camera_count} Adet Kamera / Direk")
+        if p.ptz_cameras:
+            self.bom_cam_count_var.set(f"{len(p.placed_cameras)} sabit + {p.ptz_count} PTZ / {p.pole_count} direk")
+        else:
+            self.bom_cam_count_var.set(f"{p.camera_count} Adet Kamera / Direk")
         if p.total_fence_length_m >= 1000:
             self.bom_fence_len_var.set(f"{p.total_fence_length_m:,.0f} m ({p.total_fence_length_m / 1000.0:.2f} km)")
         else:
@@ -1965,6 +2088,13 @@ class TerrainViewshedWindow:
         self.bom_storage_var.set(f"{p.estimated_storage_30days_tb:.1f} TB")
 
         self.recalculate_viewshed()
+
+    @staticmethod
+    def _read_int_safe(var, default):
+        try:
+            return int(var.get())
+        except (tk.TclError, ValueError):
+            return default
 
     def _export_engineering_report(self):
         """Görüş alanı + birleşik kapsama + çevre çiti planını tek ASELSAN raporuna aktarır."""
@@ -2055,6 +2185,10 @@ class TerrainViewshedWindow:
                 writer.writerow(["# Not", getattr(self.terrain, "source_note", "").replace("\n", " ")])
                 _pl = self.perimeter_plan
                 writer.writerow(["# Çit kapsaması (geometrik)", f"%{_pl.coverage_percentage:.1f}"])
+                if _pl.ptz_cameras:
+                    writer.writerow(["# PTZ (aynı direğe)", f"{_pl.ptz_count} adet · devriye {self.mix_patrol_var.get()}"
+                                     " · Pan = devriye merkezi · Etkin menzil = tele uçta teşhis erişimi"
+                                     " · çit kapsamasına sayılmaz"])
                 if _pl.gaps:
                     writer.writerow(["# Kapsanmayan bölümler", f"{len(_pl.gaps)} adet"])
                     for _gi, g in enumerate(_pl.gaps, 1):
@@ -2082,11 +2216,21 @@ class TerrainViewshedWindow:
                             _fmt_glare(worst_glare_over_day(lat, lon, _summer, cam.pan_deg, cam.hfov_deg)),
                         ]
                     writer.writerow(row)
+                for cam in self.perimeter_plan.ptz_cameras:
+                    row = [
+                        cam.pole_id, cam.camera_model, cam.sensor_name, cam.resolution_name,
+                        cam.x_m, cam.y_m, cam.ground_z_m, cam.mast_height_m, cam.total_z_m,
+                        cam.pan_deg, cam.tilt_deg, cam.focal_mm, cam.hfov_deg,
+                        cam.effective_range_m, cam.dead_zone_m,
+                    ]
+                    if glare_ready:
+                        row += ["— (PTZ devriye)", "—"]
+                    writer.writerow(row)
             note = "" if measured else (
                 "\n\n⚠ Arazi yükseltisi TEMSİLİ (ölçülmüş DEM değil). "
                 "Zemin rakımı, toplam irtifa ve kör nokta değerleri bağlayıcı değildir."
             )
-            messagebox.showinfo("BOM Aktarıldı", f"Toplam {len(self.perimeter_plan.placed_cameras)} kameralık perimetre listesi başarıyla kaydedildi:\n{file_path}{note}")
+            messagebox.showinfo("BOM Aktarıldı", f"Toplam {self.perimeter_plan.camera_count} kameralık perimetre listesi başarıyla kaydedildi:\n{file_path}{note}")
         except Exception as exc:
             messagebox.showerror("Kayıt Hatası", f"Dosya kaydedilemedi:\n{exc}")
 
@@ -2469,6 +2613,23 @@ class TerrainViewshedWindow:
                         cv.create_text(c_px, c_py - rad - 5, text=str(cam.pole_id), anchor="s",
                                        fill="#FFFFFF" if big else "#9FB3C8",
                                        font=("Segoe UI", 8 if big else 7, "bold" if big else "normal"))
+
+                # Co-mounted PTZs: patrol sector drawn at the slew-to-cue reach
+                # (where the tele end still identifies), magenta ring on the pole.
+                for pc in self.perimeter_plan.ptz_cameras:
+                    c_px, c_py = self.world_to_screen_px(pc.x_m, pc.y_m)
+                    e_px, _ = self.world_to_screen_px(pc.x_m + pc.effective_range_m, pc.y_m)
+                    r_px = abs(e_px - c_px)
+                    box = (c_px - r_px, c_py - r_px, c_px + r_px, c_py + r_px)
+                    if pc.patrol_span_deg >= 359.9:
+                        cv.create_oval(*box, outline="#E040FB", width=1, dash=(2, 3))
+                    else:
+                        # Tk arcs: degrees counter-clockwise from east; bearings
+                        # are clockwise from north.
+                        cv.create_arc(*box, start=90.0 - (pc.pan_deg + pc.patrol_span_deg / 2.0),
+                                      extent=pc.patrol_span_deg, style=tk.ARC,
+                                      outline="#E040FB", width=1, dash=(2, 3))
+                    cv.create_oval(c_px - 8, c_py - 8, c_px + 8, c_py + 8, outline="#E040FB", width=2)
 
                 # Uncovered fence stretches, drawn thick red over the fence line.
                 for g in getattr(self.perimeter_plan, "gaps", []):

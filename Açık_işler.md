@@ -1,3 +1,45 @@
+## -20. PTZ/viewshed yol haritası — Adım 7: çevre çitinde karma (sabit + PTZ) dizilim — ✅ (2026-10-12)
+
+Planlayıcı: `generate_perimeter_plan(..., ptz_camera=, ptz_every_n=,
+ptz_patrol_span_deg=, ptz_target_ppm=)` her N. normal direğe aynı direkte bir
+PTZ ekler → `PerimeterPlanResult.ptz_cameras` (ayrı liste). Sabit plan, çit
+kapsaması ve boşluklar PTZ'den etkilenmez (PTZ bir yeri ancak aralıklı görür).
+Devriye merkezi: tesiste çitin dış normali (kapalı halkada sarım yönü, açık
+hatta merkezden uzağa), sınır/otoyolda direğin baktığı yön. PTZ menzili = tele
+uçta teşhis (250 px/m) erişimi. `camera_count` sabit + PTZ, `pole_count` aynı,
+bant genişliği modele göre.
+
+Yeni `cctv_simulator/perimeter_ptz.py`: `plan_placements`, `patrol_for`,
+`evaluate_mixed_perimeter` → sabit birleşik viewshed + PTZ başına tarama ve
+cue + `fuse_coverage` + tespit→teşhis (en hızlı PTZ). 2×2 km tepelik arazide
+104 sabit kamera: 17 PTZ (her 6. direk) Algılamaya 7,5 ha sürekliye ek 6,8 ha
+aralıklı (en kötü revizit 20 sn) katıyor; sabitlerin tespit ettiği alanın
+%95'inde PTZ medyan 3,3 sn'de teşhise geçiyor. Hesap ~0,44 sn.
+
+BUGFIX: birleşik viewshed çit direklerini her zaman `lens_mode="max"` ile
+değerlendiriyordu; geniş lensle dizilen plan tam zoomda (başka FOV / menzil /
+kör nokta) puanlanıyordu. Artık planın odağı (`focal_mm_override`).
+
+Arayüz: çevre çiti sekmesinde "Karma Dizilim: Sabit + PTZ" grubu (model, her N
+direkte, devriye 360/180/90°, "Karma Kapsamayı Hesapla" arka planda); katmanlar
+Sabit+PTZ / Revizit / Tepki süresi karma sonucu gösterir; haritada PTZ mor halka +
+teşhis erişiminde devriye yayı; BOM CSV ve mühendislik raporunda PTZ satırları;
+proje kaydı `mixed_ptz` bloğu.
+
+Doğrulama: `tests/test_perimeter_ptz.py` (10 test; 5 mutasyonun hepsi
+yakalandı), tam pytest geçti, ruff temiz. Gerçek pencere sürüşü (UMA T5, her 3.
+direk, 180°): 144 sabit + 47 PTZ, karma hesap, üç katman, kayıt/yükleme, PTZ'siz
+hesapta uyarı. Ekran görüntüsü alınamadı (ekran kilitli / görünmez masaüstü —
+yakalama duvar kâğıdı döndürdü); yerine tuval öğeleri doğrulandı: 47 devriye yayı
+doğru açıda, yeni grup 543×446 px, çökmüş widget yok.
+
+Kalan: mühendislik raporu karma kapsama sonuçlarını (füzyon alanları,
+tespit→teşhis) içermiyor; `compute_coverage_grid` hâlâ ayrı çok-kamera motoru
+(direk görünürlük haritasını paylaşmıyor); birden çok PTZ'nin revizit fazları
+iç içe sayılmıyor (en küçük tekil boşluk, muhafazakâr); kütüphanede yalnız
+termal PTZ var (UMA T5/T10) — görünür bant PTZ modeli eklenmeli; ekran
+görüntüsüyle görsel kontrol bekliyor.
+
 ## -19. PTZ/viewshed yol haritası — Adım 6: arayüz (tarama, tespit→teşhis, Sabit+PTZ katmanı) — ✅ (2026-10-12)
 
 `map_3d_window` PTZ paneli artık dört mod (`_PTZ_MODES` combobox):

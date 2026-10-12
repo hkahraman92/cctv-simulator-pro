@@ -1046,10 +1046,18 @@ def _coverage_rows(coverage) -> List[List[str]]:
     ]
 
 
+def _pole_label(c) -> str:
+    """Pole number; a co-mounted PTZ row says so (pan = patrol centre,
+    range = tele identification reach)."""
+    return f"{c.pole_id} PTZ" if getattr(c, "patrol_span_deg", 0.0) else str(c.pole_id)
+
+
 def _perimeter_rows(perim) -> List[List[str]]:
+    ptz = getattr(perim, "ptz_cameras", None) or []
     rows = [
         ["Toplam çevre çiti", f"{perim.total_fence_length_m:,.0f} m"],
-        ["Kamera / direk adedi", f"{perim.camera_count}"],
+        (["Kamera adedi", f"{len(perim.placed_cameras)} sabit + {len(ptz)} PTZ (aynı direkte)"]
+         if ptz else ["Kamera / direk adedi", f"{perim.camera_count}"]),
         ["Ortalama direk aralığı", f"{perim.avg_spacing_m:.1f} m"],
         ["Hedef piksel yoğunluğu", f"{perim.target_ppm:g} px/m"],
         ["Çit kapsaması (geometrik + LOS)", f"% {perim.coverage_percentage:.1f}"],
@@ -1118,8 +1126,8 @@ def export_engineering_report_csv(path: str, *, project_name: str, terrain, came
             w.writerow([])
             w.writerow(["Direk No", "X (m)", "Y (m)", "Zemin (m)", "Direk (m)",
                         "Pan (°)", "Tilt (°)", "Odak (mm)", "HFOV (°)", "Menzil (m)", "Kör Nokta (m)"])
-            for c in perimeter.placed_cameras:
-                w.writerow([c.pole_id, c.x_m, c.y_m, c.ground_z_m, c.mast_height_m,
+            for c in list(perimeter.placed_cameras) + list(getattr(perimeter, "ptz_cameras", [])):
+                w.writerow([_pole_label(c), c.x_m, c.y_m, c.ground_z_m, c.mast_height_m,
                             c.pan_deg, c.tilt_deg, c.focal_mm, c.hfov_deg,
                             c.effective_range_m, c.dead_zone_m])
 
@@ -1246,9 +1254,9 @@ def export_engineering_report_pdf(path: str, *, project_name: str, terrain, came
         if perimeter.placed_cameras:
             head = ["Direk", "X", "Y", "Zemin", "Direk b.", "Pan°", "Tilt°", "Odak", "HFOV°", "Menzil", "Kör N."]
             data = [[Paragraph(h, S["cellh"]) for h in head]]
-            for c in perimeter.placed_cameras:
+            for c in list(perimeter.placed_cameras) + list(getattr(perimeter, "ptz_cameras", [])):
                 data.append([Paragraph(str(x), S["cell"]) for x in (
-                    c.pole_id, f"{c.x_m:.0f}", f"{c.y_m:.0f}", f"{c.ground_z_m:.0f}", f"{c.mast_height_m:.1f}",
+                    _pole_label(c), f"{c.x_m:.0f}", f"{c.y_m:.0f}", f"{c.ground_z_m:.0f}", f"{c.mast_height_m:.1f}",
                     f"{c.pan_deg:.0f}", f"{c.tilt_deg:.1f}", f"{c.focal_mm:g}", f"{c.hfov_deg:.0f}",
                     f"{c.effective_range_m:.0f}", f"{c.dead_zone_m:.1f}")])
             ct = Table(data, colWidths=[page_w / 11] * 11, repeatRows=1)

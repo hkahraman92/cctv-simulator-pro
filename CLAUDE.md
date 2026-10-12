@@ -361,6 +361,10 @@ sayısıyla ağırlıklı, DORI metrikleri yalnız parse edilenler üzerinden). 
 - `test_ptz_tour.py` — tur periyodu (dwell + slew + settle), zoom geçiş süresi,
   revizit = periyot − dwell (tek preset), zıt presetlerde revizit boşluğu,
   hiç-görülmeyende ∞.
+- `test_perimeter_ptz.py` — PTZ yokken plan bit-aynı, her N. normal direğe
+  takılma, sarım yönünden bağımsız dışa bakış, sınır modunda izlenen taraf,
+  tele teşhis erişimi, `patrol_for`, planın odağıyla yerleşim, uçtan uca karma
+  değerlendirme (tespit→teşhis = en hızlı PTZ).
 - `test_database.py` — `is_ptz_camera` (yerleşik ASELSAN UMA T5/Fix, anahtar
   kelime, açık `is_ptz` alanı önceliği).
 - `test_i18n.py` — Türkçe kimlik, İngilizce çeviri + geri düşüş, `{}` biçim,
@@ -435,6 +439,28 @@ hareket `ptz_tour.move_time_s` (tur geçişleriyle **aynı** model; tur
 (`CUE_NO_LOS` / `CUE_LENS` / `CUE_TILT` / `CUE_ATMOSPHERE` /
 `CUE_OUT_OF_RANGE`, Türkçe `CUE_REASONS`). `detect_then_identify(static, cue)`:
 yalnız sabit kameraların tespit ettiği hücrelerde.
+
+**Karma çevre çiti: sabit + PTZ (`perimeter_ptz.py`).**
+`generate_perimeter_plan(..., ptz_camera=, ptz_every_n=, ptz_patrol_span_deg=,
+ptz_target_ppm=)` her N. normal direğe (1., N+1., …; köşe/uç guard'ları değil)
+**aynı direğe** bir PTZ takar → `PerimeterPlanResult.ptz_cameras` (ayrı liste;
+`placed_cameras` yalnız sabit kalır — çit boşluk analizi, kapsama ısı haritası,
+parlama ve BOM satırları **sürekli** kapsamayı anlatır). PTZ satırında `pan_deg`
+devriye merkezi (tesis: çitin dış normali — kapalı halkada sarım yönünden, açık
+hatta merkezden uzağa; sınır/otoyol: direğin baktığı yön), `patrol_span_deg`
+(360 = dönüş), `effective_range_m` = tele uçta `ptz_target_ppm`'e (vars. Teşhis
+250) ulaşılan yer mesafesi. `pole_count` değişmez, `camera_count` = sabit + PTZ,
+bant genişliği modele göre (`_bitrate_mbps`). `evaluate_mixed_perimeter(terrain,
+plan, fixed_cam, ptz_cam)` → `MixedPerimeterResult`: sabit direkler
+`calculate_multi_camera_viewshed`, her PTZ `evaluate_sweep` (`patrol_for`:
+Rotation360 / SectorPatrol) + `cue_response` (aynı direk raster'ı, tek önbellek
+girişi), `fuse_coverage`, en hızlı PTZ'nin tepkisi (`cue_s`) ve
+`detect_to_identify_s` + özet (tespit edilen alanın yüzde kaçı teşhis
+edilebilir, medyan/%90/en kötü). `plan_placements(plan, camera)` sabit
+direkleri **planın kendi odağıyla** (`focal_mm_override`) yerleşime çevirir —
+arayüz eskiden her direğe `lens_mode="max"` veriyordu (geniş lensle dizilen plan
+tam zoomda puanlanıyordu). Ölçüldü: 2×2 km tepelik arazi, 104 sabit + 17/34 PTZ
+~0,44 sn.
 
 `ptz_tour.evaluate_ptz_tour(terrain, PTZTour(presets=[PTZPreset…]))` — PTZ'yi
 "aynı konumda farklı pan/tilt/zoom kameraları" olarak `calculate_multi_camera_
@@ -573,6 +599,15 @@ alanı taşır. `map_3d_window`:
   (cue, <3/3–6/6–10/≥10 sn bantları) / **Sabit+PTZ** (`_fused_coverage` →
   `fuse_coverage`, Algılama seviyesi sürekli yeşil / aralıklı amber; özet
   `mc_overlap_var`). >120 kamerada örnekleme sorar.
+- Çevre çiti sekmesinde **"🔄 Karma Dizilim: Sabit + PTZ"** grubu
+  (`_build_mixed_ptz_group`): PTZ modeli (kütüphanede `is_ptz_camera`), "her N
+  direkte bir", devriye (360° / 180° / 90°) → `distribute_perimeter_cameras`
+  planlayıcıya geçirir; "Karma Kapsamayı Hesapla" → `_run_mixed_perimeter`
+  (arka plan, `_run_in_background(stat_var=)`) → `_mixed`, `_ptz_layer =
+  "mixed"`: Sabit+PTZ / Revizit (PTZ'lerin en küçük boşluğu) / Tepki süresi
+  (tespit→teşhis) katmanları. Haritada PTZ: direkte mor halka + teşhis
+  erişiminde devriye yayı. BOM CSV ve mühendislik raporunda PTZ satırları
+  ("12 PTZ"), `export/import_terrain_state` `mixed_ptz` bloğu.
 - Harita DORI lejandı tek sütun, kutusu çizilen yazının `bbox`'ından (eski sabit
   110 px iki sütun >%100 DPI'da üst üste biniyordu); Gözlem satırı eklendi.
 
