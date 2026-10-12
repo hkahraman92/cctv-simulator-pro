@@ -1,3 +1,28 @@
+## -18. PTZ/viewshed yol haritası — Adım 5: sabit + PTZ birleşimi, tespit→teşhis süresi — ✅ (2026-10-12)
+
+Yeni `cctv_simulator/ptz_fusion.py`:
+- `fuse_coverage(static, ptzs)`: her DORI seviyesinde hücre başına SÜREKLİ /
+  ARALIKLI / YOK sınıfı ve etkin revizit. Sabit kameranın kapsadığı hücre
+  artık PTZ "revizit boşluğu" göstermiyor. Birden çok PTZ'de en küçük tekil
+  boşluk (muhafazakâr üst sınır; fazlarının iç içe geçmesi hesaba katılmıyor).
+- `cue_response(...)`: "tespitten teşhise süre" — PTZ ev konumundan hücreye
+  nişan + gereken zoom + oturma; odak `focal_for_ppm` ile hücre merkezinin
+  eğik mesafesinden, hareket modeli `ptz_tour.move_time_s` (tur geçişlerinden
+  çıkarıldı, 768 geçişte bit-aynı). Ulaşılamayan hücre için neden kodu
+  (arazi engeli / max odak yetersiz / tilt sınırı / atmosfer / menzil dışı).
+- `detect_then_identify(static, cue)`.
+
+Örnek (tepelik arazi, 3 sabit 8 mm + 30× PTZ 270° devriye): Algılamada 1,3 ha
+sürekli + 6,7 ha aralıklı (en kötü 29 sn); sabitlerin tespit ettiği alanın
+%76'sında PTZ hedefi 250 px/m'de medyan 3,0 sn (en kötü 4,8 sn) içinde tutuyor.
+Birleştirme + harita ~9 ms. `tests/test_ptz_fusion.py` (6 test).
+
+Bilinen yaklaşıklıklar: tur için seviye başına revizit tur genelinde (yalnız
+o seviyeye ulaşan presetler ayrıştırılmıyor); hedef hareketi/izleme süresi
+yok — süre, sabit bir noktaya ilk "kilitlenme" süresi.
+
+Yol haritasında kalan: (6) arayüz, (7) çevre çitinde karma (sabit+PTZ) dizilim.
+
 ## -17. PTZ/viewshed yol haritası — Adım 3: sektör devriyesi / 360° dönüş — ✅ (2026-10-12)
 
 Yeni `cctv_simulator/ptz_schedule.py`: `SectorPatrol`, `Rotation360`,

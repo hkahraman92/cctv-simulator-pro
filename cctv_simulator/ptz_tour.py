@@ -74,17 +74,33 @@ class PTZTourResult:
     preset_labels: List[str]
 
 
+def move_time_s(d_pan_deg, d_tilt_deg, d_focal_mm, camera: CameraConfig, *,
+                slew_speed_deg_s: float, zoom_full_sweep_s: float, settle_s: float):
+    """(pan/tilt slew, optical zoom, settle) seconds for one PTZ move.
+
+    The single motion model -- preset-tour transitions and slew-to-cue
+    response (ptz_fusion.cue_response) both use it. Pan wraps (the short way
+    round), pan and tilt move together, zoom time is proportional to the
+    focal change over the full zoom range, settle applies once anything moved.
+    Accepts scalars or numpy arrays.
+    """
+    speed = max(slew_speed_deg_s, 1.0)
+    d_pan = np.abs((np.asarray(d_pan_deg, dtype=float) + 180.0) % 360.0 - 180.0)
+    slew = np.maximum(d_pan, np.abs(d_tilt_deg)) / speed
+    zoom_span = max(camera.focal_max_mm - camera.focal_min_mm, 1e-6)
+    zoom = (np.abs(d_focal_mm) / zoom_span) * max(zoom_full_sweep_s, 0.0)
+    settle = np.where((slew > 0.05) | (zoom > 0.05), settle_s, 0.0)
+    return slew, zoom, settle
+
+
 def _transition_s(tour: PTZTour, cur: PTZPreset, nxt: PTZPreset) -> tuple[float, float, float]:
     """(pan/tilt slew, optical zoom, settle) seconds between two presets."""
-    speed = max(tour.slew_speed_deg_s, 1.0)
-    d_pan = abs((nxt.pan_deg - cur.pan_deg + 180.0) % 360.0 - 180.0)
-    d_tilt = abs(nxt.tilt_deg - cur.tilt_deg)
-    slew = max(d_pan, d_tilt) / speed                      # pan & tilt move together
-    zoom_span = max(tour.camera.focal_max_mm - tour.camera.focal_min_mm, 1e-6)
-    d_focal = abs(_preset_focal(nxt, tour.camera) - _preset_focal(cur, tour.camera))
-    zoom = (d_focal / zoom_span) * max(tour.zoom_full_sweep_s, 0.0)
-    settle = tour.settle_s if (slew > 0.05 or zoom > 0.05) else 0.0
-    return slew, zoom, settle
+    slew, zoom, settle = move_time_s(
+        nxt.pan_deg - cur.pan_deg, nxt.tilt_deg - cur.tilt_deg,
+        _preset_focal(nxt, tour.camera) - _preset_focal(cur, tour.camera), tour.camera,
+        slew_speed_deg_s=tour.slew_speed_deg_s, zoom_full_sweep_s=tour.zoom_full_sweep_s,
+        settle_s=tour.settle_s)
+    return float(slew), float(zoom), float(settle)
 
 
 def _tour_timeline(tour: PTZTour):

@@ -423,6 +423,19 @@ tutmaz. Görünürlük `view_layers`'tan (sabit bakışla aynı kurallar). Sabit
 varsayar (ivme yok, `ptz_tour` ile aynı). Testler formülü adım adım zaman
 simülasyonuna karşı doğrular.
 
+**Sabit + PTZ birleşimi ve tespit→teşhis (`ptz_fusion.py`).**
+`fuse_coverage(static, [PTZCoverage…])`: DORI seviyesi başına her hücre
+SÜREKLİ (bir sabit kamera ulaşıyor, revizit 0) / ARALIKLI (yalnız PTZ; revizit
+= en küçük tekil PTZ boşluğu — birden çok PTZ'de muhafazakâr üst sınır) /
+YOK. `PTZCoverage.from_sweep` / `from_tour`. `cue_response(...)`: PTZ ev
+konumundan her hücreye nişan alıp hedef px/m'yi (vars. Teşhis 250) tutana
+kadar geçen süre — odak `focal_for_ppm` (hücre merkezi eğik mesafesi),
+hareket `ptz_tour.move_time_s` (tur geçişleriyle **aynı** model; tur
+çıktısı 768 geçişte bit-aynı). Ulaşılamayan hücre +inf + neden kodu
+(`CUE_NO_LOS` / `CUE_LENS` / `CUE_TILT` / `CUE_ATMOSPHERE` /
+`CUE_OUT_OF_RANGE`, Türkçe `CUE_REASONS`). `detect_then_identify(static, cue)`:
+yalnız sabit kameraların tespit ettiği hücrelerde.
+
 `ptz_tour.evaluate_ptz_tour(terrain, PTZTour(presets=[PTZPreset…]))` — PTZ'yi
 "aynı konumda farklı pan/tilt/zoom kameraları" olarak `calculate_multi_camera_
 viewshed`'e verir (`PTZPreset.focal_mm` → `CameraPlacement.focal_mm_override`),
