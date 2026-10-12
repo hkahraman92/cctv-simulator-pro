@@ -2195,20 +2195,24 @@ class TerrainViewshedWindow:
             cv.create_oval(c_px - 8, c_py - 8, c_px + 8, c_py + 8, fill=ACCENT_CYAN, outline="#FFFFFF", width=2)
             cv.create_text(c_px, c_py - 16, text=f"📹 Kamera ({reach_m:.0f}m Optik Menzil)", fill=ACCENT_CYAN, font=("Segoe UI", 9, "bold"))
 
-            leg_x, leg_y = 30, h - 85
-            cv.create_rectangle(leg_x - 6, leg_y - 6, leg_x + 220, leg_y + 68, fill="#16191E", outline=PANEL_BORDER)
-            cv.create_text(leg_x, leg_y + 2, text="DORI & GÖRÜŞ LEJANDI", anchor="w", font=("Segoe UI", 8, "bold"), fill=TEXT_MUTED)
-
+            # One column, box sized from the drawn text's bbox: a fixed-width
+            # two-column grid overlapped at >100 % DPI scaling (Kural 8).
             badges = [
+                ("DORI & GÖRÜŞ LEJANDI", TEXT_MUTED),
                 ("🟢 Teşhis (>=250 px/m)", ACCENT_GREEN),
                 ("🟡 Tanıma (>=125 px/m)", ACCENT_AMBER),
+                ("🟠 Gözlem (>=62,5 px/m)", "#FF7043"),
                 ("🔴 Algılama (>=25 px/m)", ACCENT_RED),
                 ("⬛ Kör Nokta (Tepe Arkası)", "#8B949E"),
             ]
-            for i, (text, col) in enumerate(badges):
-                bx = leg_x if i % 2 == 0 else (leg_x + 110)
-                by = leg_y + 22 + (i // 2) * 20
-                cv.create_text(bx, by, text=text, anchor="w", font=("Segoe UI", 8), fill=col)
+            leg_x, y = 30, h - 20
+            for i, (text, col) in reversed(list(enumerate(badges))):
+                font = ("Segoe UI", 8, "bold") if i == 0 else ("Segoe UI", 8)
+                item = cv.create_text(leg_x, y, text=text, anchor="sw", font=font, fill=col, tags="legend")
+                y = cv.bbox(item)[1] - 2
+            x0, y0, x1, y1 = cv.bbox("legend")
+            box = cv.create_rectangle(x0 - 6, y0 - 4, x1 + 6, y1 + 4, fill="#16191E", outline=PANEL_BORDER)
+            cv.tag_lower(box, "legend")
 
     def _render_profile_canvas(self):
         cv = self.profile_canvas
