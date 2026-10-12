@@ -181,6 +181,58 @@ def clear_mount_cache() -> None:
 
 
 # ── views ────────────────────────────────────────────────────────────────────
+@dataclass
+class ViewLayers:
+    """Everything about a view EXCEPT where it points horizontally: one tilt
+    and focal length, at every pan at once. A fixed view intersects it with
+    one azimuth cone; a sweep (ptz_schedule) with the azimuths it passes."""
+    visible: np.ndarray            # window: visible if the pan put the cell in the cone
+    zone: np.ndarray               # window: ZONE_* under the same assumption
+    ppm: np.ndarray                # window: px/m of the recorded sample (0 = none)
+    in_frame: np.ndarray           # window: cell centre inside range + vertical frame
+    center_az_rad: np.ndarray      # window: azimuth of each cell centre
+    focal_mm: float
+    hfov_deg: float
+    vfov_deg: float
+    effective_max_range_m: float
+    truncated: bool
+
+
+def view_layers(mv: MountVisibility, camera: CameraConfig, *, tilt_deg: float,
+                focal_mm: Optional[float] = None, lens_mode: str = "min",
+                max_range_m: Optional[float] = None, visibility_km: float = 40.0,
+                weather: str = "") -> ViewLayers:
+    """Pan-independent part of a view (see view_mask for the full rules)."""
+    focal = view_focal_mm(camera, lens_mode, focal_mm)
+    lim = view_limits(camera, focal, mv.max_range_m if max_range_m is None else max_range_m,
+                      visibility_km, weather)
+    optics = lim.optics
+    eff = min(lim.effective_max_range_m, mv.max_range_m)
+    v_lo = math.radians(tilt_deg - optics.vfov_deg / 2.0)
+    v_hi = math.radians(tilt_deg + optics.vfov_deg / 2.0)
+
+    ppm = np.where(mv.written, optics.ppm_at(np.maximum(mv.sample_slant_m, 1.0)), 0.0)
+    framed = (mv.written & (ppm >= lim.min_detect_ppm)
+              & (mv.sample_elev_rad >= v_lo) & (mv.sample_elev_rad <= v_hi))
+    visible = framed & mv.los_clear
+    zone = zone_codes(visible, framed, ppm)
+    in_frame = ((mv.center_dist_m <= eff) & (mv.center_dist_m > 1.0)
+                & (mv.center_elev_rad >= v_lo) & (mv.center_elev_rad <= v_hi))
+    return ViewLayers(
+        visible=visible & in_frame, zone=np.where(in_frame, zone, 0), ppm=ppm,
+        in_frame=in_frame, center_az_rad=mv.center_az_rad, focal_mm=focal,
+        hfov_deg=optics.hfov_deg, vfov_deg=optics.vfov_deg, effective_max_range_m=eff,
+        truncated=lim.effective_max_range_m > mv.max_range_m,
+    )
+
+
+def embed(mv: MountVisibility, window_array: np.ndarray, dtype) -> np.ndarray:
+    """Place a window-sized array on the full terrain grid (zeros elsewhere)."""
+    full = np.zeros(mv.grid_shape, dtype)
+    full[mv.window] = window_array
+    return full
+
+
 def view_mask(mv: MountVisibility, camera: CameraConfig, *, pan_deg: float, tilt_deg: float,
               focal_mm: Optional[float] = None, lens_mode: str = "min",
               max_range_m: Optional[float] = None, visibility_km: float = 40.0,
@@ -192,37 +244,17 @@ def view_mask(mv: MountVisibility, camera: CameraConfig, *, pan_deg: float, tilt
     the view's px/m floor, and the cell centre lies inside the horizontal FOV
     cone, the vertical frame and the (optical / atmospheric) effective range.
     """
-    focal = view_focal_mm(camera, lens_mode, focal_mm)
-    lim = view_limits(camera, focal, mv.max_range_m if max_range_m is None else max_range_m,
-                      visibility_km, weather)
-    optics = lim.optics
-    eff = min(lim.effective_max_range_m, mv.max_range_m)
-    half_h = math.radians(optics.hfov_deg / 2.0)
-    v_lo = math.radians(tilt_deg - optics.vfov_deg / 2.0)
-    v_hi = math.radians(tilt_deg + optics.vfov_deg / 2.0)
+    lay = view_layers(mv, camera, tilt_deg=tilt_deg, focal_mm=focal_mm, lens_mode=lens_mode,
+                      max_range_m=max_range_m, visibility_km=visibility_km, weather=weather)
     pan = math.radians(pan_deg)
-
-    ppm = np.where(mv.written, optics.ppm_at(np.maximum(mv.sample_slant_m, 1.0)), 0.0)
-    framed = (mv.written & (ppm >= lim.min_detect_ppm)
-              & (mv.sample_elev_rad >= v_lo) & (mv.sample_elev_rad <= v_hi))
-    visible = framed & mv.los_clear
-    zone = zone_codes(visible, framed, ppm)
-
-    d_az = np.arctan2(np.sin(mv.center_az_rad - pan), np.cos(mv.center_az_rad - pan))
-    cone = ((np.abs(d_az) <= half_h) & (mv.center_dist_m <= eff) & (mv.center_dist_m > 1.0)
-            & (mv.center_elev_rad >= v_lo) & (mv.center_elev_rad <= v_hi))
-    visible &= cone
-    zone = np.where(cone, zone, 0)
-
-    full_vis = np.zeros(mv.grid_shape, bool)
-    full_zone = np.zeros(mv.grid_shape, np.int32)
-    full_ppm = np.zeros(mv.grid_shape, np.float32)
-    full_vis[mv.window] = visible
-    full_zone[mv.window] = zone
-    full_ppm[mv.window] = np.where(cone & mv.written, ppm, 0.0)
+    d_az = np.arctan2(np.sin(lay.center_az_rad - pan), np.cos(lay.center_az_rad - pan))
+    in_cone = np.abs(d_az) <= math.radians(lay.hfov_deg / 2.0)
+    cone = in_cone & lay.in_frame
     return ViewGrids(
-        visibility_mask=full_vis, dori_grid=full_zone, ppm_grid=full_ppm,
-        pan_deg=pan_deg, tilt_deg=tilt_deg, focal_mm=focal,
-        hfov_deg=optics.hfov_deg, vfov_deg=optics.vfov_deg,
-        effective_max_range_m=eff, truncated=lim.effective_max_range_m > mv.max_range_m,
+        visibility_mask=embed(mv, lay.visible & in_cone, bool),
+        dori_grid=embed(mv, np.where(in_cone, lay.zone, 0), np.int32),
+        ppm_grid=embed(mv, np.where(cone & mv.written, lay.ppm, 0.0), np.float32),
+        pan_deg=pan_deg, tilt_deg=tilt_deg, focal_mm=lay.focal_mm,
+        hfov_deg=lay.hfov_deg, vfov_deg=lay.vfov_deg,
+        effective_max_range_m=lay.effective_max_range_m, truncated=lay.truncated,
     )

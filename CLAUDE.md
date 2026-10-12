@@ -409,6 +409,19 @@ taşlarını** kullanır — `viewshed_3d.march_rays` (engelleme), `view_limits`
 `calculate_3d_viewshed`'den çıkarıldı (motor bit-aynı). Fark yalnız ışın
 örneklemesi; tek sabit bakış için otorite hâlâ `calculate_3d_viewshed`.
 `ViewGrids.truncated`: istenen menzil haritanınkini aşıyor.
+`view_layers` bakışın pan'dan bağımsız kısmıdır (dikey çerçeve, menzil, px/m,
+görüş hattı); `view_mask` = katmanlar ∩ yatay FOV konisi.
+
+**Sürekli PTZ taraması (`ptz_schedule.py`).** `SectorPatrol` (a→b→a, hız,
+uçlarda bekleme) ve `Rotation360`; `evaluate_sweep(...)` → `SweepResult`.
+Hücre başına revizit (bir periyotta en uzun izlenmeyen süre) ve tek bakış
+süresi **kapalı formülle** (`sweep_timing`, açı açı maske yok): sektörde
+boşluklar `2(S−hi)/ω + t_e` ve `2·lo/ω + t_e`, 360°'de `(360−HFOV)/ω`.
+**`min_dwell_s`** (vars. 0,5 sn): bakışı bundan kısa süren hücre kapsama
+değil `glimpse_mask` — 30 mm'de 90°/sn dönüş hiçbir hücreyi 0,12 sn'den uzun
+tutmaz. Görünürlük `view_layers`'tan (sabit bakışla aynı kurallar). Sabit hız
+varsayar (ivme yok, `ptz_tour` ile aynı). Testler formülü adım adım zaman
+simülasyonuna karşı doğrular.
 
 `ptz_tour.evaluate_ptz_tour(terrain, PTZTour(presets=[PTZPreset…]))` — PTZ'yi
 "aynı konumda farklı pan/tilt/zoom kameraları" olarak `calculate_multi_camera_

@@ -1,3 +1,28 @@
+## -17. PTZ/viewshed yol haritası — Adım 3: sektör devriyesi / 360° dönüş — ✅ (2026-10-12)
+
+Yeni `cctv_simulator/ptz_schedule.py`: `SectorPatrol`, `Rotation360`,
+`evaluate_sweep()`. Hücre başına revizit süresi ve tek bakış süresi kapalı
+formülle hücrenin azimutundan hesaplanıyor; görünürlük direk haritasının pan'dan
+bağımsız katmanından (`mount_visibility.view_layers` — `view_mask` bunun
+üzerine yeniden kuruldu, 36 bakışlık baz çizgisine karşı bit-aynı).
+
+**Kadrajda kalma eşiği (`min_dwell_s`, vars. 0,5 sn):** bakışı bundan kısa
+süren hücre "kapsandı" sayılmıyor, ayrı `glimpse_mask`'a düşüyor. Örnek
+(30× PTZ, 30 mm, 12 m direk): 90°/sn 360° dönüşte 19 ha alanın tamamı yalnız
+"bakış atılan" (her hücre ~0,12 sn kadrajda) — eski preset modeli bunu kapsama
+sayardı; 20°/sn'de 19 ha görülüyor ama her hücre turda 17,5 sn izlenmiyor.
+Süre: direk haritası önbellekteyken tarama başına ~9 ms (360 presetle aynı
+tarama ~7 sn sürerdi).
+
+`tests/test_ptz_schedule.py` (6 test): formül, adım adım zaman simülasyonuna
+karşı (kuzeyi geçen sektör, uç beklemesi, 360°) doğrulanıyor — iki kasıtlı
+formül bozulmasının ikisini de yakaladığı kontrol edildi; taranan alan, sabit
+bakışların birleşimiyle aynı; hızlı tele tarama yalnız "bakış atılan".
+
+Henüz yok: `evaluate_ptz_tour` (preset turu) hâlâ eski motorla çalışıyor
+(preset sayısı küçükken yeterince hızlı); taramalar arayüze bağlı değil
+(adım 6); ivme profili yok.
+
 ## -16. PTZ/viewshed yol haritası — Adım 2: direk başına 360° görüş haritası — ✅ (2026-10-12)
 
 Yeni `cctv_simulator/mount_visibility.py`: `mount_visibility()` (önbellekli,
