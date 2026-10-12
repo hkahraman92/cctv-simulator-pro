@@ -168,9 +168,14 @@ gerçekten yaşandı:
 ## Windows exe derlemesi
 
 `build_exe.bat` → `cctv_simulator.spec`, `runtime_hook_tcltk.py` ile birlikte kök
-dizinde. Sorun çıkarsa önce `cctv_simulator_minimal.spec` (sıfır Tcl/Tk müdahalesi,
+dizinde. **Varsayılan artık `onefile`** (tek `dist\CCTV Simulator.exe`); eski
+hızlı-başlangıç `_internal\` klasör düzeni için `build_exe.bat onedir`. Sorun
+çıkarsa önce `cctv_simulator_minimal.spec` (sıfır Tcl/Tk müdahalesi,
 `console=True`) dene — PyInstaller sağlıklı bir yorumlayıcıyla tkinter'ı kendi
-başına halleder. Üç arıza da gerçekten yaşandı:
+başına halleder. Kökte `cctv_simulator.spec` ve `cctv_simulator_minimal.spec`
+dışında başka `.spec` bırakma — PyInstaller'ın `pyinstaller betik.py` ile
+ürettiği çıplak varsayılan spec hiçbir Tcl/Tk önlemi almaz ve madde 5'teki
+arızayı üretir. Beş arıza da gerçekten yaşandı:
 
 1. **`No module named 'tkinter'`** — derleyen yorumlayıcıda/venv'de tkinter yok.
 2. **`Can't find a usable init.tcl`** — `TCL_LIBRARY` kurulmamış. PyInstaller'ın kendi
@@ -197,6 +202,27 @@ Her derleme `build/tkinter-diagnostic.txt` yazar. Tahmin etmeden önce onu oku.
    proje kökünü ekle. Sonra Norton → Güvenlik Geçmişi → "Çözülen Güvenlik Riskleri"
    / "Karantina" → her `CCTV Simulator.exe` → **Geri Yükle ve Hariç Tut**.
    Alternatif: temiz runner'da CI derlemesi (Norton yok).
+
+5. **`No module named 'tkinter'`, ama build makinesinde `.exe` düzgün açılıyor,
+   başka bir PC'de açılmıyor** — derleme bozuk değildi, `onedir` çıktısı
+   (`CCTV Simulator\` + yüzlerce dosyalı `_internal\`) başka PC'ye kopyalanırken
+   bazı dosyalar sessizce kayboldu. Windows'un yerleşik zip açıcısı, hedef yol +
+   dosya yolu 260 karakteri (`MAX_PATH`) aşan girdileri **hatasız atlar** — bu
+   projenin kendi yolu zaten uzun olduğu için (`...\outputs\dist\CCTV
+   Simulator\_internal\tkinter\...`), hedefte de biraz derin bir klasöre
+   (Masaüstü\İndirilenler\alt klasör, OneDrive senkron yolu) açılırsa
+   `_internal\tkinter\__init__.py` gibi tek bir dosya kaybolması bile bu hatayı
+   üretir. Kalıcı çözüm: **`build_exe.bat` varsayılanı `onefile`'a çevrildi**
+   (kopyalanacak/kaybolacak ayrı bir dosya ağacı yok, tek `.exe`); `onedir`
+   artık yalnız `build_exe.bat onedir` ile açık istekle. Ayrıca kökte
+   `pyinstaller cctv_dual_view_simulator.py` gibi düz bir komutun ürettiği,
+   hiçbir Tcl/Tk önlemi almayan iki çıplak `.spec` dosyası (`CCTV Dual View
+   Simulator.spec`, `cctv_dual_view_simulator.spec`) bulunup silindi — bu
+   projenin ortamında PyInstaller'ın kendi otomatik tkinter kancası 0 modül
+   topluyor (`tkinter-diagnostic.txt`'teki `a.pure içindekiler: 0 modül` bunu
+   kanıtlıyor), yani o iki spec'le alınan HERHANGİ bir derleme, hangi PC'de
+   çalıştırılırsa çalıştırılsın, aynı hatayı verir — `cctv_simulator.spec`'in
+   elle eklediği `Tree(...)` yedekleri olmadan.
 
 ## Şartname incelemesi
 

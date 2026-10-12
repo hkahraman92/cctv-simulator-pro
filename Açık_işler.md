@@ -1,3 +1,99 @@
+## -12. Kullanıcı bildirimi: Çevre Çiti sekmesi otomatik çiziyor + kamera yerleştirme analizi donuyor — ✅ düzeltildi (2026-10-12)
+
+Kullanıcı: *"3D Arazi Viewshield ekranında Çevre Çiti/Sınır/Otoyol sekmesine
+basınca otomatik bir yere çizmeye çalışıyor... bu çizim sonrasında kamera
+yerleştirme analizinde çok zaman geçiyor ve uygulama donuyor."* İki ayrı kök
+neden bulundu, ikisi de `map_3d_window.py` / `perimeter_planner.py`'de.
+
+**1) Otomatik çizim.** `_init_default_fence_sample()` araziyi ortalayan sabit
+bir örnek altıgen çit üretiyordu ve **5 farklı yerde** (pencere açılışı, uydu
+harita indirme, özel genişlik uygulama, arazi ön ayarı değiştirme, DEM
+yükleme) koşulsuz çağrılıyordu — "Çevre Çiti" sekmesine geçildiğinde
+`_on_mode_tab_changed` bu zaten-dolu örnek çit üzerinden otomatik
+`distribute_perimeter_cameras()`'ı tetikliyordu. Fonksiyon ve 5 çağrı
+tamamen kaldırıldı; pencere artık `fence_points` **boş** açılıyor
+(`distribute_perimeter_cameras` zaten `len(fence_points) < 2` olduğunda
+no-op). Yan fayda: arazi değiştiğinde kullanıcının GERÇEK çizdiği çit de
+artık bu örnekle sessizce ezilmiyor — ya temizleniyor (yeni arazi/DEM/uydu,
+eski koordinatlar anlamsız) ya da dokunulmadan bırakılıyor (genişlik
+kalibrasyonu).
+
+**2) Donma — gerçek kök neden beklenenden farklı çıktı.** İlk şüphe
+`_analyse_fence_coverage` (boşluk analizi) idi — vektörize edildi (artık
+`viewshed_3d`'nin kendi ışın-yürütme deseniyle aynı: nokta×kamera döngüsü
+yerine tek numpy broadcast + kamera başına 12 örnekli DEM görüş hattı toplu
+hesaplanıyor), ama ölçünce bunun katkısı ikincildi (412 kamera/14,4 km
+çitte 535 ms → 305 ms). **Asıl donma `compute_coverage_grid`'teydi**
+(ısı haritası ızgarası): her yerleştirilmiş kamera için TÜM ızgarayı
+(örnekte 914×914 ≈ 835.000 hücre) baştan tarıyordu, kameranın kendi
+etkin menzilinin çok küçük bir bölgeyi ilgilendirdiği göz ardı edilerek —
+412 kamerada **34,3 saniye**. Düzeltme: her kamera artık yalnız kendi
+menzili + 1 hücre payı kadarlık **yerel pencereyi** işliyor (menzil dışı
+hücreler zaten `dist <= atm_reach` testinden geçemeyeceği için sonuç
+birebir aynı, sadece bunu hesaplamanın ucuz yolu) — **34,3 s → 180 ms
+(~191x)**. Eski/yeni ızgara çıktısı pickle'lanıp karşılaştırıldı:
+`pct_by_level` ve `analysed_cells` birebir aynı, ham ppm dizisinde yalnız
+float32 yuvarlama gürültüsü (maks. fark 7,6e-6) — `viewshed_3d`'nin kendi
+vektörize geçişinde de belgelenen "~1 ULP" türünden, davranış değişikliği
+değil.
+
+Gerçek UI akışıyla (pencere aç → geniş bir çit çiz → bitir) uçtan uca
+doğrulandı: 724 kameralık bir senaryoda tüm `distribute_perimeter_cameras()`
+çağrısı (plan + ısı haritası + görünüm) artık ~0,8 saniyede tamamlanıyor
+(öncesinde 30+ saniye donardı). Tam `pytest` (165, `test_perimeter.py`
+dahil 21/21) + `ruff check` yeşil.
+
+## -11. Kullanıcı bildirimi: başka PC'de "No module named tkinter" — ✅ düzeltildi (2026-10-09)
+
+Kullanıcı: *".exe tkinter derlemede dahil edilmediği için başka PC'de de
+çalışmadı."* Hata metni tam olarak paylaşıldı:
+
+```
+File "cctv_simulator\theme.py", line 10, in <module>
+    import tkinter as tk
+ModuleNotFoundError: No module named 'tkinter'
+```
+
+Bu, PyInstaller'ın pencereli (console'suz) derlemede bile yakalanmamış ilk
+istisnayı bir mesaj kutusunda gösterdiği durum (`disable_windowed_traceback=
+False`) — yani program gerçekten `theme.py`'nin ilk satırına kadar geldi ve
+tam o anda `tkinter`'ı bulamadı.
+
+**İki ayrı kök neden bulundu:**
+
+1. **Dağıtım: `onedir` çıktısının kısmen kopyalanması.** `onedir` modu
+   `CCTV Simulator.exe` + yüzlerce dosyalı `_internal\` klasörü üretir.
+   Projenin kendi yolu zaten çok uzun olduğu için (`...\outputs\dist\CCTV
+   Simulator\_internal\tkinter\...`), hedef PC'de de biraz derin bir klasöre
+   (Masaüstü\İndirilenler\alt klasör, OneDrive senkron yolu) zip açılırsa
+   Windows'un yerleşik aç/çıkar aracı 260 karakter (`MAX_PATH`) sınırını aşan
+   dosyaları **hatasız atlar** — `_internal\tkinter\__init__.py` gibi tek bir
+   dosya kaybolması bu tam hatayı üretir.
+2. **Kökte iki eski, korumasız `.spec` dosyası** (`CCTV Dual View
+   Simulator.spec`, `cctv_dual_view_simulator.spec`) — muhtemelen
+   `cctv_simulator.spec` güçlendirilmeden önceki bir denemeden kalma,
+   `pyinstaller betik.py`'nin ürettiği çıplak varsayılanlar. Hiçbir Tcl/Tk
+   önlemi yok, tamamen PyInstaller'ın otomatik tkinter kancasına güveniyorlar
+   — ki bu projenin ortamında o kanca **0 modül** topluyor
+   (`build/tkinter-diagnostic.txt`'teki `a.pure içindekiler: 0 modül` bunu
+   doğruluyor; `cctv_simulator.spec` bunu elle eklenen `Tree(...)` yedekleriyle
+   kurtarıyor). Bu iki spec'ten biriyle alınan bir derleme, HANGİ PC'de
+   çalıştırılırsa çalıştırılsın aynı hatayı verir.
+
+**Düzeltme:**
+- `build_exe.bat` varsayılanı `onedir`'den **`onefile`**'a çevrildi (tek
+  `dist\CCTV Simulator.exe`, kopyalanırken kaybolacak ayrı bir dosya ağacı
+  yok; çalışma zamanında `%TEMP%\_MEIxxxxxx\` kısa yoluna kendini açıyor).
+  Eski hızlı-başlangıç `_internal\` düzeni isteyen `build_exe.bat onedir`
+  ile hâlâ erişilebilir.
+- İki tehlikeli eski `.spec` dosyası git'ten silindi.
+- `CLAUDE.md`'nin "Windows exe derlemesi" bölümüne 5. arıza olarak işlendi.
+
+Gerçek bir `onefile` derleme yapılıp çalıştırılarak doğrulandı: Tcl/Tk
+`%TEMP%\_MEIxxxxxx\` kısa yoluna doğru açılıyor, `ttkbootstrap` aktif, pencere
+sorunsuz açılıp çalışıyor (`dist\cctv-simulator-error.log` başarı kaydı).
+Tam `pytest` (165) + `ruff check` yeşil.
+
 ## -10. Yeni özellik: Taslak Teknik Şartname oluşturucu (Word, TR+EN) — ✅ eklendi (2026-10-07)
 
 Kullanıcı isteği: *"Kameraların taslak teknik isterler dokümanı yazan bir

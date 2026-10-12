@@ -8,8 +8,15 @@ echo   CCTV Simulator - Windows EXE build
 echo ==========================================================
 echo.
 
-set "MODE=onedir"
-if /i "%~1"=="onefile" set "MODE=onefile"
+REM BUGFIX: onedir used to be the default. Distributing that means copying
+REM "CCTV Simulator\" whole (exe + _internal\, hundreds of loose files) --
+REM a zip extracted to a long destination path on another PC can silently
+REM drop files past Windows' 260-char MAX_PATH, and the app then dies with
+REM "No module named tkinter" on launch even though the build itself was
+REM fine. onefile has no loose tree to lose files from during a copy/zip,
+REM so it is now the default; pass "onedir" for the old fast-start layout.
+set "MODE=onefile"
+if /i "%~1"=="onedir" set "MODE=onedir"
 echo Build mode : %MODE%
 
 REM ---------------------------------------------------------------
