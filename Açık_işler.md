@@ -1,3 +1,23 @@
+## -21. Mühendislik raporuna karma kapsama bölümü — ✅ (2026-10-12)
+
+`export_engineering_report_pdf` / `_csv` yeni `mixed=` parametresi
+(`perimeter_ptz.MixedPerimeterResult`); `map_3d_window._export_engineering_report`
+son karma hesabı (`self._mixed`) geçirir, rapor yalnız karma sonuçla da açılır.
+`exporters._mixed_rows` hem PDF hem CSV'yi besler: PTZ modeli/adedi, devriye
+periyodu + tarama hızı, dört DORI seviyesinde sürekli (sabit) / yalnız PTZ
+(aralıklı) alan + en kötü revizit, sabitlerin tespit ettiği alan, PTZ ile
+teşhis edilebilen kısmı (%), tespit→teşhis medyan / %90 / en kötü, varsayımlar
+satırı (en küçük tekil boşluk muhafazakâr, en hızlı PTZ, ivme yok). PDF'te çit
+direk tablosundan sonra ayrı bölüm; CSV'de direk tablosundan sonra
+`=== KARMA KAPSAMA: SABİT + PTZ ===`. `MixedPerimeterResult` artık
+`ptz_camera_name` ve `speed_deg_s` taşır.
+
+Doğrulama: `test_engineering_report.py::test_report_includes_mixed_fixed_plus_ptz`
+(CSV bölüm/satırlar, PDF başlığı, `mixed` yokken bölüm yok); ruff + pytest
+yeşil. 2×2 km tepelik arazi (20 PTZ, 180°) demo PDF'i rasterleştirilip
+bakıldı: bölüm tablosu taşmasız, değerler tutarlı (180°/20°/sn + 2×2 sn uç
+beklemesi = 22 sn periyot).
+
 ## -20. PTZ/viewshed yol haritası — Adım 7: çevre çitinde karma (sabit + PTZ) dizilim — ✅ (2026-10-12)
 
 Planlayıcı: `generate_perimeter_plan(..., ptz_camera=, ptz_every_n=,
@@ -33,8 +53,8 @@ hesapta uyarı. Ekran görüntüsü alınamadı (ekran kilitli / görünmez masa
 yakalama duvar kâğıdı döndürdü); yerine tuval öğeleri doğrulandı: 47 devriye yayı
 doğru açıda, yeni grup 543×446 px, çökmüş widget yok.
 
-Kalan: mühendislik raporu karma kapsama sonuçlarını (füzyon alanları,
-tespit→teşhis) içermiyor; `compute_coverage_grid` hâlâ ayrı çok-kamera motoru
+Kalan: ~~mühendislik raporu karma kapsama sonuçlarını içermiyor~~ (-21'de
+eklendi); `compute_coverage_grid` hâlâ ayrı çok-kamera motoru
 (direk görünürlük haritasını paylaşmıyor); birden çok PTZ'nin revizit fazları
 iç içe sayılmıyor (en küçük tekil boşluk, muhafazakâr); kütüphanede yalnız
 termal PTZ var (UMA T5/T10) — görünür bant PTZ modeli eklenmeli; ekran

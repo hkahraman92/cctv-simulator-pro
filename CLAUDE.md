@@ -499,8 +499,10 @@ Raporu" düğmesi (`_export_engineering_report`) `ViewshedResult` + `CoverageGri
 1 yönetici özeti + **kaynak kutusu** (`is_measured` False → kırmızı "ölçüm değil,
 bağlayıcı değil" uyarısı), 2 tekil viewshed (menzil sınırları, görünür/kör alan,
 DORI zone alan dökümü), 3 çok kameralı kapsama (DORI seviye %), 4 çevre çiti BOM
-+ direk tablosu + boşluklar, 5 standart referansları. `_viewshed_rows` /
-`_coverage_rows` / `_perimeter_rows` hem PDF hem CSV'yi besler. ReportLab yoksa
++ direk tablosu + boşluklar, karma sabit+PTZ (`mixed=`, `_mixed_rows`: DORI
+seviyesi başına sürekli/aralıklı alan, revizit, tespit→teşhis), son bölüm standart
+referansları. `_viewshed_rows` / `_coverage_rows` / `_perimeter_rows` /
+`_mixed_rows` hem PDF hem CSV'yi besler. ReportLab yoksa
 `write_simple_pdf`'e düşer. Emoji glyph YOK (Segoe UI'de tofu) — "UYARI —" /
 "DOĞRULANDI —" metin işaretçileri. Sadece GUI (proje şemasında arazi yok).
 
@@ -612,7 +614,7 @@ alanı taşır. `map_3d_window`:
   110 px iki sütun >%100 DPI'da üst üste biniyordu); Gözlem satırı eklendi.
 
 Overlay `_draw_multi_overlay_arr` → `_render_map_canvas` 2b bloğunda komposit.
-`_export_engineering_report` `multi_viewshed` + `ptz` geçirir.
+`_export_engineering_report` `multi_viewshed` + `ptz` + `mixed` geçirir.
 
 - **PTZ geçiş modeli** artık `_transition_s`: pan/tilt slew + optik zoom süresi
   (`zoom_full_sweep_s` × odak farkı / zoom aralığı) + `settle_s` oturma. Preset

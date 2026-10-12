@@ -83,3 +83,31 @@ def test_report_works_with_only_viewshed(tmp_path, analyses):
     export_engineering_report_pdf(str(out), project_name="", terrain=terr, camera=CAM,
                                   weather="", viewshed=vs, coverage=None, perimeter=None)
     assert out.exists() and out.read_bytes()[:5] == b"%PDF-"
+
+
+def test_report_includes_mixed_fixed_plus_ptz(tmp_path):
+    from cctv_simulator.perimeter_ptz import evaluate_mixed_perimeter
+
+    ptz = CameraConfig(name="Test PTZ", sensor_name='1/2.8"', resolution_name="2 MP (1080p - 1920x1080)",
+                       focal_min_mm=4.3, focal_max_mm=129.0)
+    terr = TerrainData(z_grid=np.zeros((100, 100), np.float32), cell_size_m=5.0)
+    square = [(150.0, 150.0), (350.0, 150.0), (350.0, 350.0), (150.0, 350.0)]
+    plan = generate_perimeter_plan(terr, square, CAM, target_ppm=62.5, mast_height_m=6.0,
+                                   ptz_camera=ptz, ptz_every_n=3)
+    mixed = evaluate_mixed_perimeter(terr, plan, CAM, ptz)
+    out = tmp_path / "karma.csv"
+    export_engineering_report_csv(str(out), project_name="x", terrain=terr, camera=CAM, weather="",
+                                  perimeter=plan, mixed=mixed)
+    text = out.read_text(encoding="utf-8-sig")
+    assert "KARMA KAPSAMA: SABİT + PTZ" in text
+    assert f"Test PTZ · {plan.ptz_count} adet" in text
+    assert "Tespit → teşhis süresi;medyan" in text
+    assert "yalnız PTZ (aralıklı)" in text and "en kötü revizit" in text
+    pdf = tmp_path / "karma.pdf"
+    export_engineering_report_pdf(str(pdf), project_name="x", terrain=terr, camera=CAM, weather="",
+                                  perimeter=plan, mixed=mixed)
+    assert pdf.read_bytes()[:5] == b"%PDF-"
+    # without a mixed result the section is absent
+    export_engineering_report_csv(str(out), project_name="x", terrain=terr, camera=CAM, weather="",
+                                  perimeter=plan)
+    assert "KARMA KAPSAMA" not in out.read_text(encoding="utf-8-sig")

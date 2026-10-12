@@ -1033,6 +1033,49 @@ def _ptz_rows(ptz) -> List[List[str]]:
     return rows
 
 
+_MIXED_LEVELS = (("detect", "Algılama (25 px/m)"), ("observe", "Gözlem (62,5 px/m)"),
+                 ("recog", "Tanıma (125 px/m)"), ("ident", "Teşhis (250 px/m)"))
+
+
+def _mixed_rows(mixed) -> List[List[str]]:
+    """perimeter_ptz.MixedPerimeterResult: what the co-mounted PTZs add on top
+    of the fixed poles (continuous vs patrol-only area per DORI level) and the
+    detection -> identification response."""
+    f = mixed.fused
+    periods = [s.period_s for s in mixed.sweeps]
+    name = getattr(mixed, "ptz_camera_name", "") or "—"
+    rows = [
+        ["PTZ modeli / adedi", f"{name} · {len(mixed.sweeps)} adet (sabit direklere ortak montaj)"],
+        ["Devriye periyodu", (f"{min(periods):.0f}–{max(periods):.0f} sn" if periods and min(periods) != max(periods)
+                              else f"{periods[0]:.0f} sn" if periods else "—")
+         + (f" · tarama hızı {mixed.speed_deg_s:g}°/sn" if getattr(mixed, "speed_deg_s", 0) else "")],
+    ]
+    for key, label in _MIXED_LEVELS:
+        cont = f.continuous_area_m2.get(key, 0.0)
+        inter = f.intermittent_area_m2.get(key, 0.0)
+        worst = f.worst_intermittent_revisit_s.get(key, 0.0)
+        txt = f"sürekli {_fmt_area(cont)} · yalnız PTZ (aralıklı) {_fmt_area(inter)}"
+        if inter:
+            txt += f" · en kötü revizit {_fmt_dur(worst)}"
+        rows.append([label, txt])
+    rows += [
+        ["Sabit kameraların tespit ettiği alan", _fmt_area(mixed.detected_area_m2)],
+        [f"PTZ ile teşhis edilebilen kısmı ({mixed.cue_target_ppm:g} px/m)",
+         f"{_fmt_area(mixed.identifiable_area_m2)} · % {mixed.identifiable_pct:.1f}"],
+    ]
+    if mixed.identifiable_area_m2:
+        rows.append(["Tespit → teşhis süresi",
+                     f"medyan {mixed.median_d2i_s:.1f} sn · %90 {mixed.p90_d2i_s:.1f} sn · "
+                     f"en kötü {mixed.worst_d2i_s:.1f} sn"])
+    else:
+        rows.append(["Tespit → teşhis süresi", "PTZ, sabitlerin tespit ettiği hiçbir yerde teşhise ulaşamıyor"])
+    rows.append(["Varsayımlar",
+                 "Sürekli = en az bir sabit kamera; aralıklı = yalnız PTZ devriyesi (birden çok PTZ'de "
+                 "en küçük tekil boşluk, muhafazakâr). Alarmda en hızlı yetişen PTZ yönlendirilir; "
+                 "slew + zoom + oturma süresi, ivme profili yok."])
+    return rows
+
+
 def _coverage_rows(coverage) -> List[List[str]]:
     p = coverage.pct_by_level
     return [
@@ -1085,7 +1128,7 @@ def _provenance_line(terrain) -> str:
 
 def export_engineering_report_csv(path: str, *, project_name: str, terrain, camera,
                                   weather: str, viewshed=None, coverage=None, perimeter=None,
-                                  multi_viewshed=None, ptz=None) -> None:
+                                  multi_viewshed=None, ptz=None, mixed=None) -> None:
     """Flat, sectioned CSV of the viewshed / coverage / perimeter engineering analysis."""
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f, delimiter=";")
@@ -1130,11 +1173,16 @@ def export_engineering_report_csv(path: str, *, project_name: str, terrain, came
                 w.writerow([_pole_label(c), c.x_m, c.y_m, c.ground_z_m, c.mast_height_m,
                             c.pan_deg, c.tilt_deg, c.focal_mm, c.hfov_deg,
                             c.effective_range_m, c.dead_zone_m])
+        if mixed is not None:
+            w.writerow([])
+            w.writerow(["=== KARMA KAPSAMA: SABİT + PTZ ==="])
+            for k, val in _mixed_rows(mixed):
+                w.writerow([k, val])
 
 
 def export_engineering_report_pdf(path: str, *, project_name: str, terrain, camera,
                                   weather: str, viewshed=None, coverage=None, perimeter=None,
-                                  multi_viewshed=None, ptz=None) -> None:
+                                  multi_viewshed=None, ptz=None, mixed=None) -> None:
     """ASELSAN kurumsal formatında görüş alanı / kapsama mühendislik raporu.
 
     ReportLab yoksa düz metin PDF'e (write_simple_pdf) düşer.
@@ -1152,7 +1200,8 @@ def export_engineering_report_pdf(path: str, *, project_name: str, terrain, came
                            ("2. PTZ PRESET TURU", ptz is not None and _ptz_rows(ptz)),
                            ("3. TEKİL GÖRÜŞ ALANI", viewshed is not None and _viewshed_rows(viewshed, terrain.cell_size_m)),
                            ("4. BİRLEŞİK KAPSAMA", coverage is not None and _coverage_rows(coverage)),
-                           ("5. ÇEVRE ÇİTİ PLANI", perimeter is not None and _perimeter_rows(perimeter))):
+                           ("5. ÇEVRE ÇİTİ PLANI", perimeter is not None and _perimeter_rows(perimeter)),
+                           ("6. KARMA KAPSAMA: SABİT + PTZ", mixed is not None and _mixed_rows(mixed))):
             if rws:
                 lines.append(title)
                 lines.extend(f"  {k:<38} {val}" for k, val in rws)
@@ -1270,6 +1319,9 @@ def export_engineering_report_pdf(path: str, *, project_name: str, terrain, came
             ]))
             story.append(ct)
             story.append(Spacer(1, 6))
+    if mixed is not None:
+        _kv(f"{_sec_n}. KARMA KAPSAMA: SABİT + PTZ — DEVRİYE VE TESPİT → TEŞHİS", _mixed_rows(mixed))
+        _sec_n += 1
 
     _kv(f"{_sec_n}. GEÇERLİLİK VE STANDART REFERANSLARI", [
         ["Piksel yoğunluğu ölçütü", "EN 62676-4:2015 DORI (Monitoring 12,5 · Detection 25 · Observation 62,5 · Recognition 125 · Identification 250 px/m)"],

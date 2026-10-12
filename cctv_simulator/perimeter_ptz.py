@@ -77,6 +77,8 @@ class MixedPerimeterResult:
     median_d2i_s: float
     p90_d2i_s: float
     worst_d2i_s: float
+    ptz_camera_name: str = ""
+    speed_deg_s: float = 0.0
 
     @property
     def identifiable_pct(self) -> float:
@@ -138,4 +140,6 @@ def evaluate_mixed_perimeter(terrain: TerrainData, plan: PerimeterPlanResult,
         median_d2i_s=float(np.median(vals)) if vals.size else math.inf,
         p90_d2i_s=float(np.percentile(vals, 90)) if vals.size else math.inf,
         worst_d2i_s=float(vals.max()) if vals.size else math.inf,
+        ptz_camera_name=getattr(ptz_camera, "name", "") or "",
+        speed_deg_s=speed_deg_s,
     )

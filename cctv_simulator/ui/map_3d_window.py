@@ -2103,7 +2103,8 @@ class TerrainViewshedWindow:
         perimeter = self.perimeter_plan if (self.perimeter_plan and self.perimeter_plan.placed_cameras) else None
         multi_vs = self._multi_vs
         ptz = self._ptz_result
-        if all(x is None for x in (viewshed, coverage, perimeter, multi_vs, ptz)):
+        mixed = self._mixed
+        if all(x is None for x in (viewshed, coverage, perimeter, multi_vs, ptz, mixed)):
             messagebox.showwarning(
                 "Rapor",
                 "Rapora aktarılacak analiz yok.\nÖnce bir görüş alanı hesaplayın, çevre çiti dizin "
@@ -2130,6 +2131,7 @@ class TerrainViewshedWindow:
                 perimeter=perimeter,
                 multi_viewshed=multi_vs,
                 ptz=ptz,
+                mixed=mixed,
             )
             if file_path.lower().endswith(".csv"):
                 export_engineering_report_csv(file_path, **kw)
