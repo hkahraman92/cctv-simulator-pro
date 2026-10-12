@@ -379,53 +379,85 @@ def _analyse_fence_coverage(pts: List[Tuple[float, float]],
     its horizontal cone, past the dead zone, within the (weather-capped) range
     and — when a ``terrain`` is given — with a clear DEM line of sight. Returns
     the gap list and the covered percentage.
+
+    PERF: this used to be a pure-Python point x camera nested loop (each pair
+    re-deriving distance/azimuth/elevation and, when occluded, a 12-sample DEM
+    line of sight) -- for a long fence with many placed cameras that is tens
+    to hundreds of thousands of iterations on the Tk main thread, freezing the
+    UI. Vectorised the same way viewshed_3d's raymarching already is: every
+    point's geometry against every camera is one (cameras, points) numpy
+    broadcast, and the line-of-sight sample batches all of one camera's still-
+    uncovered candidate points into a single _sample_terrain call instead of
+    one call per point. Only the gap-run bookkeeping stays a sequential walk
+    (it is inherently order-dependent along the polyline); it now walks a
+    precomputed boolean array instead of calling into the heavy check itself.
     """
     if len(pts) < 2 or not cams:
         return [], 0.0
 
-    prep = []
-    for c in cams:
-        rng = _atm.usable_range_m(c.effective_range_m, visibility_km, band, weather)
-        half_vfov = c.vfov_deg / 2.0 if c.vfov_deg > 0 else 15.0
-        prep.append((c.x_m, c.y_m, c.pan_deg, c.hfov_deg / 2.0, c.dead_zone_m, rng,
-                     c.ground_z_m + c.mast_height_m, c.tilt_deg, half_vfov, c.ground_z_m))
+    xy: List[Tuple[float, float]] = []
+    for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]):
+        seg = math.hypot(x1 - x0, y1 - y0)
+        if seg < 1e-6:
+            continue
+        n = max(1, int(seg / sample_step_m))
+        for k in range(n + 1):
+            t = k / n
+            xy.append((x0 + t * (x1 - x0), y0 + t * (y1 - y0)))
+    if not xy:
+        return [], 0.0
+    px = np.array([p[0] for p in xy])
+    py = np.array([p[1] for p in xy])
+    n_pts = px.size
 
-    _los_ts = np.linspace(0.06, 0.97, 12)
+    cx = np.array([c.x_m for c in cams])
+    cy = np.array([c.y_m for c in cams])
+    pan = np.array([c.pan_deg for c in cams])
+    half_h = np.array([c.hfov_deg / 2.0 for c in cams])
+    dz = np.array([c.dead_zone_m for c in cams])
+    rng = np.array([_atm.usable_range_m(c.effective_range_m, visibility_km, band, weather) for c in cams])
+    eye_z = np.array([c.total_z_m for c in cams])
+    tilt = np.array([c.tilt_deg for c in cams])
+    half_vfov = np.array([c.vfov_deg / 2.0 if c.vfov_deg > 0 else 15.0 for c in cams])
+    cam_ground_z = np.array([c.ground_z_m for c in cams])
 
-    def _los_clear(cx: float, cy: float, eye_z: float, px: float, py: float) -> bool:
-        if terrain is None:
-            return True
-        sx = cx + _los_ts * (px - cx)
-        sy = cy + _los_ts * (py - cy)
-        terr = _sample_terrain(terrain, sx, sy)
-        line = eye_z + _los_ts * (float(terrain.get_elevation_at(px, py)) - eye_z)
-        return not bool(np.any(terr > line + 0.5))
+    pz = _sample_terrain(terrain, px, py) if terrain is not None else None
+    # BUGFIX: this used to only check the horizontal cone + range + LOS,
+    # while compute_coverage_grid also requires the point to fall inside the
+    # vertical frame (tilt +/- vfov/2). A steeply tilted-down camera (tele
+    # lens, wide-angle corner guard) could "cover" a fence point here that it
+    # never actually frames -- the two coverage definitions disagreed on the
+    # exact same placed cameras.
+    ground_z_for_elev = pz[np.newaxis, :] if pz is not None else cam_ground_z[:, np.newaxis]
 
-    def _covered(px: float, py: float) -> bool:
-        # BUGFIX: this used to only check the horizontal cone + range + LOS,
-        # while compute_coverage_grid also requires the point to fall inside
-        # the vertical frame (tilt +/- vfov/2). A steeply tilted-down camera
-        # (tele lens, wide-angle corner guard) could "cover" a fence point
-        # here that it never actually frames -- the two coverage definitions
-        # disagreed on the exact same placed cameras.
-        pz = float(terrain.get_elevation_at(px, py)) if terrain is not None else None
-        for cx, cy, pan, half_h, dz, rng, eye_z, tilt, half_vfov, cam_ground_z in prep:
-            dist = math.hypot(px - cx, py - cy)
-            if dist < dz or dist > rng:
+    dx = px[np.newaxis, :] - cx[:, np.newaxis]
+    dy = py[np.newaxis, :] - cy[:, np.newaxis]
+    dist = np.hypot(dx, dy)
+    az = (np.degrees(np.arctan2(dx, dy)) + 360.0) % 360.0
+    pan_diff = np.abs((az - pan[:, np.newaxis] + 180.0) % 360.0 - 180.0)
+    in_pan = pan_diff <= half_h[:, np.newaxis]
+    in_range = (dist >= dz[:, np.newaxis]) & (dist <= rng[:, np.newaxis])
+    elev_ang = np.degrees(np.arctan2(ground_z_for_elev - eye_z[:, np.newaxis], np.maximum(dist, 0.1)))
+    in_vfov = ((elev_ang >= (tilt - half_vfov)[:, np.newaxis])
+               & (elev_ang <= (tilt + half_vfov)[:, np.newaxis]))
+    candidate = in_pan & in_range & in_vfov    # (n_cams, n_pts)
+
+    covered = np.zeros(n_pts, dtype=bool)
+    if terrain is not None:
+        los_ts = np.linspace(0.06, 0.97, 12)[:, np.newaxis]
+        for ci in range(len(cams)):
+            idx = np.where(candidate[ci] & ~covered)[0]
+            if idx.size == 0:
                 continue
-            az = (math.degrees(math.atan2(px - cx, py - cy)) + 360.0) % 360.0
-            if abs((az - pan + 180.0) % 360.0 - 180.0) > half_h:
-                continue
-            ground_z = pz if pz is not None else cam_ground_z
-            elev_ang = math.degrees(math.atan2(ground_z - eye_z, max(dist, 0.1)))
-            if not (tilt - half_vfov <= elev_ang <= tilt + half_vfov):
-                continue
-            if _los_clear(cx, cy, eye_z, px, py):
-                return True
-        return False
+            sx = cx[ci] + los_ts * (px[idx][np.newaxis, :] - cx[ci])
+            sy = cy[ci] + los_ts * (py[idx][np.newaxis, :] - cy[ci])
+            terr_h = _sample_terrain(terrain, sx.ravel(), sy.ravel()).reshape(sx.shape)
+            line_h = eye_z[ci] + los_ts * (pz[idx][np.newaxis, :] - eye_z[ci])
+            clear = ~np.any(terr_h > line_h + 0.5, axis=0)
+            covered[idx[clear]] = True
+    else:
+        covered = candidate.any(axis=0)
 
-    total = 0
-    covered = 0
     gap_run: List[Tuple[float, float]] = []
     gaps: List[FenceGap] = []
 
@@ -437,23 +469,14 @@ def _analyse_fence_coverage(pts: List[Tuple[float, float]],
                                      gap_run[-1][0], gap_run[-1][1], round(length, 1)))
         gap_run.clear()
 
-    for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]):
-        seg = math.hypot(x1 - x0, y1 - y0)
-        if seg < 1e-6:
-            continue
-        n = max(1, int(seg / sample_step_m))
-        for k in range(n + 1):
-            t = k / n
-            px, py = x0 + t * (x1 - x0), y0 + t * (y1 - y0)
-            total += 1
-            if _covered(px, py):
-                covered += 1
-                _flush_gap()
-            else:
-                gap_run.append((px, py))
+    for i in range(n_pts):
+        if covered[i]:
+            _flush_gap()
+        else:
+            gap_run.append((px[i], py[i]))
     _flush_gap()
 
-    pct = 100.0 * covered / max(total, 1)
+    pct = 100.0 * float(covered.sum()) / max(n_pts, 1)
     return gaps, pct
 
 
@@ -533,19 +556,38 @@ def compute_coverage_grid(plan: PerimeterPlanResult, camera: CameraConfig,
         cell_z = _sample_terrain(terrain, mx, my)
 
     for c in cams:
-        dx = mx - c.x_m
-        dy = my - c.y_m
+        atm_reach = _atm.usable_range_m(c.effective_range_m, visibility_km, band, weather)
+        # PERF: a camera's cone can never reach past atm_reach, so touching
+        # the whole grid for every camera (the loop runs once per placed
+        # camera) wasted almost all of its work on cells no camera could
+        # ever mark covered -- this was the actual multi-second freeze on a
+        # long perimeter with many short-range cameras, not the fence-line
+        # analysis above. Slice a local window (camera position +/- reach,
+        # one cell of margin) and only touch that; results are identical
+        # since every cell outside it fails the dist <= atm_reach test
+        # anyway, this only skips computing that fact the expensive way.
+        margin = atm_reach + cell_m
+        col_lo = int(np.clip(math.floor((c.x_m - margin - gx[0]) / cell_m), 0, gx.size - 1))
+        col_hi = int(np.clip(math.ceil((c.x_m + margin - gx[0]) / cell_m), 0, gx.size - 1)) + 1
+        row_lo = int(np.clip(math.floor((c.y_m - margin - gy[0]) / cell_m), 0, gy.size - 1))
+        row_hi = int(np.clip(math.ceil((c.y_m + margin - gy[0]) / cell_m), 0, gy.size - 1)) + 1
+        if col_hi <= col_lo or row_hi <= row_lo:
+            continue
+        mx_w = mx[row_lo:row_hi, col_lo:col_hi]
+        my_w = my[row_lo:row_hi, col_lo:col_hi]
+
+        dx = mx_w - c.x_m
+        dy = my_w - c.y_m
         dist = np.hypot(dx, dy)
         az = np.degrees(np.arctan2(dx, dy))
         off = np.abs((az - c.pan_deg + 180.0) % 360.0 - 180.0)
-        atm_reach = _atm.usable_range_m(c.effective_range_m, visibility_km, band, weather)
         in_cone = (off <= c.hfov_deg / 2.0) & (dist >= c.dead_zone_m) & (dist <= atm_reach)
 
         # Vertical framing: the ground cell must sit between the bottom and top
         # rays (tilt +/- vfov/2). Without this the heatmap credits far cells the
         # tilted-down camera never frames.
         eye_z = c.ground_z_m + c.mast_height_m
-        gz = cell_z if do_occ else float(c.ground_z_m)
+        gz = cell_z[row_lo:row_hi, col_lo:col_hi] if do_occ else float(c.ground_z_m)
         elev_ang = np.degrees(np.arctan2(gz - eye_z, np.maximum(dist, 0.1)))
         half_vfov = c.vfov_deg / 2.0 if c.vfov_deg > 0 else 15.0
         in_cone &= (elev_ang >= c.tilt_deg - half_vfov) & (elev_ang <= c.tilt_deg + half_vfov)
@@ -554,13 +596,14 @@ def compute_coverage_grid(plan: PerimeterPlanResult, camera: CameraConfig,
             sx = c.x_m + ts * dx
             sy = c.y_m + ts * dy
             terr = _sample_terrain(terrain, sx, sy)
-            line = eye_z + ts * (cell_z - eye_z)
+            line = eye_z + ts * (gz - eye_z)
             visible = ~np.any(terr > line + 0.5, axis=0)
             in_cone &= visible
 
         slant = np.hypot(dist, c.mast_height_m)
         ppm = (c.focal_mm * res_w) / (sw * np.maximum(slant, 1.0))
-        best = np.where(in_cone, np.maximum(best, ppm), best)
+        best_w = best[row_lo:row_hi, col_lo:col_hi]
+        best[row_lo:row_hi, col_lo:col_hi] = np.where(in_cone, np.maximum(best_w, ppm), best_w)
 
     # Denominator = the band we are meant to protect (within band_m of the
     # fence), so degraded weather reads as WORSE protected-zone coverage, not a
