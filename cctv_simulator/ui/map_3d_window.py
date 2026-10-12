@@ -29,6 +29,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageTk
 
 from ..config import SENSOR_DIMS_MM, RESOLUTIONS
+from ..calculations import camera_optics
 from ..database import load_camera_library
 from ..models import CameraConfig
 from ..online_map_loader import (
@@ -438,15 +439,16 @@ class TerrainViewshedWindow:
         focal_cur = focal_min if self.lens_mode_var.get() == "min" else focal_max
         sens = self.current_camera.sensor_name.upper()
 
-        sw, sh = SENSOR_DIMS_MM.get(self.current_camera.sensor_name, (5.6, 4.2))
-        res_w, res_h = RESOLUTIONS.get(self.current_camera.resolution_name, (1920, 1080))
+        # Same resolver (and the same measured k) the viewshed engine uses, so
+        # the default range slider matches the optical limit it will apply.
+        optics = camera_optics(self.current_camera, focal_cur)
 
         if "LWIR" in sens or "MWIR" in sens or "TERMAL" in self.current_camera.model_name.upper():
-            opt_reach = (focal_cur * res_w) / (sw * 1.3)
+            opt_reach = optics.distance_for_ppm(1.3)
             max_limit = min(20000.0, max(2000.0, opt_reach * 1.2))
             self.max_range_var.set(min(opt_reach, self.terrain.width_m))
         else:
-            opt_reach = (focal_cur * res_w) / (sw * 25.0)
+            opt_reach = optics.distance_for_ppm(25.0)
             max_limit = min(5000.0, max(300.0, opt_reach * 1.5))
             self.max_range_var.set(round(opt_reach, 1))
 

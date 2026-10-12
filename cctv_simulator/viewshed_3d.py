@@ -18,7 +18,7 @@ import numpy as np
 
 from .terrain_loader import TerrainData
 from .models import CameraConfig
-from .config import SENSOR_DIMS_MM, RESOLUTIONS, sensor_height_mm
+from .calculations import camera_optics
 from .atmosphere import band_for_camera, usable_range_m
 
 
@@ -111,27 +111,19 @@ def calculate_3d_viewshed(terrain: TerrainData,
         focal_mm = float(max(min(focal_mm_override, camera.focal_max_mm), camera.focal_min_mm))
     else:
         focal_mm = camera.focal_min_mm if lens_mode == "min" else camera.focal_max_mm
-    sw, sh_legacy = SENSOR_DIMS_MM.get(camera.sensor_name, (5.6, 4.2))
-    res_w, res_h = RESOLUTIONS.get(camera.resolution_name, (1920, 1080))
-    # BUGFIX: VFOV must track the resolution's pixel aspect ratio, not
-    # SENSOR_DIMS_MM's legacy 4:3 height (see sensor_height_mm docstring) --
-    # derive before effective_px_ratio scales res_w below (that's a
-    # horizontal MTF correction, not a physical sensor aspect change).
-    sh = sensor_height_mm(sw, res_w, res_h, sh_legacy)
+    # Sensor, resolution-matched sensor height, k-scaled resolution and FOV
+    # all come from the optic engine's resolver (Kural 1).
+    optics = camera_optics(camera, focal_mm)
 
     is_thermal = ("LWIR" in camera.sensor_name.upper() or
                   "MWIR" in camera.sensor_name.upper() or
                   "TERMAL" in camera.model_name.upper())
 
-    # Effective horizontal pixels: label resolution narrowed by the measured
-    # MTF50/Nyquist ratio (cctv_iq). Default 1.0 keeps output unchanged.
-    res_w = res_w * max(getattr(camera, "effective_px_ratio", 1.0), 0.05)
-
     # Floor PPM below which a cell is not worth showing. Non-thermal: the
     # EN 62676-4 Detection threshold (25 px/m) — the viewshed then covers exactly
     # the DORI-meaningful band (Detection and above), no arbitrary cut-off.
     min_detect_ppm = 1.3 if is_thermal else PPM_DETECT
-    optical_limit_m = (focal_mm * res_w) / (sw * min_detect_ppm)
+    optical_limit_m = optics.distance_for_ppm(min_detect_ppm)
 
     # Fog / rain / haze cap the range where target contrast survives the path.
     atm_band = band_for_camera(camera.sensor_name, camera.model_name)
@@ -140,8 +132,8 @@ def calculate_3d_viewshed(terrain: TerrainData,
     # Effective raymarching range cannot exceed optical or atmospheric limits
     effective_max_range = min(max_range_m, optical_limit_m * 1.15, atmospheric_limit_m)
 
-    hfov_deg = math.degrees(2.0 * math.atan((sw / 2.0) / focal_mm))
-    vfov_deg = math.degrees(2.0 * math.atan((sh / 2.0) / focal_mm))
+    hfov_deg = optics.hfov_deg
+    vfov_deg = optics.vfov_deg
     half_hfov_rad = math.radians(hfov_deg / 2.0)
 
     # Pan angle in math radians (0 deg = +Y / North, 90 deg = +X / East)
@@ -211,7 +203,7 @@ def calculate_3d_viewshed(terrain: TerrainData,
     dz = (elev - curv_drop) - cam_z
     tan_angle = dz / d
     slant = np.hypot(d, dz)
-    ppm = (focal_mm * res_w) / (sw * np.maximum(slant, 1.0))
+    ppm = optics.ppm_at(np.maximum(slant, 1.0))
     ppm_ok = ppm >= min_detect_ppm
 
     # Terrain occlusion is physical — a ridge blocks the sightline whether or not

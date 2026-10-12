@@ -8,7 +8,7 @@ import math
 from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 
-from .config import SENSOR_DIMS_MM, RESOLUTIONS, sensor_height_mm
+from .calculations import camera_optics
 from .models import CameraConfig, PPMLevel, OpticResult
 
 
@@ -37,17 +37,14 @@ class Perspective3DEngine:
         self.focal_mm = focal_mm or camera.focal_min_mm
         self.viewport_w, self.viewport_h = viewport_size
 
-        self.sensor_w_mm, sensor_h_mm_legacy = SENSOR_DIMS_MM.get(camera.sensor_name, (5.37, 3.02))
-        res_info = RESOLUTIONS.get(camera.resolution_name, (2688, 1520))
-        # BUGFIX: VFOV must track the resolution's pixel aspect ratio, not
-        # SENSOR_DIMS_MM's legacy 4:3 height (see sensor_height_mm docstring).
-        self.sensor_h_mm = sensor_height_mm(self.sensor_w_mm, res_info[0], res_info[1], sensor_h_mm_legacy)
-        # BUGFIX: apply the measured MTF50/Nyquist ratio (k) like the optic
-        # engine (calculations.py) does, so this view's PPM/DORI never
-        # disagrees with the table/canvas for a camera with a measured k.
-        px_ratio = max(getattr(camera, "effective_px_ratio", 1.0), 0.05)
-        self.res_w = res_info[0] * px_ratio
-        self.res_h = res_info[1]
+        # Sensor, resolution-matched sensor height, k-scaled resolution and FOV
+        # from the optic engine's resolver (Kural 1), so this view's PPM/DORI
+        # can never disagree with the table/canvas for the same camera.
+        optics = self.optics = camera_optics(camera, self.focal_mm)
+        self.sensor_w_mm = optics.sensor_w_mm
+        self.sensor_h_mm = optics.sensor_h_mm
+        self.res_w = optics.res_w
+        self.res_h = optics.nominal_res_h
 
         self.pole_h_m = max(camera.pole_height_m, 0.1)
         self.tilt_deg = camera.tilt_deg
@@ -56,10 +53,10 @@ class Perspective3DEngine:
         self.sin_tilt = math.sin(self.tilt_rad)
 
         # Field of view
-        self.hfov_rad = 2 * math.atan(self.sensor_w_mm / (2 * self.focal_mm))
-        self.vfov_rad = 2 * math.atan(self.sensor_h_mm / (2 * self.focal_mm))
-        self.hfov_deg = math.degrees(self.hfov_rad)
-        self.vfov_deg = math.degrees(self.vfov_rad)
+        self.hfov_deg = optics.hfov_deg
+        self.vfov_deg = optics.vfov_deg
+        self.hfov_rad = math.radians(self.hfov_deg)
+        self.vfov_rad = math.radians(self.vfov_deg)
 
         # PERF: these four constants were recomputed inside project_point on
         # EVERY projected point (4 divisions per call). Hoisted to __init__.
@@ -159,7 +156,7 @@ class Perspective3DEngine:
         opt_dist = math.sqrt(distance_m * distance_m + v_drop * v_drop)
         if opt_dist < 0.01:
             return 9999.0
-        return (self.res_w * self.focal_mm) / (opt_dist * self.sensor_w_mm)
+        return self.optics.ppm_at(opt_dist)
 
     def get_dori_status(self, ppm: float, target_h_m: float = 1.8) -> Tuple[str, str, str]:
         """Returns (DORI/DRI Name, Badge Color, Description). Adapts for Thermal & Optical."""
@@ -258,8 +255,7 @@ def generate_dori_ground_polygons(engine: Perspective3DEngine, ppm_levels: List[
         if lvl.ppm <= 0:
             continue
         # Distance where PPM reaches this threshold
-        # PPM = (ResW * f) / (opt_dist * SensorW) => opt_dist = (ResW * f) / (PPM * SensorW)
-        opt_dist = (engine.res_w * engine.focal_mm) / (lvl.ppm * engine.sensor_w_mm)
+        opt_dist = engine.optics.distance_for_ppm(lvl.ppm)
         v_drop = max(engine.pole_h_m - 1.8, 0.0)
         if opt_dist > v_drop:
             ground_dist = math.sqrt(opt_dist**2 - v_drop**2)

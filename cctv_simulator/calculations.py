@@ -5,7 +5,7 @@ Behaviour-identical to the original except where marked "# BUGFIX".
 Optimizations are documented inline with "# PERF".
 """
 import math
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Dict, List, Any, Tuple, Optional
 from .models import CameraConfig, OpticResult, AnalysisRow, PPMLevel, TargetPoint
 from .config import SENSOR_DIMS_MM, RESOLUTIONS, sensor_height_mm
@@ -25,6 +25,90 @@ _isfinite = math.isfinite
 _INF = math.inf
 
 _MODE_LABELS = {"min": "Geniş", "max": "Dar", "compare": "Geniş + Dar"}
+
+# Fallback for a sensor / resolution name not in the tables (old project
+# files, hand-edited libraries): the CameraConfig defaults. Each module used
+# to pick its own -- 1080p in the viewshed, 2688x1520 in the perimeter
+# planner, a 5.37x3.02 mm sensor in the 3D view -- so one camera got
+# different optics in different windows.
+_DEFAULT_SENSOR = CameraConfig.sensor_name
+_DEFAULT_RESOLUTION = CameraConfig.resolution_name
+
+
+@dataclass(frozen=True)
+class CameraOptics:
+    """A camera's resolved optical constants at one focal length.
+
+    The single place sensor size, the resolution-matched sensor height, the
+    effective (MTF k-scaled) horizontal resolution and the FOV are derived --
+    every engine (optic table, viewshed, coverage grid, perimeter planner, 3D
+    view) reads them from here instead of re-deriving them (Kural 1).
+    PPM relations take arrays as well as floats.
+    """
+    focal_mm: float
+    sensor_w_mm: float
+    sensor_h_mm: float           # matched to the resolution's aspect (sensor_height_mm)
+    nominal_res_w: float
+    nominal_res_h: float
+    res_w: float                 # effective: nominal x effective_px_ratio
+    hfov_deg: float
+    vfov_deg: float
+
+    @property
+    def ppm_distance_product(self) -> float:
+        """px/m x metres: ppm(d) = this / d. (Same product, same operand
+        order, as calculate_for_camera's numerator -> bit-identical.)"""
+        return self.res_w * self.focal_mm
+
+    def ppm_at(self, slant_m):
+        """Pixel density on a target ``slant_m`` metres from the lens."""
+        return self.ppm_distance_product / (self.sensor_w_mm * slant_m)
+
+    def distance_for_ppm(self, ppm: float) -> float:
+        """Slant (optical) distance at which pixel density drops to ``ppm``."""
+        return self.ppm_distance_product / (ppm * self.sensor_w_mm)
+
+
+def _sensor_and_resolution(camera: CameraConfig, strict: bool):
+    if strict:
+        sensor_w_mm, sensor_h_legacy = SENSOR_DIMS_MM[camera.sensor_name]
+        nominal_res_w, nominal_res_h = RESOLUTIONS[camera.resolution_name]
+    else:
+        sensor_w_mm, sensor_h_legacy = SENSOR_DIMS_MM.get(
+            camera.sensor_name, SENSOR_DIMS_MM[_DEFAULT_SENSOR])
+        nominal_res_w, nominal_res_h = RESOLUTIONS.get(
+            camera.resolution_name, RESOLUTIONS[_DEFAULT_RESOLUTION])
+    # BUGFIX (see sensor_height_mm): VFOV tracks the selected resolution's
+    # pixel aspect ratio, not SENSOR_DIMS_MM's legacy 4:3 height.
+    sensor_h_mm = sensor_height_mm(sensor_w_mm, nominal_res_w, nominal_res_h, sensor_h_legacy)
+    # Effective horizontal resolution: label pixels narrowed by the measured
+    # MTF50/Nyquist ratio k (cctv_iq); k <= 0 means "not measured" -> 1.0.
+    px_ratio = camera.effective_px_ratio if camera.effective_px_ratio > 0 else 1.0
+    return sensor_w_mm, sensor_h_mm, nominal_res_w, nominal_res_h, nominal_res_w * px_ratio
+
+
+def camera_optics(camera: CameraConfig, focal_mm: float, strict: bool = False) -> CameraOptics:
+    """Resolve ``camera`` at ``focal_mm``. ``strict`` raises KeyError on an
+    unknown sensor/resolution name (the optic table's contract); otherwise
+    the CameraConfig defaults stand in."""
+    sensor_w_mm, sensor_h_mm, nominal_res_w, nominal_res_h, res_w = _sensor_and_resolution(camera, strict)
+    return CameraOptics(
+        focal_mm=focal_mm,
+        sensor_w_mm=sensor_w_mm,
+        sensor_h_mm=sensor_h_mm,
+        nominal_res_w=nominal_res_w,
+        nominal_res_h=nominal_res_h,
+        res_w=res_w,
+        hfov_deg=_degrees(2 * _atan(sensor_w_mm / (2 * focal_mm))),
+        vfov_deg=_degrees(2 * _atan(sensor_h_mm / (2 * focal_mm))),
+    )
+
+
+def focal_for_ppm(camera: CameraConfig, ppm: float, slant_m: float, strict: bool = False) -> float:
+    """Focal length (mm) at which ``camera`` resolves ``ppm`` px/m on a target
+    ``slant_m`` metres away -- the inverse of CameraOptics.ppm_at."""
+    sensor_w_mm, _h, _nw, _nh, res_w = _sensor_and_resolution(camera, strict)
+    return (ppm * sensor_w_mm * slant_m) / res_w
 
 # PERF: sorting 17 PPMLevel objects happened on *every* calculate_for_camera
 # call (cameras x modes x every mouse-drag event). Cache by identity+content.
@@ -119,19 +203,13 @@ def calculate_for_camera(
     with_recommendations: bool = True,   # PERF: optimize_tilt_calc throws these away
 ) -> OpticResult:
     focal_mm = camera.focal_min_mm if mode == "min" else camera.focal_max_mm
-    sensor_w_mm, sensor_h_mm_legacy = SENSOR_DIMS_MM[camera.sensor_name]
-    nominal_res_w, nominal_res_h = RESOLUTIONS[camera.resolution_name]
-    # BUGFIX: VFOV must track the selected resolution's pixel aspect ratio,
-    # not SENSOR_DIMS_MM's legacy 4:3 height (see sensor_height_mm docstring)
-    # -- a 16:9 camera was getting an inflated 4:3 vertical FOV.
-    sensor_h_mm = sensor_height_mm(sensor_w_mm, nominal_res_w, nominal_res_h, sensor_h_mm_legacy)
-    # Effective horizontal resolution: the label pixels narrowed by the measured
-    # MTF50/Nyquist ratio (cctv_iq). Default 1.0 keeps output bit-identical.
+    optics = camera_optics(camera, focal_mm, strict=True)
+    sensor_w_mm = optics.sensor_w_mm
+    nominal_res_w = optics.nominal_res_w
     px_ratio = camera.effective_px_ratio if camera.effective_px_ratio > 0 else 1.0
-    res_w = nominal_res_w * px_ratio
-
-    hfov_deg = _degrees(2 * _atan(sensor_w_mm / (2 * focal_mm)))
-    vfov_deg = _degrees(2 * _atan(sensor_h_mm / (2 * focal_mm)))
+    res_w = optics.res_w
+    hfov_deg = optics.hfov_deg
+    vfov_deg = optics.vfov_deg
     vertical_drop = max(camera.pole_height_m - camera.target_height_m, 0.05)
     half_vfov = vfov_deg / 2
     bottom_ray_deg = camera.tilt_deg + half_vfov
@@ -163,7 +241,7 @@ def calculate_for_camera(
     label = _MODE_LABELS.get(mode, mode)
     cam_name = camera.name
     drop_sq = vertical_drop * vertical_drop
-    numerator = res_w * focal_mm
+    numerator = optics.ppm_distance_product     # == res_w * focal_mm
 
     rows: List[AnalysisRow] = []
     append_row = rows.append          # PERF: skip attribute lookup per iteration
@@ -412,14 +490,10 @@ def optimize_camera_setup(
     """
     if distance <= 0 or level.ppm <= 0:
         return None
-    sensor_w_mm, _ = SENSOR_DIMS_MM[camera.sensor_name]
-    nominal_res_w, _ = RESOLUTIONS[camera.resolution_name]
-    px_ratio = camera.effective_px_ratio if camera.effective_px_ratio > 0 else 1.0
-    res_w = nominal_res_w * px_ratio
     vertical_drop = max(camera.pole_height_m - camera.target_height_m, 0.05)
     optical_distance = _hypot(distance, vertical_drop)
 
-    focal_required = (level.ppm * sensor_w_mm * optical_distance) / res_w
+    focal_required = focal_for_ppm(camera, level.ppm, optical_distance, strict=True)
     focal_used = max(camera.focal_min_mm, min(focal_required, camera.focal_max_mm))
 
     trial = replace(camera, focal_min_mm=focal_used, focal_max_mm=focal_used)

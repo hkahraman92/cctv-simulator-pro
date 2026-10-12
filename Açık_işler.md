@@ -1,3 +1,27 @@
+## -15. PTZ/viewshed yol haritası — Adım 1: tek optik çözücü (`camera_optics`) — ✅ (2026-10-12)
+
+Direk başına görüş haritası ve bakış maskeleri (adım 2-3) motorla aynı
+formülleri kullanmalı; ama sensör/çözünürlük/`k`/FOV türetimi 6 yerde ayrı
+ayrı yazılmıştı (`calculations`, `viewshed_3d`, `perimeter_planner` ×3,
+`perspective_3d`, `map_3d_window`, `main_window` ×3), farklı geri-düşüş
+değerleriyle (1080p / 2688×1520 / 5,37×3,02 mm / KeyError).
+
+`calculations.CameraOptics` + `camera_optics(camera, focal_mm, strict=)` +
+`focal_for_ppm(...)` eklendi; tüm bu yerler ona geçti. **Doğrulama:** 40
+rastgele kamera × (optik tablo, viewshed ızgaraları, 3B görünüm, aralık,
+kurulum optimizasyonu) + 8 çevre planı ve kapsama ızgarası değişiklik
+öncesi/sonrası karşılaştırıldı — **hepsi bit-aynı**; optik golden testi de
+yeşil.
+
+**Bulunup düzeltilen gerçek tutarsızlık:** ana pencerenin lens önerisi,
+"mevcut model" durumu ve alternatif model sıralaması **nominal** çözünürlüğü
+kullanıp ölçülen `k`'yı yok sayıyordu; "En İyi Kurulum" ve viewshed ise etkin
+çözünürlüğü. `k=0,6` bir kamerada lens önerisi ~6 mm, optimizasyon 10 mm
+diyordu — artık ikisi de 10 mm. Alternatif modeller kütüphanedeki `k`'larıyla
+değerlendiriliyor (seçilince uygulanacak değerle aynı). 3B haritanın varsayılan
+menzil kaydırıcısı da artık viewshed'in uygulayacağı optik limitle aynı.
+`tests/test_camera_optics.py` (6 test).
+
 ## -14. PTZ/viewshed yol haritası — Adım 4: yedeklilik fiziksel kamera sayıyor — ✅ (2026-10-12)
 
 PTZ & 3B viewshed mimari analizinin (7 adımlık yol haritası) ilk uygulanan

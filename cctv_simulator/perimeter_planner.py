@@ -19,7 +19,7 @@ import numpy as np
 from . import atmosphere as _atm
 from .terrain_loader import TerrainData
 from .models import CameraConfig
-from .config import SENSOR_DIMS_MM, RESOLUTIONS, sensor_height_mm
+from .calculations import CameraOptics, camera_optics
 from .viewshed_3d import PPM_DETECT, PPM_IDENT, PPM_OBSERVE, PPM_RECOG
 
 
@@ -118,18 +118,10 @@ def calculate_optimal_spacing(camera: CameraConfig,
                               weather: str = "") -> Tuple[float, float, float]:
     """Calculates effective range, dead zone, and recommended pole spacing (meters)."""
     focal_mm = camera.focal_min_mm if lens_mode == "min" else camera.focal_max_mm
-    sw, sh_legacy = SENSOR_DIMS_MM.get(camera.sensor_name, (5.6, 4.2))
-    res_w, res_h = RESOLUTIONS.get(camera.resolution_name, (2688, 1520))
-    # BUGFIX: VFOV must track the resolution's pixel aspect ratio, not
-    # SENSOR_DIMS_MM's legacy 4:3 height -- derive before effective_px_ratio
-    # scales res_w (that scaling is a horizontal MTF correction, not a
-    # physical sensor aspect change).
-    sh = sensor_height_mm(sw, res_w, res_h, sh_legacy)
-    res_w = res_w * max(getattr(camera, "effective_px_ratio", 1.0), 0.05)
+    optics = camera_optics(camera, focal_mm)      # Kural 1: one optics resolver
 
     # Optical slant range where resolution equals target PPM (EN 62676-4)
-    # PPM = (f * res_w) / (sw * slant_dist) -> slant_dist = (f * res_w) / (sw * PPM)
-    max_slant_dist = (focal_mm * res_w) / (sw * max(target_ppm, 1.0))
+    max_slant_dist = optics.distance_for_ppm(max(target_ppm, 1.0))
     # Fog / rain / haze cap the range where target contrast survives the path.
     band = _atm.band_for_camera(camera.sensor_name, camera.model_name)
     max_slant_dist = _atm.usable_range_m(max_slant_dist, visibility_km, band, weather)
@@ -144,7 +136,7 @@ def calculate_optimal_spacing(camera: CameraConfig,
     # match the cameras it went on to place. Mirror the same aim convention
     # here (the dead_zone*2.0 floor term generate_perimeter_plan also applies
     # isn't known yet at this point and is a rare-case clamp, not the driver).
-    vfov_deg = math.degrees(2.0 * math.atan((sh / 2.0) / focal_mm))
+    vfov_deg = optics.vfov_deg
     aim_dist = max(ground_reach * 0.55, 5.0)
     tilt_deg = max(1.5, min(25.0, math.degrees(math.atan(mast_height_m / aim_dist))))
     top_ray_angle_deg = tilt_deg + (vfov_deg / 2.0)
@@ -228,13 +220,9 @@ def generate_perimeter_plan(terrain: TerrainData,
     )
 
     focal_mm = camera.focal_min_mm if lens_mode == "min" else camera.focal_max_mm
-    sw, sh_legacy = SENSOR_DIMS_MM.get(camera.sensor_name, (5.6, 4.2))
-    res_w, res_h = RESOLUTIONS.get(camera.resolution_name, (2688, 1520))
-    # BUGFIX: see calculate_optimal_spacing -- VFOV must track the
-    # resolution's pixel aspect ratio, not SENSOR_DIMS_MM's legacy 4:3 height.
-    sh = sensor_height_mm(sw, res_w, res_h, sh_legacy)
-    hfov_deg = math.degrees(2.0 * math.atan((sw / 2.0) / focal_mm))
-    vfov_deg = math.degrees(2.0 * math.atan((sh / 2.0) / focal_mm))
+    optics = camera_optics(camera, focal_mm)
+    hfov_deg = optics.hfov_deg
+    vfov_deg = optics.vfov_deg
 
     # Tilt: aim the optical axis at ~55 % of the ground reach so the vertical
     # frame actually lands on the fence line, instead of a fixed -14 deg that
@@ -540,10 +528,8 @@ def compute_coverage_grid(plan: PerimeterPlanResult, camera: CameraConfig,
     mx, my = np.meshgrid(gx, gy)
     best = np.zeros_like(mx, dtype=np.float32)
 
-    sw, _sh = SENSOR_DIMS_MM.get(camera.sensor_name, (5.6, 4.2))
-    res_w, _rh = RESOLUTIONS.get(camera.resolution_name, (2688, 1520))
-    res_w = res_w * max(getattr(camera, "effective_px_ratio", 1.0), 0.05)
     band = _atm.band_for_camera(camera.sensor_name, camera.model_name)
+    optics_by_focal: Dict[float, CameraOptics] = {}
 
     do_occ = terrain is not None and len(cams) <= 250
     if do_occ:
@@ -601,7 +587,10 @@ def compute_coverage_grid(plan: PerimeterPlanResult, camera: CameraConfig,
             in_cone &= visible
 
         slant = np.hypot(dist, c.mast_height_m)
-        ppm = (c.focal_mm * res_w) / (sw * np.maximum(slant, 1.0))
+        optics = optics_by_focal.get(c.focal_mm)
+        if optics is None:
+            optics = optics_by_focal[c.focal_mm] = camera_optics(camera, c.focal_mm)
+        ppm = optics.ppm_at(np.maximum(slant, 1.0))
         best_w = best[row_lo:row_hi, col_lo:col_hi]
         best[row_lo:row_hi, col_lo:col_hi] = np.where(in_cone, np.maximum(best_w, ppm), best_w)
 

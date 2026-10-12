@@ -19,6 +19,8 @@ from ..calculations import (
     optimize_camera_setup,
     angle_diff,
     mode_label,
+    camera_optics,
+    focal_for_ppm,
 )
 from ..exporters import export_csv, export_png, export_pdf, export_excel
 from ..spec_writer import write_requirement_docx
@@ -1279,11 +1281,13 @@ class DualViewCCTVDesignApp:
             return
         level = self._selected_design_level()
         camera = self.cameras[self.selected_camera_index]
-        sensor_w, _ = SENSOR_DIMS_MM[camera.sensor_name]
-        res_w, _ = RESOLUTIONS[camera.resolution_name]
         vertical_drop = max(camera.pole_height_m - camera.target_height_m, 0.05)
         optical_distance = math.sqrt(distance**2 + vertical_drop**2)
-        required_focal = (level.ppm * sensor_w * optical_distance) / res_w
+        # BUGFIX: used the NOMINAL resolution, ignoring the measured k, while
+        # "En İyi Kurulum" (optimize_camera_setup) and the viewshed use the
+        # effective one -- for a camera with k < 1 the two panels recommended
+        # different focal lengths for the same requirement.
+        required_focal = focal_for_ppm(camera, level.ppm, optical_distance, strict=True)
         if required_focal < camera.focal_min_mm:
             verdict = "mevcut lens yeterli, daha geniş açı da mümkün"
         elif required_focal <= camera.focal_max_mm:
@@ -1323,22 +1327,26 @@ class DualViewCCTVDesignApp:
             resolution_name = model.get("resolution_name")
             if sensor_name not in SENSOR_DIMS_MM or resolution_name not in RESOLUTIONS:
                 continue
-            sensor_w, _ = SENSOR_DIMS_MM[sensor_name]
-            res_w, _ = RESOLUTIONS[resolution_name]
             focal_min = self._model_float(model, "focal_min_mm", 2.8)
             focal_max = self._model_float(model, "focal_max_mm", focal_min)
             if focal_max < focal_min:
                 focal_min, focal_max = focal_max, focal_min
             ir_range = self._model_float(model, "ir_range_m", 0.0)
             min_lux = self._model_float(model, "min_lux", 0.01)
-            required_focal = (level.ppm * sensor_w * optical_distance) / res_w
+            # The candidate as it would be applied (apply_camera_model also
+            # carries the library's measured k) -- so the ranking matches
+            # what the camera actually delivers once chosen.
+            candidate = CameraConfig(sensor_name=sensor_name, resolution_name=resolution_name,
+                                     effective_px_ratio=self._model_float(model, "effective_px_ratio", 1.0) or 1.0)
+            required_focal = focal_for_ppm(candidate, level.ppm, optical_distance, strict=True)
             if required_focal > focal_max:
                 rejected_by_focal += 1
                 continue
 
             chosen_focal = min(max(required_focal, focal_min), focal_max)
-            ppm_at_target = (res_w * chosen_focal) / max(optical_distance * sensor_w, 0.01)
-            hfov = math.degrees(2 * math.atan(sensor_w / (2 * chosen_focal)))
+            optics = camera_optics(candidate, chosen_focal, strict=True)
+            ppm_at_target = optics.ppm_distance_product / max(optical_distance * optics.sensor_w_mm, 0.01)
+            hfov = optics.hfov_deg
             angle_ok = True if angle_diff_val is None else abs(angle_diff_val) <= hfov / 2
             ir_ok = ir_range <= 0 or distance <= ir_range
 
@@ -1421,9 +1429,7 @@ class DualViewCCTVDesignApp:
             return float(default)
 
     def _current_model_status_text(self, camera: CameraConfig, level: PPMLevel, distance: float, optical_distance: float) -> str:
-        sensor_w, _ = SENSOR_DIMS_MM[camera.sensor_name]
-        res_w, _ = RESOLUTIONS[camera.resolution_name]
-        required_focal = (level.ppm * sensor_w * optical_distance) / res_w
+        required_focal = focal_for_ppm(camera, level.ppm, optical_distance, strict=True)
         focal_ok = required_focal <= camera.focal_max_mm
         ir_ok = camera.ir_range_m <= 0 or distance <= camera.ir_range_m
         if focal_ok and ir_ok:

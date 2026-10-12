@@ -54,7 +54,15 @@ cctv_optics_workbench.py             optik tezgâhı için bağımsız başlatı
 
 **1. Optik motor tek doğruluk kaynağıdır.**
 `calculations.calculate_for_camera()` ve `ppm_at_distance()` fiziği sahiplenir.
-Arayüz çizer, fizik türetmez. Bir görünüm bir PPM eşiği için menzil istiyorsa,
+Arayüz çizer, fizik türetmez. Kamera optik sabitleri (sensör, çözünürlüğe göre
+sensör yüksekliği, `k`'lı etkin çözünürlük, FOV) **yalnız**
+`calculations.camera_optics(camera, focal_mm)` → `CameraOptics`'ten okunur
+(`ppm_at(mesafe)`, `distance_for_ppm(ppm)`), gereken odak `focal_for_ppm`'den.
+Viewshed, kapsama ızgarası, çevre planlayıcı, 3B görünüm, harita ve lens
+önerileri bunu kullanır; `SENSOR_DIMS_MM`/`RESOLUTIONS`'tan elle türetme
+(her modül kendi geri-düşüş değerini seçiyordu, lens önerisi `k`'yı
+atlıyordu). Bilinmeyen sensör/çözünürlük adı: `strict=True` KeyError, aksi
+halde `CameraConfig` varsayılanları. Bir görünüm bir PPM eşiği için menzil istiyorsa,
 motorun kendi bağıntısını hazır `OpticResult` üzerinden yeniden ifade et
 (`modern_window.ground_distance_for_ppm` örnek), ki ikisi ayrışamasın.
 
