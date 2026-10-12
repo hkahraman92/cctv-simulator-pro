@@ -1,3 +1,33 @@
+## -16. PTZ/viewshed yol haritası — Adım 2: direk başına 360° görüş haritası — ✅ (2026-10-12)
+
+Yeni `cctv_simulator/mount_visibility.py`: `mount_visibility()` (önbellekli,
+LRU 16) tam çember ışın yürütmesini direk başına bir kez yapar; `view_mask()`
+her pan/tilt/zoom bakışını bu haritadan çıkarır. Motorun çekirdeği
+`viewshed_3d`'den ortak fonksiyonlara çıkarıldı — `march_rays` (görüş hattı),
+`view_limits` (px/m tabanı + optik/atmosferik menzil), `zone_codes` (DORI),
+`ray_step_size`, `view_focal_mm` — ikisi de bunları kullanıyor; motor çıktısı
+40 kamera + çit planı/kapsama baz çizgisine karşı **bit-aynı**.
+
+Ölçüm (400×400 @ 3 m, 1 km): harita ~200 ms bir kez, önbellek isabeti ~10 µs,
+bakış başına ~10 ms (motor ~20 ms). Düz arazide motorla ≥ %97 örtüşme.
+`tests/test_mount_visibility.py` (4 test; doğruluk testi kasıtlı bozulmayı
+— engellemeyi yok saymayı — yakaladığı doğrulandı).
+
+### ⚠ Yeni açık iş: viewshed motorunun görüş hattı doğruluğu
+
+Kabul ölçütünü kurarken bağımsız bir referansla (göz → hücre merkezi düz
+çizgisi, **bilinear** arazi yüzeyi, ¼ hücre adım) ölçüldü: tepelik arazide
+`calculate_3d_viewshed` çerçevelediği hücrelerin **%87,3'ünde** doğru (yeni
+harita %89,5). Bazı bakışlarda çok daha düşük: yakın alan geniş açı (4,3 mm,
+dik tilt) **%50**, uzun menzil sıyırma açısı (30 mm, -2,3°) **%71**.
+Sebep motorun iki yaklaşımı: (1) arazi yüksekliği en yakın hücreden okunuyor
+(merdiven basamağı — sıyırma açısında sahte gölge/sahte görünürlük),
+(2) bir hücreye düşen birden çok ışın örneğinden **son yazılan** kazanıyor
+(gölge kenarında komşu ışınlar farklı karar veriyor). Öneri: `march_rays`'te
+bilinear örnekleme + hücre başına merkeze en yakın örneği seçme; bu tüm
+viewshed çıktılarını değiştirir — önce viewshed için bir baz çizgisi/golden
+test, sonra değişiklik.
+
 ## -15. PTZ/viewshed yol haritası — Adım 1: tek optik çözücü (`camera_optics`) — ✅ (2026-10-12)
 
 Direk başına görüş haritası ve bakış maskeleri (adım 2-3) motorla aynı

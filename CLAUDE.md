@@ -398,6 +398,18 @@ onları bir kez sayar, `camera_count` fiziksel kamera adedidir (`per_camera`
 görünüm listesi). `None` = kendi kamerası (sabit; eski davranış bit-aynı).
 `evaluate_ptz_tour` tüm presetlere aynı `camera_id`'yi verir.
 
+**Direk başına 360° görüş haritası (`mount_visibility.py`).** Arazi engellemesi
+yalnız lens konumuna bağlı (pan/tilt/zoom'dan bağımsız), o yüzden
+`mount_visibility(terrain, x, y, mast, max_range_m)` tam çember ışın yürütmesini
+**bir kez** yapıp önbelleğe alır (LRU 16; anahtar arazi nesnesi + grid
+geometrisi + direk), `view_mask(mv, camera, pan_deg=, tilt_deg=, focal_mm=)`
+her bakışı birkaç dizi karşılaştırmasıyla çıkarır. Motorla **aynı yapı
+taşlarını** kullanır — `viewshed_3d.march_rays` (engelleme), `view_limits`
+(px/m tabanı, optik/atmosferik menzil), `zone_codes` (DORI) — bunlar
+`calculate_3d_viewshed`'den çıkarıldı (motor bit-aynı). Fark yalnız ışın
+örneklemesi; tek sabit bakış için otorite hâlâ `calculate_3d_viewshed`.
+`ViewGrids.truncated`: istenen menzil haritanınkini aşıyor.
+
 `ptz_tour.evaluate_ptz_tour(terrain, PTZTour(presets=[PTZPreset…]))` — PTZ'yi
 "aynı konumda farklı pan/tilt/zoom kameraları" olarak `calculate_multi_camera_
 viewshed`'e verir (`PTZPreset.focal_mm` → `CameraPlacement.focal_mm_override`),

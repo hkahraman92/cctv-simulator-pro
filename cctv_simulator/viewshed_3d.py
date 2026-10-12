@@ -18,7 +18,7 @@ import numpy as np
 
 from .terrain_loader import TerrainData
 from .models import CameraConfig
-from .calculations import camera_optics
+from .calculations import CameraOptics, camera_optics
 from .atmosphere import band_for_camera, usable_range_m
 
 
@@ -78,6 +78,119 @@ class ViewshedResult:
     visibility_km: float = 40.0
 
 
+_R_EARTH = 6371000.0
+_K_REFRACT = 0.13
+
+
+def ray_step_size(cell_size_m: float, ray_step_m: float = 3.0) -> float:
+    """0.35-0.5 of a cell per step so a one-cell-wide ridge cannot fall
+    between two samples on a diagonal ray (the old 0.7-cell step could skip it)."""
+    return max(min(ray_step_m, cell_size_m * 0.5), cell_size_m * 0.35)
+
+
+@dataclass
+class RayMarch:
+    """Per-sample (ray, step) output of :func:`march_rays`."""
+    valid: np.ndarray        # in-bounds and not past the ray's first exit
+    rr: np.ndarray           # grid row / column of each sample
+    cc: np.ndarray
+    tan_angle: np.ndarray    # (terrain - eye) / ground distance, curvature-corrected
+    slant: np.ndarray        # 3D lens-to-sample distance
+    los_clear: np.ndarray    # no earlier terrain sample on the ray rises above it
+
+
+def march_rays(terrain: TerrainData, cam_x_m: float, cam_y_m: float, cam_z: float,
+               ray_angles: np.ndarray, step_dists: np.ndarray,
+               earth_curvature: bool = True) -> RayMarch:
+    """Vectorised radial ray march with a running horizon -- the line-of-sight
+    core shared by calculate_3d_viewshed (rays inside one FOV) and the per-mount
+    360-degree raster (mount_visibility), so occlusion is decided one way.
+
+    Same result as the old ray/step double loop, ~10x faster. Each ray walks
+    step_dists; a running horizon angle (np.maximum.accumulate over prior valid
+    steps) decides LOS. Terrain occlusion is physical -- a ridge blocks the
+    sightline whether or not it sits inside the vertical frame or resolves
+    enough pixels, so the horizon uses every valid step.
+    BUGFIX (kept): it used to also require ppm_ok, so a close, steep ridge whose
+    own slant range pushed its pixel density below the floor dropped out of the
+    horizon -- cells behind it could then read as visible.
+    """
+    rows, cols, cell_size = terrain.rows, terrain.cols, terrain.cell_size_m
+    d = step_dists[None, :]                                       # (1,S)
+    cur_xs = cam_x_m + d * np.sin(ray_angles)[:, None]            # (R,S)
+    cur_ys = cam_y_m + d * np.cos(ray_angles)[:, None]
+    cc = ((cur_xs - terrain.origin_x) / cell_size).astype(np.intp)
+    rr = ((cur_ys - terrain.origin_y) / cell_size).astype(np.intp)
+    in_bounds = (cc >= 0) & (cc < cols) & (rr >= 0) & (rr < rows)
+    valid = np.logical_and.accumulate(in_bounds, axis=1)          # ray stops at first exit
+
+    rr_s = np.where(valid, rr, 0)
+    cc_s = np.where(valid, cc, 0)
+    elev = terrain.z_grid[rr_s, cc_s].astype(np.float64)
+    curv_drop = (step_dists * step_dists) / (2.0 * _R_EARTH) * (1.0 - _K_REFRACT) if earth_curvature else 0.0
+    dz = (elev - curv_drop) - cam_z
+    tan_angle = dz / d
+    slant = np.hypot(d, dz)
+
+    tan_for_max = np.where(valid, tan_angle, -1e18)
+    horizon_before = np.empty_like(tan_for_max)
+    horizon_before[:, 0] = -1e18
+    horizon_before[:, 1:] = np.maximum.accumulate(tan_for_max, axis=1)[:, :-1]
+    return RayMarch(valid, rr, cc, tan_angle, slant, tan_angle >= horizon_before)
+
+
+def view_focal_mm(camera: CameraConfig, lens_mode: str = "min",
+                  focal_mm_override: Optional[float] = None) -> float:
+    """Focal length a view uses: an explicit (PTZ) zoom clamped to the lens
+    range, else the min/max end."""
+    if focal_mm_override and focal_mm_override > 0:
+        return float(max(min(focal_mm_override, camera.focal_max_mm), camera.focal_min_mm))
+    return camera.focal_min_mm if lens_mode == "min" else camera.focal_max_mm
+
+
+@dataclass(frozen=True)
+class ViewLimits:
+    optics: CameraOptics
+    min_detect_ppm: float           # px/m floor a cell must reach to be shown
+    optical_limit_m: float          # slant range where px/m falls to that floor
+    atmospheric_limit_m: float      # range where path transmission hits tau_min
+    effective_max_range_m: float    # what the view actually reaches
+
+
+def view_limits(camera: CameraConfig, focal_mm: float, max_range_m: float,
+                visibility_km: float = 40.0, weather: str = "") -> ViewLimits:
+    """Pixel-density floor and range caps of one camera view -- shared by
+    calculate_3d_viewshed and the per-mount view masks (mount_visibility) so
+    the two can never apply different rules."""
+    optics = camera_optics(camera, focal_mm)
+    is_thermal = ("LWIR" in camera.sensor_name.upper() or
+                  "MWIR" in camera.sensor_name.upper() or
+                  "TERMAL" in camera.model_name.upper())
+    # Floor PPM below which a cell is not worth showing. Non-thermal: the
+    # EN 62676-4 Detection threshold (25 px/m) — the viewshed then covers exactly
+    # the DORI-meaningful band (Detection and above), no arbitrary cut-off.
+    min_detect_ppm = 1.3 if is_thermal else PPM_DETECT
+    optical_limit_m = optics.distance_for_ppm(min_detect_ppm)
+    # Fog / rain / haze cap the range where target contrast survives the path.
+    atm_band = band_for_camera(camera.sensor_name, camera.model_name)
+    atmospheric_limit_m = usable_range_m(optical_limit_m, visibility_km, atm_band, weather)
+    # Effective raymarching range cannot exceed optical or atmospheric limits
+    effective = min(max_range_m, optical_limit_m * 1.15, atmospheric_limit_m)
+    return ViewLimits(optics, min_detect_ppm, optical_limit_m, atmospheric_limit_m, effective)
+
+
+def zone_codes(visible, framed, ppm):
+    """ZONE_* per sample/cell from visibility, framing and px/m -- the one
+    DORI classification both the engine and the mount view masks use."""
+    zone = np.zeros(np.shape(ppm), dtype=np.int32)                # ZONE_OUT_OF_FOV
+    zone = np.where(framed & ~visible, ZONE_OCCLUDED, zone)       # framed but ridge-blocked
+    zone = np.where(visible, ZONE_DETECT, zone)
+    zone = np.where(visible & (ppm >= PPM_OBSERVE), ZONE_OBSERVE, zone)
+    zone = np.where(visible & (ppm >= PPM_RECOG), ZONE_RECOG, zone)
+    zone = np.where(visible & (ppm >= PPM_IDENT), ZONE_IDENT, zone)
+    return zone
+
+
 def calculate_3d_viewshed(terrain: TerrainData,
                           cam_x_m: float,
                           cam_y_m: float,
@@ -107,30 +220,13 @@ def calculate_3d_viewshed(terrain: TerrainData,
     cam_z = cam_ground_z + mast_height_m
 
     # 2. Camera Optics & FOV
-    if focal_mm_override and focal_mm_override > 0:
-        focal_mm = float(max(min(focal_mm_override, camera.focal_max_mm), camera.focal_min_mm))
-    else:
-        focal_mm = camera.focal_min_mm if lens_mode == "min" else camera.focal_max_mm
-    # Sensor, resolution-matched sensor height, k-scaled resolution and FOV
-    # all come from the optic engine's resolver (Kural 1).
-    optics = camera_optics(camera, focal_mm)
-
-    is_thermal = ("LWIR" in camera.sensor_name.upper() or
-                  "MWIR" in camera.sensor_name.upper() or
-                  "TERMAL" in camera.model_name.upper())
-
-    # Floor PPM below which a cell is not worth showing. Non-thermal: the
-    # EN 62676-4 Detection threshold (25 px/m) — the viewshed then covers exactly
-    # the DORI-meaningful band (Detection and above), no arbitrary cut-off.
-    min_detect_ppm = 1.3 if is_thermal else PPM_DETECT
-    optical_limit_m = optics.distance_for_ppm(min_detect_ppm)
-
-    # Fog / rain / haze cap the range where target contrast survives the path.
-    atm_band = band_for_camera(camera.sensor_name, camera.model_name)
-    atmospheric_limit_m = usable_range_m(optical_limit_m, visibility_km, atm_band, weather)
-
-    # Effective raymarching range cannot exceed optical or atmospheric limits
-    effective_max_range = min(max_range_m, optical_limit_m * 1.15, atmospheric_limit_m)
+    focal_mm = view_focal_mm(camera, lens_mode, focal_mm_override)
+    lim = view_limits(camera, focal_mm, max_range_m, visibility_km, weather)
+    optics = lim.optics
+    min_detect_ppm = lim.min_detect_ppm
+    optical_limit_m = lim.optical_limit_m
+    atmospheric_limit_m = lim.atmospheric_limit_m
+    effective_max_range = lim.effective_max_range_m
 
     hfov_deg = optics.hfov_deg
     vfov_deg = optics.vfov_deg
@@ -170,8 +266,8 @@ def calculate_3d_viewshed(terrain: TerrainData,
     num_rays = int(min(2200, max(180, hfov_deg * 4, span_need)))
     ray_angles = np.linspace(pan_rad - half_hfov_rad, pan_rad + half_hfov_rad, num_rays)
 
-    R_EARTH = 6371000.0
-    K_REFRACT = 0.13
+    R_EARTH = _R_EARTH
+    K_REFRACT = _K_REFRACT
 
     # Vertical framing: a ground cell is only *seen* if its line from the lens
     # falls between the bottom and top rays (tilt +/- vfov/2). Without this the
@@ -179,57 +275,22 @@ def calculate_3d_viewshed(terrain: TerrainData,
     v_lo = math.radians(tilt_deg - vfov_deg / 2.0)     # bottom ray (steeper down)
     v_hi = math.radians(tilt_deg + vfov_deg / 2.0)     # top ray
 
-    # 0.35-0.5 of a cell per step so a one-cell-wide ridge cannot fall between
-    # two samples on a diagonal ray (the old 0.7-cell step could skip it).
-    step_size = max(min(ray_step_m, cell_size * 0.5), cell_size * 0.35)
+    step_size = ray_step_size(cell_size, ray_step_m)
     num_steps = max(int(effective_max_range / step_size), 1)
     step_dists = np.arange(1, num_steps + 1) * step_size          # (S,)
 
-    # Vectorised radial raymarch — same result as the old ray/step double loop,
-    # ~10x faster. Each ray walks step_dists; a running horizon angle
-    # (np.maximum.accumulate over prior optically-valid steps) decides LOS.
-    d = step_dists[None, :]                                       # (1,S)
-    cur_xs = cam_x_m + d * np.sin(ray_angles)[:, None]            # (R,S)
-    cur_ys = cam_y_m + d * np.cos(ray_angles)[:, None]
-    cc = ((cur_xs - terrain.origin_x) / cell_size).astype(np.intp)
-    rr = ((cur_ys - terrain.origin_y) / cell_size).astype(np.intp)
-    in_bounds = (cc >= 0) & (cc < cols) & (rr >= 0) & (rr < rows)
-    valid = np.logical_and.accumulate(in_bounds, axis=1)          # ray stops at first exit
-
-    rr_s = np.where(valid, rr, 0)
-    cc_s = np.where(valid, cc, 0)
-    elev = terrain.z_grid[rr_s, cc_s].astype(np.float64)
-    curv_drop = (step_dists * step_dists) / (2.0 * R_EARTH) * (1.0 - K_REFRACT) if earth_curvature else 0.0
-    dz = (elev - curv_drop) - cam_z
-    tan_angle = dz / d
-    slant = np.hypot(d, dz)
+    march = march_rays(terrain, cam_x_m, cam_y_m, cam_z, ray_angles, step_dists, earth_curvature)
+    valid, rr, cc = march.valid, march.rr, march.cc
+    tan_angle, slant = march.tan_angle, march.slant
     ppm = optics.ppm_at(np.maximum(slant, 1.0))
     ppm_ok = ppm >= min_detect_ppm
-
-    # Terrain occlusion is physical — a ridge blocks the sightline whether or not
-    # it sits inside the vertical frame, so the running horizon uses every valid
-    # step, not just the framed ones.
-    # BUGFIX: this used to also require ppm_ok, so a close, steep ridge whose
-    # own slant range pushed its pixel density below min_detect_ppm dropped out
-    # of the horizon entirely -- cells behind it could then read as visible
-    # even though that ridge physically blocks the sightline. Occlusion must
-    # only depend on being a real, in-bounds terrain sample.
-    tan_for_max = np.where(valid, tan_angle, -1e18)
-    horizon_before = np.empty_like(tan_for_max)
-    horizon_before[:, 0] = -1e18
-    horizon_before[:, 1:] = np.maximum.accumulate(tan_for_max, axis=1)[:, :-1]
 
     elev_angle = np.arctan(tan_angle)                             # (-pi/2, pi/2)
     in_vfov = (elev_angle >= v_lo) & (elev_angle <= v_hi)
     framed = valid & ppm_ok & in_vfov
-    visible = framed & (tan_angle >= horizon_before)
+    visible = framed & march.los_clear
 
-    zone = np.zeros(ppm.shape, dtype=np.int32)                    # ZONE_OUT_OF_FOV
-    zone = np.where(framed & ~visible, ZONE_OCCLUDED, zone)       # framed but ridge-blocked
-    zone = np.where(visible, ZONE_DETECT, zone)
-    zone = np.where(visible & (ppm >= PPM_OBSERVE), ZONE_OBSERVE, zone)
-    zone = np.where(visible & (ppm >= PPM_RECOG), ZONE_RECOG, zone)
-    zone = np.where(visible & (ppm >= PPM_IDENT), ZONE_IDENT, zone)
+    zone = zone_codes(visible, framed, ppm)
 
     # Scatter back to the grid, ray-major then step-ascending -> last write wins,
     # matching the old loop's ordering.
