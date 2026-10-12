@@ -125,6 +125,7 @@ def evaluate_ptz_tour(terrain: TerrainData, tour: PTZTour, *,
             camera=tour.camera, lens_mode=ps.lens_mode, pan_deg=ps.pan_deg,
             tilt_deg=ps.tilt_deg, max_range_m=tour.max_range_m, label=ps.name,
             focal_mm_override=_preset_focal(ps, tour.camera),
+            camera_id="ptz",          # all presets are views of this one camera
         )
         for ps in tour.presets
     ]

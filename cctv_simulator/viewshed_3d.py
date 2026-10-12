@@ -348,6 +348,10 @@ class CameraPlacement:
     max_range_m: float = 2000.0
     label: str = ""
     focal_mm_override: Optional[float] = None   # explicit zoom (mm), overrides lens_mode
+    # Physical camera this view belongs to. Placements sharing a camera_id are
+    # time-shared views of ONE camera (a PTZ's presets): it never looks at
+    # two of them at once, so redundancy counts it once. None = own camera.
+    camera_id: Optional[str] = None
 
 
 def placement_bounds_warnings(terrain: TerrainData,
@@ -372,8 +376,8 @@ class MultiViewshedResult:
     dori_grid: np.ndarray             # ZONE_* — best level any camera achieves
     ppm_grid: np.ndarray             # best px/m from any camera
     visibility_mask: np.ndarray      # True where >= 1 camera has a clear framed LOS
-    best_cam_grid: np.ndarray        # 1-based index of the strongest camera, 0 = none
-    seen_count_grid: np.ndarray      # how many cameras cover the cell (redundancy)
+    best_cam_grid: np.ndarray        # 1-based index of the strongest VIEW (placement), 0 = none
+    seen_count_grid: np.ndarray      # how many PHYSICAL cameras cover the cell (redundancy)
     per_camera: List[ViewshedResult]
     labels: List[str]
     cell_size_m: float
@@ -384,9 +388,10 @@ class MultiViewshedResult:
     visible_area_m2: float
     occluded_area_m2: float          # in some cone, seen by nobody (terrain shadow)
     coverage_pct: float              # visible / union-cone
-    overlap_area_m2: float           # cells seen by >= 2 cameras
+    overlap_area_m2: float           # cells seen by >= 2 physical cameras
     single_cover_area_m2: float      # cells seen by exactly 1 (no redundancy)
     pct_by_zone: Dict[str, float]    # ident/recog/observe/detect -> % of union cone
+    camera_count: int = 0            # physical cameras (len(per_camera) counts views)
 
 
 def calculate_multi_camera_viewshed(terrain: TerrainData,
@@ -415,17 +420,29 @@ def calculate_multi_camera_viewshed(terrain: TerrainData,
     ppm = np.zeros((rows, cols), np.float32)
     best_cam = np.zeros((rows, cols), np.int32)
     vis = np.zeros((rows, cols), bool)
-    seen = np.zeros((rows, cols), np.int32)
     union_cone = np.zeros((rows, cols), bool)
+    # BUGFIX: redundancy used to count VIEWS, so a PTZ whose 4 presets all
+    # frame a cell read as "4 cameras" there -- inflating overlap and hiding
+    # that the cell is unwatched whenever the PTZ looks elsewhere. Views of
+    # one physical camera (same camera_id) are OR-ed and counted once.
+    cam_vis_by_id: Dict[object, np.ndarray] = {}
 
-    for i, r in enumerate(per, 1):
+    for i, (p, r) in enumerate(zip(placements, per), 1):
         cam_vis = r.visibility_mask
         better = cam_vis & (r.ppm_grid > ppm)
         ppm = np.where(better, r.ppm_grid, ppm)
         best_cam = np.where(better, i, best_cam)
         vis |= cam_vis
-        seen += cam_vis.astype(np.int32)
+        key = p.camera_id if p.camera_id is not None else ("view", i)
+        if key in cam_vis_by_id:
+            cam_vis_by_id[key] = cam_vis_by_id[key] | cam_vis
+        else:
+            cam_vis_by_id[key] = cam_vis.copy()
         union_cone |= (r.dori_grid != ZONE_OUT_OF_FOV)
+
+    seen = np.zeros((rows, cols), np.int32)
+    for cam_vis in cam_vis_by_id.values():
+        seen += cam_vis.astype(np.int32)
 
     occ = union_cone & ~vis
     dori = np.zeros((rows, cols), np.int32)
@@ -458,4 +475,5 @@ def calculate_multi_camera_viewshed(terrain: TerrainData,
         overlap_area_m2=int(np.count_nonzero(seen >= 2)) * cell_a,
         single_cover_area_m2=int(np.count_nonzero(seen == 1)) * cell_a,
         pct_by_zone=pct,
+        camera_count=len(cam_vis_by_id),
     )

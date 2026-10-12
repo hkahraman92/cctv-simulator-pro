@@ -383,6 +383,12 @@ veya `--json` ile stdout'a sonuç. Tk yok, ekran yok.
 otoriter tekil motoru her yerleşim için koşturup grid'leri birleştirir:
 `MultiViewshedResult` her hücrede en iyi DORI + `seen_count_grid` (yedeklilik) +
 `best_cam_grid` + örtüşen/tek-kamera alan + `per_camera` listesi.
+**Yedeklilik fiziksel kamera sayar, görünüm değil:** `CameraPlacement.camera_id`
+aynı olan yerleşimler tek kameranın zaman paylaşımlı bakışlarıdır (PTZ
+presetleri) — `seen_count_grid` / `overlap_area_m2` / `single_cover_area_m2`
+onları bir kez sayar, `camera_count` fiziksel kamera adedidir (`per_camera`
+görünüm listesi). `None` = kendi kamerası (sabit; eski davranış bit-aynı).
+`evaluate_ptz_tour` tüm presetlere aynı `camera_id`'yi verir.
 
 `ptz_tour.evaluate_ptz_tour(terrain, PTZTour(presets=[PTZPreset…]))` — PTZ'yi
 "aynı konumda farklı pan/tilt/zoom kameraları" olarak `calculate_multi_camera_

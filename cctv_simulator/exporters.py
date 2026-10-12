@@ -984,13 +984,17 @@ def _viewshed_rows(viewshed, cell_size_m: float) -> List[List[str]]:
 
 def _multi_viewshed_rows(mv) -> List[List[str]]:
     p = mv.pct_by_zone
-    rows = [
-        ["Kamera adedi", f"{len(mv.per_camera)}"],
+    cams = mv.camera_count or len(mv.per_camera)
+    rows = [["Kamera adedi", f"{cams}"]]
+    if len(mv.per_camera) != cams:
+        # PTZ presets are views of one camera, not extra cameras.
+        rows.append(["Görünüm (preset) adedi", f"{len(mv.per_camera)}"])
+    rows += [
         ["Birleşik FOV konisi", _fmt_area(mv.fov_area_m2)],
         ["Görünür (en az 1 kamera)", _fmt_area(mv.visible_area_m2)],
         ["Kör nokta (koni içi, görülemeyen)", _fmt_area(mv.occluded_area_m2)],
         ["Birleşik net görüş oranı", f"% {mv.coverage_pct:.1f}"],
-        ["Örtüşen alan (≥ 2 kamera)", _fmt_area(mv.overlap_area_m2)],
+        ["Örtüşen alan (≥ 2 fiziksel kamera)", _fmt_area(mv.overlap_area_m2)],
         ["Tek kamera kapsamı (yedeksiz)", _fmt_area(mv.single_cover_area_m2)],
         ["Teşhis (Identification) kapsaması", f"% {p.get('ident', 0.0):.1f}"],
         ["Tanıma (Recognition) kapsaması", f"% {p.get('recog', 0.0):.1f}"],

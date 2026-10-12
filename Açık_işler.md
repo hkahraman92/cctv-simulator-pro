@@ -1,3 +1,26 @@
+## -14. PTZ/viewshed yol haritası — Adım 4: yedeklilik fiziksel kamera sayıyor — ✅ (2026-10-12)
+
+PTZ & 3B viewshed mimari analizinin (7 adımlık yol haritası) ilk uygulanan
+adımı. **Hata:** `calculate_multi_camera_viewshed` yedekliliği *görünüm*
+başına sayıyordu — 4 preseti aynı hücreyi gören bir PTZ orada "4 kamera"
+görünüyordu; `PTZTourResult.combined.overlap_area_m2` tek bir PTZ için bile
+sıfırdan büyüktü, rapordaki "Kamera adedi" preset sayısını basıyordu. Oysa PTZ
+aynı anda tek yere bakar: o hücre PTZ başka yöne dönünce izlenmiyor.
+
+**Düzeltme:** `CameraPlacement.camera_id` (opsiyonel); aynı kimlikli
+görünümler OR'lanıp bir kez sayılıyor. `MultiViewshedResult.camera_count`
+eklendi. Görünür alan / DORI / PPM / en iyi görünüm birleşimi **değişmedi** —
+yalnız yedeklilik metrikleri. `camera_id=None` (sabit kameralar, çit
+yerleşimleri, CLI) için sonuç bit-aynı. `evaluate_ptz_tour` presetleri tek
+kamera olarak işaretliyor; mühendislik raporunda "Kamera adedi" fiziksel
+sayı, farklıysa ayrıca "Görünüm (preset) adedi". 3 yeni test.
+
+Yol haritasında sırada: (1) optik formülleri ortak fonksiyona çıkarma,
+(2) direk başına 360° görüş haritası önbelleği, (3) sektör devriyesi / 360°
+dönüş için kapalı formül revizit + kadrajda kalma eşiği, (5) sabit+PTZ
+birleşimi ve "tespitten teşhise süre" ızgarası, (6) arayüz, (7) çevre çitinde
+karma (sabit+PTZ) dizilim.
+
 ## -13. Pencere boyutlandırma / kırpılma / kaybolan kontroller — ✅ düzeltildi (2026-10-12)
 
 İstek: küçültülen pencerelerde içerik kırpılıyor/kayboluyor, bazı pencereler

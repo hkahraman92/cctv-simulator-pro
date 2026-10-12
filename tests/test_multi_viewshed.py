@@ -68,6 +68,50 @@ def test_overlap_and_best_camera_tracking():
     assert p["detect"] >= p["observe"] >= p["recog"] >= p["ident"] - 1e-9
 
 
+def _ptz_views(camera_id):
+    # two presets of one PTZ on the same mast, frames overlapping (pan 0 vs 20)
+    return [CameraPlacement(x_m=400, y_m=200, mast_height_m=8, camera=CAM, lens_mode="min",
+                            pan_deg=pan, tilt_deg=-4, max_range_m=400, label=f"P{pan}",
+                            camera_id=camera_id)
+            for pan in (0.0, 20.0)]
+
+
+def test_views_of_one_camera_count_once():
+    # BUGFIX: presets of one PTZ used to count as separate cameras.
+    terr = _flat()
+    as_cameras = calculate_multi_camera_viewshed(terr, _ptz_views(None))
+    as_views = calculate_multi_camera_viewshed(terr, _ptz_views("ptz-1"))
+    assert as_cameras.overlap_area_m2 > 0.0          # the frames do overlap...
+    assert as_views.overlap_area_m2 == 0.0           # ...but it is one camera
+    assert as_views.seen_count_grid.max() == 1
+    assert as_views.camera_count == 1 and as_cameras.camera_count == 2
+    assert as_views.single_cover_area_m2 == as_views.visible_area_m2
+    # what is SEEN (and how well) is unchanged -- only redundancy is.
+    assert np.array_equal(as_views.visibility_mask, as_cameras.visibility_mask)
+    assert np.array_equal(as_views.ppm_grid, as_cameras.ppm_grid)
+    assert np.array_equal(as_views.dori_grid, as_cameras.dori_grid)
+    assert np.array_equal(as_views.best_cam_grid, as_cameras.best_cam_grid)
+
+
+def test_fixed_camera_plus_ptz_counts_two():
+    terr = _flat()
+    fixed = CameraPlacement(x_m=400, y_m=200, mast_height_m=8, camera=CAM, lens_mode="min",
+                            pan_deg=10, tilt_deg=-4, max_range_m=400, label="Sabit")
+    res = calculate_multi_camera_viewshed(terr, [fixed] + _ptz_views("ptz-1"))
+    assert res.camera_count == 2
+    assert res.seen_count_grid.max() == 2            # fixed + PTZ, never 3
+
+
+def test_ptz_tour_has_no_self_overlap():
+    from cctv_simulator.ptz_tour import PTZPreset, PTZTour, evaluate_ptz_tour
+    tour = PTZTour(x_m=400, y_m=200, mast_height_m=8, camera=CAM, max_range_m=400,
+                   presets=[PTZPreset("A", 0.0, -4.0, "min"), PTZPreset("B", 20.0, -4.0, "min")])
+    res = evaluate_ptz_tour(_flat(), tour)
+    assert res.combined.camera_count == 1
+    assert res.combined.overlap_area_m2 == 0.0
+    assert res.combined.seen_count_grid.max() == 1
+
+
 def test_focal_override_sits_between_lens_ends():
     terr = _flat()
     wide = calculate_3d_viewshed(terrain=terr, cam_x_m=400, cam_y_m=100, mast_height_m=8,
