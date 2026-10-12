@@ -92,6 +92,17 @@ _LINE_MODE_LABELS: List[Tuple[str, str]] = [
 _LINE_MODE_BY_LABEL = {lbl: val for lbl, val in _LINE_MODE_LABELS}
 _LINE_MODE_TO_LABEL = {val: lbl for lbl, val in _LINE_MODE_LABELS}
 _WATCH_SIDE_BY_LABEL = {"Sol": "left", "Sağ": "right"}
+
+# PTZ panel modes (map_3d_window._build_ptz_panel)
+_PTZ_MODES = ["Preset turu", "Sektör devriyesi", "360° dönüş", "Tespit → Teşhis süresi"]
+# slew-to-cue target: label -> px/m (EN 62676-4 DORI + TR plate)
+_CUE_LEVELS: List[Tuple[str, float]] = [
+    ("Teşhis (Identification, 250 px/m)", 250.0),
+    ("TR Plaka / ANPR (143 px/m)", 143.0),
+    ("Tanıma (Recognition, 125 px/m)", 125.0),
+    ("Gözlem (Observation, 62,5 px/m)", 62.5),
+]
+_CUE_PPM_BY_LABEL = {lbl: ppm for lbl, ppm in _CUE_LEVELS}
 _WATCH_SIDE_TO_LABEL = {v: k for k, v in _WATCH_SIDE_BY_LABEL.items()}
 
 
@@ -185,11 +196,29 @@ class TerrainViewshedWindow:
         self._ptz_result = None          # PTZTourResult
         self._ptz_presets = []           # list of (name, pan, tilt, lens_mode, dwell)
         self.show_multi_var = tk.BooleanVar(value=True)
-        self.multi_overlay_var = tk.StringVar(value="dori")   # "dori" | "overlap" | "revisit"
+        # "dori" | "overlap" | "revisit" | "cue" | "fused"
+        self.multi_overlay_var = tk.StringVar(value="dori")
         self.mc_stat_var = tk.StringVar(value="-")
         self.mc_overlap_var = tk.StringVar(value="-")
-        self.ptz_stat_var = tk.StringVar(value="-")
+        self.ptz_stat_var = tk.StringVar(value="Henüz hesaplanmadı.")
         self.ptz_dwell_var = tk.DoubleVar(value=6.0)
+        # PTZ modes beyond the preset tour (ptz_schedule / ptz_fusion)
+        self.ptz_mode_var = tk.StringVar(value=_PTZ_MODES[0])
+        self.sweep_start_var = tk.DoubleVar(value=0.0)
+        self.sweep_end_var = tk.DoubleVar(value=180.0)
+        self.sweep_speed_var = tk.DoubleVar(value=20.0)
+        self.sweep_end_dwell_var = tk.DoubleVar(value=2.0)
+        self.min_dwell_var = tk.DoubleVar(value=0.5)
+        self.cue_level_var = tk.StringVar(value=_CUE_LEVELS[0][0])
+        self.cue_slew_var = tk.DoubleVar(value=90.0)
+        self.cue_zoom_s_var = tk.DoubleVar(value=3.0)
+        self.cue_settle_var = tk.DoubleVar(value=1.5)
+        self.cue_only_detected_var = tk.BooleanVar(value=False)
+        self._sweep_result = None        # ptz_schedule.SweepResult
+        self._cue_result = None          # ptz_fusion.CueResponse
+        self._cue_grid = None            # response grid shown (maybe limited to detected cells)
+        self._ptz_layer = "tour"         # which PTZ result the "revisit" layer shows
+        self._bg_busy = False
         import datetime as _dtmod
         self.glare_date_var = tk.StringVar(value=str(_dtmod.date.today()))
         self.stat_glare_var = tk.StringVar(value="-")
@@ -806,34 +835,106 @@ class TerrainViewshedWindow:
 
     # ── inline PTZ preset-tour panel (single-camera tab; shown only for PTZ) ──
     def _build_ptz_panel(self, parent):
-        grp = ttk.LabelFrame(parent, text="🔄 PTZ Preset Turu — kapsama & revizit", padding=6)
+        grp = ttk.LabelFrame(parent, text="🔄 PTZ — tur, tarama, tespit→teşhis", padding=6)
         self.grp_ptz = grp
-        ttk.Label(grp, text="Yukarıdaki pan / tilt / zoom kaydırıcılarını istediğin "
-                            "bakışa getir, sonra “＋ Bu bakışı preset ekle”.",
-                  wraplength=250, foreground=TEXT_MUTED).pack(anchor="w", pady=(0, 4))
-        self.ptz_tree = ttk.Treeview(grp, columns=("pan", "tilt", "lens", "dwell"),
+        mode_row = ttk.Frame(grp)
+        mode_row.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(mode_row, text="Mod:").pack(side=tk.LEFT)
+        combo = ttk.Combobox(mode_row, textvariable=self.ptz_mode_var, values=_PTZ_MODES,
+                             state="readonly")
+        combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0))
+        combo.bind("<<ComboboxSelected>>", lambda e: self._on_ptz_mode_changed())
+
+        def spin(frame, label, var, lo, hi, step=1.0):
+            row = ttk.Frame(frame)
+            row.pack(fill=tk.X, pady=1)
+            ttk.Label(row, text=label).pack(side=tk.LEFT)
+            ttk.Spinbox(row, from_=lo, to=hi, increment=step, textvariable=var,
+                        width=7).pack(side=tk.RIGHT)
+
+        def note(frame, text):
+            wrap_label(ttk.Label(frame, text=text, foreground=TEXT_MUTED)).pack(fill=tk.X, pady=(0, 4))
+
+        # ── preset tour ──
+        tour = ttk.Frame(grp)
+        note(tour, "Yukarıdaki pan / tilt / zoom kaydırıcılarını istediğin "
+                   "bakışa getir, sonra “＋ Bu bakışı preset ekle”.")
+        self.ptz_tree = ttk.Treeview(tour, columns=("pan", "tilt", "lens", "dwell"),
                                      show="headings", height=4)
         for c, txt, wd in (("pan", "Pan°", 45), ("tilt", "Tilt°", 45),
                            ("lens", "Zoom", 55), ("dwell", "Bekle sn", 55)):
             self.ptz_tree.heading(c, text=txt)
             self.ptz_tree.column(c, width=wd, anchor="center")
         self.ptz_tree.pack(fill=tk.X, pady=(0, 4))
-        row = ttk.Frame(grp)
+        row = ttk.Frame(tour)
         row.pack(fill=tk.X)
         ttk.Label(row, text="Bekle:").pack(side=tk.LEFT)
         ttk.Spinbox(row, from_=1, to=60, textvariable=self.ptz_dwell_var, width=5).pack(side=tk.LEFT, padx=(2, 6))
         StyledButton(row, text="＋ Bu bakışı preset ekle", command=self._ptz_add_preset,
                      bootstyle="info-outline").pack(side=tk.LEFT, fill=tk.X, expand=True)
-        row2 = ttk.Frame(grp)
+        row2 = ttk.Frame(tour)
         row2.pack(fill=tk.X, pady=(3, 0))
         StyledButton(row2, text="Seçiliyi sil", command=self._ptz_del_preset,
                      bootstyle="danger-outline").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
         StyledButton(row2, text="Tümünü temizle", command=self._ptz_clear_presets,
                      bootstyle="secondary-outline").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
-        StyledButton(grp, text="🔄 Turu Çöz (birleşik kapsama + revizit ısı haritası)",
+        StyledButton(tour, text="🔄 Turu Çöz (birleşik kapsama + revizit ısı haritası)",
                      command=self._run_ptz_tour, bootstyle="success").pack(fill=tk.X, pady=(4, 0))
-        self._create_stat_row(grp, "Tur / revizit:", self.ptz_stat_var, ACCENT_CYAN)
-        # placed by _update_ptz_panel_visibility()
+
+        # ── sector patrol / 360° rotation (share speed + min dwell) ──
+        sweep = ttk.Frame(grp)
+        note(sweep, "Tilt ve zoom yukarıdaki kaydırıcılardan. Bakışı “En kısa "
+                    "bakış”tan kısa süren hücre kapsama sayılmaz (yalnız bakış atılan, gri).")
+        self._sector_fields = ttk.Frame(sweep)
+        spin(self._sector_fields, "Başlangıç pan (°):", self.sweep_start_var, 0, 359, 5)
+        spin(self._sector_fields, "Bitiş pan (°, saat yönü):", self.sweep_end_var, 0, 359, 5)
+        spin(self._sector_fields, "Uçlarda bekleme (sn):", self.sweep_end_dwell_var, 0, 60, 0.5)
+        self._sector_fields.pack(fill=tk.X)
+        self._sweep_common = ttk.Frame(sweep)
+        self._sweep_common.pack(fill=tk.X)
+        spin(self._sweep_common, "Tarama hızı (°/sn):", self.sweep_speed_var, 1, 360, 5)
+        spin(self._sweep_common, "En kısa bakış (sn):", self.min_dwell_var, 0, 10, 0.1)
+        StyledButton(self._sweep_common, text="▶ Taramayı Hesapla (revizit + bakış süresi)",
+                     command=self._run_ptz_sweep, bootstyle="success").pack(fill=tk.X, pady=(4, 0))
+
+        # ── slew-to-cue ──
+        cue = ttk.Frame(grp)
+        note(cue, "Ev konumu = yukarıdaki pan / tilt / zoom. Her noktaya dönüp hedef "
+                  "çözünürlüğe zoom yapıp oturana kadar geçen süre.")
+        ttk.Label(cue, text="Hedef seviye:").pack(anchor="w")
+        ttk.Combobox(cue, textvariable=self.cue_level_var, values=[lbl for lbl, _ in _CUE_LEVELS],
+                     state="readonly").pack(fill=tk.X, pady=(2, 4))
+        spin(cue, "Pan/tilt hızı (°/sn):", self.cue_slew_var, 1, 400, 10)
+        spin(cue, "Tam zoom süresi (sn):", self.cue_zoom_s_var, 0, 20, 0.5)
+        spin(cue, "Oturma süresi (sn):", self.cue_settle_var, 0, 10, 0.5)
+        ttk.Checkbutton(cue, text="Yalnız çit kameralarının tespit ettiği alan",
+                        variable=self.cue_only_detected_var).pack(anchor="w", pady=(2, 0))
+        StyledButton(cue, text="⏱ Tespit → Teşhis Süresi Haritası",
+                     command=self._run_cue, bootstyle="success").pack(fill=tk.X, pady=(4, 0))
+
+        self._ptz_mode_frames = {_PTZ_MODES[0]: tour, _PTZ_MODES[1]: sweep,
+                                 _PTZ_MODES[2]: sweep, _PTZ_MODES[3]: cue}
+        # A wrapping result line (these results are a sentence, not a number;
+        # a right-aligned stat row would cut them off in the narrow rail).
+        self._ptz_stat_row = wrap_label(tk.Label(
+            grp, textvariable=self.ptz_stat_var, font=("Segoe UI", 8, "bold"), fg=ACCENT_CYAN,
+            bg=PANEL_DARK, anchor="w", justify="left", padx=4, pady=3))
+        self._ptz_stat_row.pack(fill=tk.X, pady=(6, 0))
+        self._on_ptz_mode_changed()
+        # the whole group is placed by _update_ptz_panel_visibility()
+
+    def _on_ptz_mode_changed(self):
+        mode = self.ptz_mode_var.get()
+        shown = self._ptz_mode_frames[mode]
+        for frame in set(self._ptz_mode_frames.values()):
+            frame.pack_forget()
+        shown.pack(fill=tk.X, before=self._ptz_stat_row)
+        if mode == _PTZ_MODES[1]:
+            self._sector_fields.pack(fill=tk.X, before=self._sweep_common)
+        elif mode == _PTZ_MODES[2]:
+            self._sector_fields.pack_forget()
+        if not self._bg_busy:                 # don't leave another mode's result on screen
+            self.ptz_stat_var.set("Henüz hesaplanmadı.")
 
     def _update_ptz_panel_visibility(self):
         from ..database import is_ptz_camera
@@ -857,11 +958,14 @@ class TerrainViewshedWindow:
         self._create_stat_row(grp, "Örtüşen / yedeksiz:", self.mc_overlap_var, ACCENT_AMBER)
         lay = ttk.Frame(grp)
         lay.pack(fill=tk.X, pady=(3, 0))
-        ttk.Checkbutton(lay, text="Katman:", variable=self.show_multi_var,
-                        command=self._render_map_canvas).pack(side=tk.LEFT)
-        for val, lbl in (("dori", "DORI"), ("overlap", "Örtüşme"), ("revisit", "Revizit")):
-            ttk.Radiobutton(lay, text=lbl, value=val, variable=self.multi_overlay_var,
-                            command=self._render_map_canvas).pack(side=tk.LEFT, padx=2)
+        flow_layout(lay, [
+            ttk.Checkbutton(lay, text="Katman:", variable=self.show_multi_var,
+                            command=self._render_map_canvas),
+            *[ttk.Radiobutton(lay, text=lbl, value=val, variable=self.multi_overlay_var,
+                              command=self._on_overlay_changed)
+              for val, lbl in (("dori", "DORI"), ("overlap", "Örtüşme"), ("revisit", "Revizit"),
+                               ("cue", "Tepki süresi"), ("fused", "Sabit+PTZ"))],
+        ], padx=2, pady=1)
 
     # ── multi-camera unified viewshed ──
     def _placements_from_perimeter(self):
@@ -971,10 +1075,197 @@ class TerrainViewshedWindow:
         r = self._ptz_result
         if r is None:
             return
+        self._ptz_layer = "tour"
         self.ptz_stat_var.set(f"periyot {r.tour_period_s:.0f} sn · revizit ort {r.mean_revisit_s:.0f} / "
                               f"en kötü {r.worst_revisit_s:.0f} sn")
         self.show_multi_var.set(True)
         self.multi_overlay_var.set("revisit")
+        self._render_map_canvas()
+
+    # ── background work (sweep / slew-to-cue) ──
+    def _run_in_background(self, label, compute, on_done):
+        """Run ``compute()`` (numpy only -- it must not touch Tk) on a worker
+        thread; poll from the Tk loop and hand the result to ``on_done``.
+        Polling instead of after(0) from the worker, and the error copied to
+        a string before the except block ends (CLAUDE.md "Tk iş parçacığı")."""
+        if self._bg_busy:
+            self.ptz_stat_var.set("Önceki hesap sürüyor…")
+            return
+        self._bg_busy = True
+        self.ptz_stat_var.set(f"{label} hesaplanıyor…")
+        self.window.config(cursor="watch")
+        box = {}
+
+        def worker():
+            try:
+                box["result"] = compute()
+            except Exception as exc:
+                box["error"] = f"{type(exc).__name__}: {exc}"
+            box["done"] = True
+
+        def poll():
+            try:
+                if not self.window.winfo_exists():
+                    return
+            except tk.TclError:
+                return
+            if not box.get("done"):
+                self.window.after(50, poll)
+                return
+            self._bg_busy = False
+            self.window.config(cursor="")
+            if "error" in box:
+                self.ptz_stat_var.set("Hata: " + box["error"])
+                messagebox.showerror(label, box["error"], parent=self.window)
+                return
+            on_done(box["result"])
+
+        threading.Thread(target=worker, daemon=True).start()
+        self.window.after(50, poll)
+
+    def _read_num(self, var, name, lo, hi):
+        try:
+            val = float(var.get())
+        except (tk.TclError, ValueError):
+            raise ValueError(f"{name} sayısal olmalı.") from None
+        if not lo <= val <= hi:
+            raise ValueError(f"{name} {lo:g} ile {hi:g} arasında olmalı.")
+        return val
+
+    def _ptz_context(self):
+        """Mount + camera + environment captured on the Tk thread."""
+        weather = self.weather_var.get()
+        return dict(terrain=self.terrain, x=self.cam_x_var.get(), y=self.cam_y_var.get(),
+                    mast=self.mast_height_var.get(), camera=self.current_camera,
+                    max_range=self.max_range_var.get(), weather=weather,
+                    vis_km=WEATHER_PRESETS.get(weather, 40.0))
+
+    def _run_ptz_sweep(self):
+        from ..ptz_schedule import Rotation360, SectorPatrol, evaluate_sweep
+        sector = self.ptz_mode_var.get() == _PTZ_MODES[1]
+        try:
+            speed = self._read_num(self.sweep_speed_var, "Tarama hızı", 0.1, 1000)
+            min_dwell = self._read_num(self.min_dwell_var, "En kısa bakış", 0, 60)
+            if sector:
+                start = self._read_num(self.sweep_start_var, "Başlangıç pan", 0, 360)
+                end = self._read_num(self.sweep_end_var, "Bitiş pan", 0, 360)
+                end_dwell = self._read_num(self.sweep_end_dwell_var, "Uçlarda bekleme", 0, 600)
+        except ValueError as exc:
+            messagebox.showerror("PTZ tarama", str(exc), parent=self.window)
+            return
+        tilt, lens = self.tilt_deg_var.get(), self.lens_mode_var.get()
+        if sector:
+            sweep = SectorPatrol(start, end, speed_deg_s=speed, end_dwell_s=end_dwell,
+                                 tilt_deg=tilt, lens_mode=lens)
+            if sweep.span_deg <= 0:
+                messagebox.showerror("PTZ tarama", "Başlangıç ve bitiş aynı — tam tur için "
+                                     "“360° dönüş” modunu seçin.", parent=self.window)
+                return
+        else:
+            sweep = Rotation360(speed_deg_s=speed, tilt_deg=tilt, lens_mode=lens)
+        c = self._ptz_context()
+
+        def compute():
+            return evaluate_sweep(c["terrain"], c["x"], c["y"], c["mast"], c["camera"], sweep,
+                                  max_range_m=c["max_range"], min_dwell_s=min_dwell,
+                                  visibility_km=c["vis_km"], weather=c["weather"])
+
+        def done(r):
+            self._sweep_result = r
+            self._ptz_layer = "sweep"
+            if r.seen_area_m2 > 0:
+                rev = f"revizit ort {r.mean_revisit_s:.0f} / en kötü {r.worst_revisit_s:.0f} sn"
+            else:
+                rev = "hiçbir hücre yeterince uzun kadrajda kalmıyor — tarama çok hızlı"
+            self.ptz_stat_var.set(
+                f"periyot {r.period_s:.0f} sn · görülen {r.seen_area_m2 / 1e4:.2f} ha · yalnız bakış "
+                f"atılan {r.glimpse_area_m2 / 1e4:.2f} ha (gri) · {rev}"
+                + (" · ⚠ menzil analiz menzilini aşıyor" if r.truncated else ""))
+            self.show_multi_var.set(True)
+            self.multi_overlay_var.set("revisit")
+            self._render_map_canvas()
+
+        self._run_in_background("PTZ tarama", compute, done)
+
+    def _run_cue(self):
+        from ..ptz_fusion import CUE_OK, CUE_REASONS, cue_response, detect_then_identify
+        try:
+            slew = self._read_num(self.cue_slew_var, "Pan/tilt hızı", 0.1, 2000)
+            zoom_s = self._read_num(self.cue_zoom_s_var, "Tam zoom süresi", 0, 120)
+            settle = self._read_num(self.cue_settle_var, "Oturma süresi", 0, 60)
+        except ValueError as exc:
+            messagebox.showerror("Tespit → Teşhis", str(exc), parent=self.window)
+            return
+        only_detected = self.cue_only_detected_var.get()
+        static = self._multi_vs
+        if only_detected and static is None:
+            messagebox.showinfo("Tespit → Teşhis",
+                                "Önce “Çevre Çiti” sekmesinde “🎯 Çit Kameralarını Birleştir” ile "
+                                "sabit kameraların görüş alanını hesaplayın.", parent=self.window)
+            return
+        target_ppm = _CUE_PPM_BY_LABEL.get(self.cue_level_var.get(), 250.0)
+        cam = self.current_camera
+        home = dict(home_pan_deg=self.pan_deg_var.get(), home_tilt_deg=self.tilt_deg_var.get(),
+                    home_focal_mm=cam.focal_min_mm if self.lens_mode_var.get() == "min" else cam.focal_max_mm)
+        c = self._ptz_context()
+
+        def compute():
+            return cue_response(c["terrain"], c["x"], c["y"], c["mast"], c["camera"],
+                                target_ppm=target_ppm, slew_speed_deg_s=slew,
+                                zoom_full_sweep_s=zoom_s, settle_s=settle,
+                                max_range_m=c["max_range"], visibility_km=c["vis_km"],
+                                weather=c["weather"], **home)
+
+        def done(r):
+            self._cue_result = r
+            grid = r.response_s
+            if only_detected and static is not None and static.dori_grid.shape == grid.shape:
+                grid = detect_then_identify(static, r)
+            self._cue_grid = grid
+            vals = grid[np.isfinite(grid)]
+            if vals.size:
+                cell_a = c["terrain"].cell_size_m ** 2
+                text = (f"{target_ppm:g} px/m'de tutulabilen {vals.size * cell_a / 1e4:.2f} ha · süre "
+                        f"medyan {np.median(vals):.1f} / %90 {np.percentile(vals, 90):.1f} / "
+                        f"en kötü {vals.max():.1f} sn")
+            else:
+                text = f"{target_ppm:g} px/m'ye hiçbir noktada ulaşılamıyor"
+            codes, counts = np.unique(r.reason[r.reason != CUE_OK], return_counts=True)
+            if codes.size:
+                top = codes[np.argsort(counts)[::-1][:2]]
+                text += " · başlıca engel: " + ", ".join(CUE_REASONS[int(k)] for k in top)
+            self.ptz_stat_var.set(text)
+            self.show_multi_var.set(True)
+            self.multi_overlay_var.set("cue")
+            self._render_map_canvas()
+
+        self._run_in_background("Tespit → Teşhis", compute, done)
+
+    def _fused_coverage(self):
+        """Fence (fixed) cameras + the latest PTZ result, or None if either is missing."""
+        from ..ptz_fusion import PTZCoverage, fuse_coverage
+        if self._multi_vs is None:
+            return None
+        if self._ptz_layer == "sweep" and self._sweep_result is not None:
+            ptz = PTZCoverage.from_sweep(self._sweep_result)
+        elif self._ptz_result is not None:
+            ptz = PTZCoverage.from_tour(self._ptz_result)
+        else:
+            return None
+        if ptz.dori_grid.shape != self._multi_vs.dori_grid.shape:
+            return None
+        return fuse_coverage(self._multi_vs, [ptz], self.terrain.cell_size_m)
+
+    def _on_overlay_changed(self):
+        if self.multi_overlay_var.get() == "fused":
+            fused = self._fused_coverage()
+            if fused is None:
+                self.mc_overlap_var.set("PTZ sonucu + çit kameraları gerekli")
+            else:
+                self.mc_overlap_var.set(
+                    f"Algılama: sürekli {fused.continuous_area_m2['detect'] / 1e4:.1f} ha · yalnız PTZ "
+                    f"{fused.intermittent_area_m2['detect'] / 1e4:.1f} ha "
+                    f"(en kötü {fused.worst_intermittent_revisit_s['detect']:.0f} sn)")
         self._render_map_canvas()
 
     def _draw_multi_overlay_arr(self, rows, cols):
@@ -983,8 +1274,14 @@ class TerrainViewshedWindow:
             return None
         mode = self.multi_overlay_var.get()
         ov = np.zeros((rows, cols, 4), dtype=np.uint8)
-        if mode == "revisit" and self._ptz_result is not None:
-            g = self._ptz_result.revisit_grid
+        if mode == "revisit":
+            glimpse = None
+            if self._ptz_layer == "sweep" and self._sweep_result is not None:
+                g, glimpse = self._sweep_result.revisit_grid, self._sweep_result.glimpse_mask
+            elif self._ptz_result is not None:
+                g = self._ptz_result.revisit_grid
+            else:
+                return None
             if g.shape != (rows, cols):
                 return None
             finite = np.isfinite(g)
@@ -992,6 +1289,28 @@ class TerrainViewshedWindow:
             ov[finite & (g >= 10) & (g < 30)] = [255, 214, 0, 125]
             ov[finite & (g >= 30) & (g < 60)] = [255, 112, 67, 120]
             ov[finite & (g >= 60)] = [255, 77, 109, 120]
+            if glimpse is not None:
+                ov[glimpse] = [150, 150, 150, 110]          # crossed too fast to count
+            return np.flipud(ov)
+        if mode == "cue":
+            g = self._cue_grid
+            if g is None or g.shape != (rows, cols):
+                return None
+            finite = np.isfinite(g)
+            ov[finite & (g < 3)] = [0, 230, 118, 140]
+            ov[finite & (g >= 3) & (g < 6)] = [255, 214, 0, 130]
+            ov[finite & (g >= 6) & (g < 10)] = [255, 112, 67, 125]
+            ov[finite & (g >= 10)] = [255, 77, 109, 125]
+            return np.flipud(ov)
+        if mode == "fused":
+            fused = self._fused_coverage()
+            if fused is None:
+                return None
+            st = fused.status["detect"]
+            if st.shape != (rows, cols):
+                return None
+            ov[st == 2] = [0, 230, 118, 130]                 # continuous (fixed camera)
+            ov[st == 1] = [255, 179, 0, 125]                 # intermittent (PTZ only)
             return np.flipud(ov)
         mv = self._multi_vs
         if mv is None or mv.dori_grid.shape != (rows, cols):

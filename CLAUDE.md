@@ -550,15 +550,31 @@ kamera `camera_type`'ını (DB'deki "Kamera tipi" combobox: Sabit / PTZ / Speed
 Dome …) + model adı + broşür özetini "ptz / speed dome / sürekli optik zoom"
 için tarar; açık `is_ptz` alanı varsa o kazanır. `CameraConfig.camera_type`
 alanı taşır. `map_3d_window`:
-- **PTZ kamera seçilince** tekil sekmede **inline PTZ Preset Turu paneli**
+- **PTZ kamera seçilince** tekil sekmede **inline PTZ paneli**
   (`_build_ptz_panel` / `_update_ptz_panel_visibility`, `_on_camera_model_changed`
-  toggle eder) belirir: pan/tilt/zoom kaydırıcılarını istediğin bakışa getir →
-  "＋ Bu bakışı preset ekle" → Treeview; "Turu Çöz" → `evaluate_ptz_tour` →
-  revizit ısı haritası. Sabit kamerada panel gizli.
+  toggle eder) belirir. "Mod" combobox'ı (`_PTZ_MODES`, `_on_ptz_mode_changed`
+  ilgili çerçeveyi gösterir, eski modun sonucunu siler):
+  - *Preset turu*: kaydırıcıları bakışa getir → "＋ Bu bakışı preset ekle" →
+    "Turu Çöz" → `evaluate_ptz_tour` (`_ptz_layer = "tour"`).
+  - *Sektör devriyesi* / *360° dönüş*: tilt/zoom yukarıdaki kaydırıcılardan,
+    pan aralığı/hız/uç bekleme/en kısa bakış alanlardan → `_run_ptz_sweep` →
+    `evaluate_sweep` (`_ptz_layer = "sweep"`; yalnız bakış atılan hücre gri).
+  - *Tespit → Teşhis süresi*: hedef seviye, slew/zoom/oturma, "yalnız sabit
+    kameraların tespit ettiği yerler" → `_run_cue` → `cue_response`
+    (+ `detect_then_identify`); sonuç satırında medyan/%90/en kötü süre ve
+    en sık ulaşılamama nedeni.
+  Sweep ve cue `_run_in_background` ile worker thread'de (`after(50)` poll,
+  hata `str(exc)` olarak kopyalanır, `_bg_busy` ikinci isteği yutar,
+  yok edilmiş pencere sessiz çıkış). Sabit kamerada panel gizli.
 - **Çevre çiti sekmesinde "🎯 Birleşik Viewshed"** paneli
   (`_build_combined_panel`): `_placements_from_perimeter` → `_run_multi_viewshed`
-  → DORI / örtüşme (`seen_count_grid`) / revizit katmanı. >120 kamerada
-  örnekleme sorar.
+  → katman radyoları (`flow_layout`): DORI / örtüşme (`seen_count_grid`) /
+  revizit (son çalışan tur **veya** tarama, `_ptz_layer`) / **tepki süresi**
+  (cue, <3/3–6/6–10/≥10 sn bantları) / **Sabit+PTZ** (`_fused_coverage` →
+  `fuse_coverage`, Algılama seviyesi sürekli yeşil / aralıklı amber; özet
+  `mc_overlap_var`). >120 kamerada örnekleme sorar.
+- Harita DORI lejandı tek sütun, kutusu çizilen yazının `bbox`'ından (eski sabit
+  110 px iki sütun >%100 DPI'da üst üste biniyordu); Gözlem satırı eklendi.
 
 Overlay `_draw_multi_overlay_arr` → `_render_map_canvas` 2b bloğunda komposit.
 `_export_engineering_report` `multi_viewshed` + `ptz` geçirir.

@@ -1,3 +1,39 @@
+## -19. PTZ/viewshed yol haritası — Adım 6: arayüz (tarama, tespit→teşhis, Sabit+PTZ katmanı) — ✅ (2026-10-12)
+
+`map_3d_window` PTZ paneli artık dört mod (`_PTZ_MODES` combobox):
+- **Preset turu** — eski akış, değişmedi.
+- **Sektör devriyesi / 360° dönüş** — `evaluate_sweep`; tilt/zoom mevcut
+  kaydırıcılardan, pan aralığı / hız / uç bekleme / en kısa bakış alanlardan.
+  Sonuç: periyot, görülen alan, yalnız bakış atılan alan (haritada gri),
+  ortalama/en kötü revizit.
+- **Tespit → Teşhis süresi** — `cue_response` (+ isteğe bağlı
+  `detect_then_identify`: yalnız çit kameralarının tespit ettiği yerler).
+  Sonuç: hedef px/m'de tutulabilen alan, medyan / %90 / en kötü süre, en sık
+  ulaşılamama nedenleri (`CUE_REASONS`).
+
+Tarama ve cue arka planda (`_run_in_background`: worker thread + `after(50)`
+poll, `str(exc)` kopyası, `_bg_busy` çift tıklamayı yutar, kapanan pencere
+sessiz çıkış). Girdi aralık dışıysa Türkçe hata diyaloğu, hesap başlamaz.
+
+Birleşik Viewshed katman radyolarına **Tepki süresi** (<3 / 3–6 / 6–10 /
+≥10 sn) ve **Sabit+PTZ** (`fuse_coverage`, Algılama: sürekli yeşil / aralıklı
+amber, özet satırı) eklendi; "Revizit" katmanı son çalışan tur veya taramayı
+gösteriyor (`_ptz_layer`).
+
+Yan düzeltmeler: harita DORI lejandı DPI ölçeğinde üst üste biniyordu (sabit
+110 px iki sütun) → tek sütun, kutu yazının `bbox`'ından; eksik Gözlem satırı
+eklendi. Mod değişince önceki modun sonuç metni temizleniyor.
+
+Doğrulama: başsız sürüş betiği (gerçek pencere, UMA T10) — üç mod + geçersiz
+hız + 60 kameralı çit + füzyon + "yalnız tespit edilen" cue; ekran görüntüsü
+incelendi. ruff temiz, pytest tamamı geçti. Arayüz için otomatik test yok
+(Tk sürüşü elle).
+
+Kalan: mühendislik raporu tarama/cue sonuçlarını içermiyor; preset turu hâlâ
+eski motorla (`calculate_multi_camera_viewshed`) hesaplanıyor; lejand aktif
+katmana (revizit/tepki/füzyon) göre değişmiyor. Sıradaki: (7) çevre çitinde
+karma (sabit+PTZ) dizilim.
+
 ## -18. PTZ/viewshed yol haritası — Adım 5: sabit + PTZ birleşimi, tespit→teşhis süresi — ✅ (2026-10-12)
 
 Yeni `cctv_simulator/ptz_fusion.py`:
