@@ -249,7 +249,6 @@ class TerrainViewshedWindow:
         def _construct():
             self._build_ui()
             self._sync_active_camera()
-            self._init_default_fence_sample()
             if terrain_state:
                 self.import_terrain_state(terrain_state)
             self.window.after(80, self.recalculate_viewshed)
@@ -429,19 +428,6 @@ class TerrainViewshedWindow:
         except Exception as exc:
             from ..errors import report
             report(exc, "Arazi Projesi / Kaydedilmiş Durum Geri Yükleme")
-
-    def _init_default_fence_sample(self):
-        w, h = self.terrain.width_m, self.terrain.height_m
-        cx, cy = w * 0.5, h * 0.5
-        rx, ry = w * 0.32, h * 0.32
-        self.fence_points = [
-            (round(cx - rx, 1), round(cy - ry * 0.5, 1)),
-            (round(cx - rx * 0.5, 1), round(cy + ry, 1)),
-            (round(cx + rx * 0.5, 1), round(cy + ry, 1)),
-            (round(cx + rx, 1), round(cy - ry * 0.2, 1)),
-            (round(cx + rx * 0.4, 1), round(cy - ry, 1)),
-            (round(cx - rx * 0.4, 1), round(cy - ry, 1)),
-        ]
 
     def _sync_active_camera(self):
         if self.app is not None:
@@ -1284,7 +1270,13 @@ class TerrainViewshedWindow:
                         f"~{meta.get('m_per_px', 0.0):.2f} m/px)"
                     )
                     self._sync_active_camera()
-                    self._init_default_fence_sample()
+                    # BUGFIX: used to replace the fence with a fresh centered
+                    # sample on every new area -- silently discarding a
+                    # fence the user had actually drawn. A genuinely new
+                    # terrain extent makes old points meaningless either
+                    # way, so just clear instead of resurrecting a demo.
+                    self.fence_points = []
+                    self.perimeter_plan = None
                     self._refresh_tile_cache_label()
                     if self.planner_mode_var.get() == "perimeter":
                         self.distribute_perimeter_cameras()
@@ -1430,7 +1422,6 @@ class TerrainViewshedWindow:
                 return
             self.terrain.set_custom_width_m(val)
             self._sync_active_camera()
-            self._init_default_fence_sample()
             self.recalculate_viewshed()
             msg = f"Harita genişliği {val:,.0f} metre ({val/1000.0:.2f} km) olarak kalibre edildi.\nHücre çözünürlüğü: {self.terrain.cell_size_m:.2f} m/piksel"
             messagebox.showinfo("Ölçek Güncellendi", msg)
@@ -1787,7 +1778,10 @@ class TerrainViewshedWindow:
         self.cam_x_var.set(self.terrain.width_m * 0.5)
         self.cam_y_var.set(self.terrain.height_m * 0.5)
         self.user_satellite_img = None
-        self._init_default_fence_sample()
+        # A brand new procedural terrain makes any existing fence
+        # coordinates meaningless -- clear instead of replacing with a demo.
+        self.fence_points = []
+        self.perimeter_plan = None
         if self.planner_mode_var.get() == "perimeter":
             self.distribute_perimeter_cameras()
         else:
@@ -1810,7 +1804,10 @@ class TerrainViewshedWindow:
             self.cam_y_var.set(self.terrain.height_m * 0.5)
             self.terrain_preset_var.set(self.terrain.name)
             self._sync_active_camera()
-            self._init_default_fence_sample()
+            # A newly loaded DEM makes any existing fence coordinates
+            # meaningless -- clear instead of replacing with a demo.
+            self.fence_points = []
+            self.perimeter_plan = None
             self.recalculate_viewshed()
             msg = f"'{self.terrain.name}' arazisi başarıyla yüklendi.\nBoyut: {self.terrain.cols}x{self.terrain.rows} hücre ({self.terrain.width_m:,.0f}m x {self.terrain.height_m:,.0f}m)"
             messagebox.showinfo("DEM Yüklendi", msg)
