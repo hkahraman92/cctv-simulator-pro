@@ -22,7 +22,7 @@ from ..calculations import (
 )
 from ..exporters import export_csv, export_png, export_pdf, export_excel
 from ..spec_writer import write_requirement_docx
-from ..theme import COLORS, StyledButton, fit_and_center_window
+from ..theme import COLORS, StyledButton, fit_and_center_window, make_scrollable, flow_layout, wrap_label
 from .canvas_drawer import CanvasDrawer, canvas_to_world, top_plot_from_rect
 from .spec_assistant import SpecAssistantWindow
 from .camera_db_window import CameraDatabaseWindow
@@ -125,32 +125,20 @@ class DualViewCCTVDesignApp:
         self.left_notebook = ttk.Notebook(left_frame)
         self.left_notebook.pack(fill=tk.BOTH, expand=True)
 
-        # The camera tab grew past a min-height window; wrap it in a scroller.
-        _cam_outer = ttk.Frame(self.left_notebook)
-        _cam_canvas = tk.Canvas(_cam_outer, highlightthickness=0, borderwidth=0)
-        _cam_sb = ttk.Scrollbar(_cam_outer, orient="vertical", command=_cam_canvas.yview)
-        _cam_canvas.configure(yscrollcommand=_cam_sb.set)
-        _cam_canvas.pack(side="left", fill="both", expand=True)
-        _cam_sb.pack(side="right", fill="y")
-        self.tab_camera = ttk.Frame(_cam_canvas, padding=8)
-        _cam_win = _cam_canvas.create_window((0, 0), window=self.tab_camera, anchor="nw")
-        self.tab_camera.bind("<Configure>",
-                             lambda e: _cam_canvas.configure(scrollregion=_cam_canvas.bbox("all")))
-        _cam_canvas.bind("<Configure>", lambda e: _cam_canvas.itemconfigure(_cam_win, width=e.width))
-        _cam_canvas.bind("<Enter>", lambda e: _cam_canvas.bind_all(
-            "<MouseWheel>", lambda ev: _cam_canvas.yview_scroll(int(-ev.delta / 120), "units")))
-        _cam_canvas.bind("<Leave>", lambda e: _cam_canvas.unbind_all("<MouseWheel>"))
-
-        self.tab_project = ttk.Frame(self.left_notebook, padding=8)
-        self.tab_assistant = ttk.Frame(self.left_notebook, padding=8)
-        self.tab_levels = ttk.Frame(self.left_notebook, padding=8)
-        self.tab_export = ttk.Frame(self.left_notebook, padding=8)
+        # Every left tab is a long form that outgrows a min-size (900x600) or
+        # laptop-height window -- the bottom controls used to be cut off
+        # with no way to reach them. Each tab scrolls when it has to.
+        _cam_outer, self.tab_camera = make_scrollable(self.left_notebook)
+        _proj_outer, self.tab_project = make_scrollable(self.left_notebook)
+        _asst_outer, self.tab_assistant = make_scrollable(self.left_notebook)
+        _lvl_outer, self.tab_levels = make_scrollable(self.left_notebook)
+        _exp_outer, self.tab_export = make_scrollable(self.left_notebook)
 
         self.left_notebook.add(_cam_outer, text="Kamera")
-        self.left_notebook.add(self.tab_project, text="Proje")
-        self.left_notebook.add(self.tab_assistant, text="Asistan")
-        self.left_notebook.add(self.tab_levels, text="PPM")
-        self.left_notebook.add(self.tab_export, text="Çıktı")
+        self.left_notebook.add(_proj_outer, text="Proje")
+        self.left_notebook.add(_asst_outer, text="Asistan")
+        self.left_notebook.add(_lvl_outer, text="PPM")
+        self.left_notebook.add(_exp_outer, text="Çıktı")
 
         self._build_camera_tab()
         self._build_project_tab()
@@ -164,38 +152,27 @@ class DualViewCCTVDesignApp:
 
         top_info = ttk.Frame(right_frame)
         top_info.pack(fill=tk.X, pady=(0, 6))
+        self._build_header(top_info)
 
-        try:
-            from ..config import resource_path
-            logo_path = resource_path("assets/cctv_logo_48.png")
-            if logo_path.exists():
-                self.logo_img = tk.PhotoImage(file=str(logo_path), master=self.root)
-                ttk.Label(top_info, image=self.logo_img).pack(side=tk.LEFT, padx=(0, 6))
-                ttk.Label(
-                    top_info, text="CCTV Simulator",
-                    font=("Segoe UI", 12, "bold"), foreground=COLORS["accent"],
-                ).pack(side=tk.LEFT, padx=(0, 12))
-        except Exception:
-            pass
+        # Bottom mouse/status line, packed before the expanding body so pack
+        # reserves its row first (packed after it, it was the first thing to
+        # be squeezed out of a short window).
+        ttk.Label(right_frame, textvariable=self.mouse_var, anchor=tk.W).pack(
+            side=tk.BOTTOM, fill=tk.X, pady=(4, 0))
 
-        # Buttons are packed first so pack() reserves their full width; the
-        # info label then takes whatever is left instead of squeezing them.
-        StyledButton(top_info, text="🗺️ 3D Arazi & Viewshed Analizi", command=self.open_terrain_viewshed, bootstyle="success").pack(
-            side=tk.RIGHT, padx=(8, 0)
-        )
-        StyledButton(top_info, text="👁️ 3D Kamera Bakış Açısı", command=self.open_3d_view, bootstyle="primary").pack(
-            side=tk.RIGHT, padx=(8, 0)
-        )
-        StyledButton(top_info, text="◈ Optik Tezgâhı", command=self.open_optics_workbench, bootstyle="info").pack(
-            side=tk.RIGHT, padx=(8, 0)
-        )
-        ttk.Label(top_info, textvariable=self.status_var, foreground=COLORS["danger"]).pack(side=tk.RIGHT, padx=(8, 0))
-        ttk.Label(top_info, textvariable=self.info_var, font=("Segoe UI", 10, "bold"), foreground=COLORS["accent"]).pack(
-            side=tk.LEFT, fill=tk.X, expand=True
-        )
+        # Table / recommendations / drawing canvas share a vertical sash pane.
+        # As a plain pack column the fixed-height table and text box kept
+        # their size and a short window took everything from the canvas --
+        # at the 900x600 min size it got 86 px and calculate() (which needs
+        # >= 120) silently drew nothing. _fit_right_panes keeps the canvas at
+        # >= 45 % of the height; the table and text box scroll instead.
+        self.right_paned = ttk.PanedWindow(right_frame, orient=tk.VERTICAL)
+        self.right_paned.pack(fill=tk.BOTH, expand=True)
+        self._right_panes_fitted = False
 
-        table_frame = ttk.LabelFrame(right_frame, text=" Görev Kapsama Sınırları ve Analiz Tablosu ", padding=6)
-        table_frame.pack(fill=tk.X, pady=(0, 8))
+        table_frame = ttk.LabelFrame(self.right_paned, text=" Görev Kapsama Sınırları ve Analiz Tablosu ", padding=6)
+        self.right_paned.add(table_frame, weight=1)
+        self._table_frame = table_frame
 
         columns = ("camera", "mode", "level", "type", "ppm", "opt_dist", "ground_dist", "status")
         self.tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=8)
@@ -222,13 +199,14 @@ class DualViewCCTVDesignApp:
         for column in columns:
             self.tree.heading(column, text=headings[column])
             self.tree.column(column, width=widths[column], anchor=tk.CENTER if column != "level" else tk.W)
-        self.tree.pack(side=tk.LEFT, fill=tk.X, expand=True)
         table_scroll = ttk.Scrollbar(table_frame, orient=tk.VERTICAL, command=self.tree.yview)
         table_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.tree.configure(yscrollcommand=table_scroll.set)
 
-        recommendation_frame = ttk.LabelFrame(right_frame, text=" Otomatik Kurulum Önerileri ", padding=6)
-        recommendation_frame.pack(fill=tk.X, pady=(0, 8))
+        recommendation_frame = ttk.LabelFrame(self.right_paned, text=" Otomatik Kurulum Önerileri ", padding=6)
+        self.right_paned.add(recommendation_frame, weight=1)
+        self._recommendation_frame = recommendation_frame
         self.recommendation_text = tk.Text(
             recommendation_frame,
             height=4,
@@ -241,15 +219,20 @@ class DualViewCCTVDesignApp:
             highlightthickness=1,
             highlightbackground="#DEE2E6",
         )
-        self.recommendation_text.pack(fill=tk.X)
+        rec_scroll = ttk.Scrollbar(recommendation_frame, orient=tk.VERTICAL,
+                                   command=self.recommendation_text.yview)
+        rec_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.recommendation_text.configure(yscrollcommand=rec_scroll.set)
+        self.recommendation_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.recommendation_text.configure(state=tk.DISABLED)
 
         self.canvas_frame = ttk.LabelFrame(
-            right_frame,
+            self.right_paned,
             text=" Üst: Yatay Profil | Alt: Kuşbakışı / Plan Üstü Çoklu Kamera ",
             padding=5,
         )
-        self.canvas_frame.pack(fill=tk.BOTH, expand=True)
+        self.right_paned.add(self.canvas_frame, weight=4)
+        self.right_paned.bind("<Configure>", self._fit_right_panes, add="+")
 
         self.canvas = tk.Canvas(self.canvas_frame, bg=COLORS["canvas_bg"], borderwidth=1, relief="groove")
         self.canvas.pack(fill=tk.BOTH, expand=True)
@@ -266,21 +249,121 @@ class DualViewCCTVDesignApp:
         # right-drag never triggered the closing full pass. Bind it.
         self.canvas.bind("<ButtonRelease-3>", self._on_canvas_release)
 
-        ttk.Label(right_frame, textvariable=self.mouse_var, anchor=tk.W).pack(fill=tk.X, pady=(4, 0))
+        # ── Left/right split: set once laid out, and kept sane on resize ──
+        # 440 px fits the longest left-tab button captions (Proje/Asistan
+        # tabs; the old 340-420 cut them); the Kamera tab's entries shrink
+        # gracefully, so its wider natural size is not honoured. Never more
+        # than 45 % of the window: the left pane has weight 0, so after
+        # starting maximised and restoring to a small window the right side
+        # used to absorb the whole loss and the drawing collapsed. The split
+        # is only moved automatically while the user hasn't dragged it.
+        self._auto_sash = None
 
-        # ── Set initial sash position after geometry is resolved ──
-        def _set_initial_sash():
+        def _fit_left_sash(_e=None):
             try:
-                win_w = self.root.winfo_width()
-                if win_w < 100:
-                    win_w = self.root.winfo_screenwidth()
-                # Left panel gets ~25 % of window width (min 340, max 420)
-                left_w = max(340, min(420, int(win_w * 0.25)))
-                self.main_paned.sashpos(0, left_w)
-            except Exception:
+                width = self.main_paned.winfo_width()
+                if width < 200:
+                    return
+                target = max(300, min(440, int(width * 0.45)))
+                cur = self.main_paned.sashpos(0)
+                if self._auto_sash is None or cur == self._auto_sash or cur > int(width * 0.45):
+                    if cur != target:
+                        self.main_paned.sashpos(0, target)
+                    self._auto_sash = self.main_paned.sashpos(0)
+            except tk.TclError:
                 pass
 
-        self.root.after(200, _set_initial_sash)
+        self.main_paned.bind("<Configure>", _fit_left_sash, add="+")
+        self.root.after(200, _fit_left_sash)
+
+    def _build_header(self, top_info):
+        """Logo/title, info + status read-outs and the three window buttons.
+
+        One row when it fits; otherwise the read-outs drop to a second line
+        and the buttons wrap onto a third. As a single packed row, at the
+        900 px min width two of the three buttons and both read-outs got zero
+        width and silently disappeared.
+        """
+        title_box = ttk.Frame(top_info)
+        try:
+            from ..config import resource_path
+            logo_path = resource_path("assets/cctv_logo_48.png")
+            if logo_path.exists():
+                self.logo_img = tk.PhotoImage(file=str(logo_path), master=self.root)
+                ttk.Label(title_box, image=self.logo_img).pack(side=tk.LEFT, padx=(0, 6))
+                ttk.Label(
+                    title_box, text="CCTV Simulator",
+                    font=("Segoe UI", 12, "bold"), foreground=COLORS["accent"],
+                ).pack(side=tk.LEFT, padx=(0, 12))
+        except Exception:
+            pass
+
+        btn_box = ttk.Frame(top_info)
+        buttons = [
+            StyledButton(btn_box, text="◈ Optik Tezgâhı", command=self.open_optics_workbench, bootstyle="info"),
+            StyledButton(btn_box, text="👁️ 3D Kamera Bakış Açısı", command=self.open_3d_view, bootstyle="primary"),
+            StyledButton(btn_box, text="🗺️ 3D Arazi & Viewshed Analizi", command=self.open_terrain_viewshed,
+                         bootstyle="success"),
+        ]
+        flow_layout(btn_box, buttons, padx=4, justify="right")
+        status_lbl = wrap_label(ttk.Label(top_info, textvariable=self.status_var, foreground=COLORS["danger"]))
+        info_lbl = wrap_label(ttk.Label(top_info, textvariable=self.info_var, font=("Segoe UI", 10, "bold"),
+                                        foreground=COLORS["accent"]))
+        state = {"wide": None}
+
+        def _layout(_e=None):
+            width = top_info.winfo_width()
+            need = (title_box.winfo_reqwidth() + sum(b.winfo_reqwidth() + 8 for b in buttons)
+                    + min(status_lbl.winfo_reqwidth(), 280) + 160)
+            wide = width <= 1 or width >= need
+            if wide == state["wide"]:
+                return
+            state["wide"] = wide
+            for w in (title_box, btn_box, status_lbl, info_lbl):
+                w.grid_forget()
+            for col in range(4):
+                top_info.columnconfigure(col, weight=0)
+            title_box.grid(row=0, column=0, sticky="w")
+            if wide:
+                info_lbl.grid(row=0, column=1, sticky="ew")
+                status_lbl.grid(row=0, column=2, sticky="e", padx=(8, 0))
+                btn_box.grid(row=0, column=3, sticky="e")
+            else:
+                status_lbl.grid(row=0, column=1, sticky="e", padx=(8, 0))
+                info_lbl.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 0))
+                btn_box.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(2, 0))
+            top_info.columnconfigure(1, weight=1)
+
+        top_info.bind("<Configure>", _layout, add="+")
+        _layout()
+
+    def _fit_right_panes(self, _e=None):
+        """Size the table / recommendations panes so the drawing canvas keeps
+        at least 45 % of the column: on first layout, and again whenever a
+        window resize leaves it smaller than that. Sash drags in between are
+        left alone."""
+        paned = self.right_paned
+        height = paned.winfo_height()
+        if height < 150:
+            return
+        try:
+            canvas_top = paned.sashpos(1)
+        except tk.TclError:
+            return
+        canvas_min = int(height * 0.45)
+        if self._right_panes_fitted and height - canvas_top >= canvas_min:
+            return
+        # +6: the sash handle overlaps the pane edge; at exactly reqheight the
+        # table's last row was cut by a few pixels.
+        t_req = self._table_frame.winfo_reqheight() + 6
+        r_req = self._recommendation_frame.winfo_reqheight() + 6
+        sash = 6
+        budget = max(60, height - canvas_min - 2 * sash)
+        scale = min(1.0, budget / max(t_req + r_req, 1))
+        t_h, r_h = int(t_req * scale), int(r_req * scale)
+        paned.sashpos(0, t_h)
+        paned.sashpos(1, t_h + sash + r_h)
+        self._right_panes_fitted = True
 
     def _build_camera_tab(self):
         row = 0
@@ -397,7 +480,7 @@ class DualViewCCTVDesignApp:
             widget.bind("<FocusOut>", lambda event: self.calculate())
 
     def _build_project_tab(self):
-        StyledButton(self.tab_project, text="👁️ 3D Kamera Bakış Açısı (Camera Eye View)", command=self.open_3d_view, bootstyle="primary").pack(
+        StyledButton(self.tab_project, text="👁️ 3D Kamera Bakış Açısı", command=self.open_3d_view, bootstyle="primary").pack(
             fill=tk.X, pady=(0, 8)
         )
         StyledButton(self.tab_project, text="Projeyi Kaydet", command=self.save_project, bootstyle="success").pack(fill=tk.X, pady=(0, 6))
@@ -569,7 +652,7 @@ class DualViewCCTVDesignApp:
 
     def _build_export_tab(self):
         StyledButton(self.tab_export, text=_t("Excel (.xlsx) Rapor Dışa Aktar"), command=self.export_excel, bootstyle="success").pack(fill=tk.X, pady=(0, 6))
-        StyledButton(self.tab_export, text=_t("PDF Mühendislik Raporu (ASELSAN Formatı)"), command=self.export_pdf, bootstyle="danger").pack(fill=tk.X, pady=(0, 6))
+        StyledButton(self.tab_export, text=_t("PDF Mühendislik Raporu (ASELSAN)"), command=self.export_pdf, bootstyle="danger").pack(fill=tk.X, pady=(0, 6))
         StyledButton(self.tab_export, text=_t("CSV Tablo Dışa Aktar"), command=self.export_csv, bootstyle="info").pack(fill=tk.X, pady=(0, 6))
         StyledButton(self.tab_export, text=_t("PNG Görsel Dışa Aktar"), command=self.export_png, bootstyle="info").pack(fill=tk.X, pady=(0, 10))
         StyledButton(

@@ -198,19 +198,32 @@ class StatCard(ctk.CTkFrame):
         self.grid_rowconfigure(2, weight=1)
         self._accent = accent
 
-        self.spine = ctk.CTkFrame(self, width=3, fg_color=accent, corner_radius=2)
+        # height=10: a CTkFrame defaults to 200 tall, which (now that the bar
+        # sizes to its content instead of a fixed 118 px) made every card
+        # 200+ px tall. sticky="ns" still stretches it to the card's height.
+        self.spine = ctk.CTkFrame(self, width=3, height=10, fg_color=accent, corner_radius=2)
         self.spine.grid(row=0, column=0, rowspan=3, sticky="ns", padx=(8, 10), pady=10)
 
-        ctk.CTkLabel(self, text=label.upper(), text_color=TEXT_MUTE,
-                     font=(font_ui, 9, "bold"), anchor="w").grid(
-            row=0, column=1, sticky="w", pady=(10, 0), padx=(0, 12))
+        self.caption = ctk.CTkLabel(self, text=label.upper(), text_color=TEXT_MUTE,
+                                  font=(font_ui, 9, "bold"), anchor="w", justify="left",
+                                  wraplength=140)
+        self.caption.grid(row=0, column=1, sticky="w", pady=(10, 0), padx=(0, 12))
         self.value = ctk.CTkLabel(self, text="—", text_color=TEXT,
                                   font=(font_mono, 20, "bold"), anchor="w")
         self.value.grid(row=1, column=1, sticky="w", padx=(0, 12))
         self.note = ctk.CTkLabel(self, text="", text_color=TEXT_DIM,
                                  font=(font_ui, 10), anchor="w",
-                                 justify="left", wraplength=170)
+                                 justify="left", wraplength=140)
         self.note.grid(row=2, column=1, sticky="nw", pady=(0, 10), padx=(0, 12))
+        # Title and footnote wrap to the card's actual width (a fixed 170
+        # cut them in a narrow card and wasted room in a wide one).
+        tk.Frame.bind(self, "<Configure>", self._rewrap, "+")
+
+    def _rewrap(self, _e=None):
+        text_w = max(60, int(self._reverse_widget_scaling(self.winfo_width())) - 37)
+        for label in (self.caption, self.note):
+            if label.cget("wraplength") != text_w:
+                label.configure(wraplength=text_w)
 
     def update_values(self, value: str, note: str = "", accent: Optional[str] = None):
         self.value.configure(text=value, text_color=accent or TEXT)
@@ -495,21 +508,43 @@ class DoriPlanView:
         x0, y0, x1, y1 = plot
         rows = [(name, color, f"{near:.1f} – {far:.1f} m")
                 for name, color, near, far in bands]
-        width = 226
-        height = 14 + len(rows) * 17
+        # Columns and rows from the measured font. The old fixed 226 px box /
+        # 110 px second column / 17 px rows were tuned for 100 % display
+        # scaling; the 9 pt text grows with DPI, so at 150 % "ALGILAMA" ran
+        # into its range and the trailing "m" stuck out of the box.
+        font = (self.font_mono, 9)
+        meter = getattr(self, "_legend_meter", None)
+        if meter is None:
+            import tkinter.font as tkfont
+            meter = self._legend_meter = tkfont.Font(root=cv, font=font)
+        line = meter.metrics("linespace")
+        sw = max(5, line // 3)                       # swatch half-size
+        name_w = max(meter.measure(n) for n, _c, _s in rows)
+        span_w = max(meter.measure(s) for _n, _c, s in rows)
+        row_h = line + 4
+        col_name = 12 + 2 * sw + 8
+        col_span = col_name + name_w + 14
+        width = col_span + span_w + 12
+        height = 8 + len(rows) * row_h
         bx1, by0 = x1 - 12, y0 + 12
         bx0, by1 = bx1 - width, by0 + height
-        cv.create_rectangle(bx0, by0, bx1, by1, fill=PANEL, outline=STROKE)
-        y = by0 + 14
+        cv.create_rectangle(bx0, by0, bx1, by1, fill=PANEL, outline=STROKE, tags="legend")
+        y = by0 + 4 + row_h / 2
         for name, color, span_text in rows:
-            cv.create_rectangle(bx0 + 12, y - 5, bx0 + 22, y + 5,
+            cv.create_rectangle(bx0 + 12, y - sw, bx0 + 12 + 2 * sw, y + sw,
                                 fill=_mix(color, PANEL, BAND_ALPHA / 255.0),
-                                outline=color)
-            cv.create_text(bx0 + 30, y, anchor="w", fill=TEXT_DIM,
-                           font=(self.font_mono, 9), text=name)
-            cv.create_text(bx0 + 110, y, anchor="w", fill=TEXT,
-                           font=(self.font_mono, 9), text=span_text)
-            y += 17
+                                outline=color, tags="legend")
+            cv.create_text(bx0 + col_name, y, anchor="w", fill=TEXT_DIM,
+                           font=font, text=name, tags="legend")
+            cv.create_text(bx0 + col_span, y, anchor="w", fill=TEXT,
+                           font=font, text=span_text, tags="legend")
+            y += row_h
+        # The key is drawn last; a plot label it lands on (e.g. "HFOV 90.0°"
+        # in a narrow plot) would be hidden under its solid box -- keep such
+        # labels on top so no read-out is lost.
+        for item in cv.find_overlapping(bx0, by0, bx1, by1):
+            if cv.type(item) == "text" and "legend" not in cv.gettags(item):
+                cv.tag_raise(item)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -523,8 +558,36 @@ class _WorkbenchBody:
     the classic dual-view application), because only the shell differs.
     """
 
-    MIN_W, MIN_H = 1280, 880
+    # Preferred size and the floor the layout still works at, in LAYOUT
+    # units (the parameter rail scrolls, the stat cards reflow, the plot row
+    # is the stretch row). The old fixed 1280x880 was (a) taller than a
+    # 1366x768 laptop and could not be shrunk to fit, and (b) raw pixels on
+    # the embedded tk.Toplevel while its CTk content is drawn at the display
+    # scale -- at 150 % that window held only ~850 px of layout and the
+    # cards, read-outs and strip were cut.
+    PREF_W, PREF_H = 1440, 900
+    MIN_W, MIN_H = 1100, 600
     RENDER_MS = 16          # coalesce slider bursts into one frame
+
+    def _fit_to_screen(self):
+        try:
+            from customtkinter.windows.widgets.scaling import ScalingTracker
+            content = (float(ScalingTracker.get_window_dpi_scaling(self))
+                       * float(ScalingTracker.widget_scaling))
+        except Exception:
+            content = 1.0
+        # ctk.CTk (standalone) multiplies geometry()/minsize() by its own
+        # window scaling; a plain tk.Toplevel (embedded) takes raw pixels.
+        own = getattr(self, "_get_window_scaling", None)
+        div = float(own()) if callable(own) else 1.0
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        min_w = min(int(self.MIN_W * content), sw - 40)
+        min_h = min(int(self.MIN_H * content), sh - 80)
+        w = max(min_w, min(int(self.PREF_W * content), int(sw * 0.93)))
+        h = max(min_h, min(int(self.PREF_H * content), int(sh * 0.88)))
+        x, y = max(0, (sw - w) // 2), max(0, (sh - h) // 2 - 20)
+        self.geometry(f"{int(w / div)}x{int(h / div)}+{int(x / div)}+{int(y / div)}")
+        self.minsize(int(min_w / div), int(min_h / div))
 
     def _build_workbench(self):
         if tk._default_root is None:
@@ -536,8 +599,7 @@ class _WorkbenchBody:
         ctk.set_appearance_mode("dark")
 
         self.title("CCTV Optics Workbench — EN 62676-4")
-        self.geometry(f"{self.MIN_W}x{self.MIN_H}")
-        self.minsize(self.MIN_W, self.MIN_H)
+        self._fit_to_screen()
 
         self.font_ui = _pick_font("Segoe UI", "Inter", "Ubuntu", "DejaVu Sans", "Arial")
         self.font_mono = _pick_font("JetBrains Mono", "Cascadia Mono", "Consolas",
@@ -740,7 +802,12 @@ class _WorkbenchBody:
         buried at the bottom of the parameter rail."""
         strip = ctk.CTkFrame(parent, fg_color=PANEL, corner_radius=8, height=48)
         strip.grid_propagate(False)
-        strip.grid_columnconfigure(5, weight=1)
+        # The slider column takes the slack. It used to be a fixed 320 px with
+        # an empty stretch column after it: ~830 px of fixed controls in a
+        # strip that is ~720 px wide at the window's min size, so the distance
+        # read-out was pushed off the right edge (grid_propagate(False) means
+        # the strip can never ask for more room).
+        strip.grid_columnconfigure(4, weight=1)
 
         ctk.CTkFrame(strip, width=3, height=20, fg_color=AMBER, corner_radius=2).grid(
             row=0, column=0, padx=(10, 10), pady=14)
@@ -767,12 +834,12 @@ class _WorkbenchBody:
             fg_color=FIELD, progress_color=AMBER, button_color=AMBER,
             button_hover_color="#FFCC55", border_width=0,
         )
-        self.slider_req.configure(width=320)
-        self.slider_req.grid(row=0, column=4, padx=(0, 16))
+        self.slider_req.configure(width=110)
+        self.slider_req.grid(row=0, column=4, sticky="ew", padx=(0, 16))
         self.lbl_req_dist = ctk.CTkLabel(strip, text="12.0 m", text_color=TEXT,
                                          font=(self.font_mono, 12, "bold"), width=64,
                                          anchor="e")
-        self.lbl_req_dist.grid(row=0, column=6, padx=(0, 14))
+        self.lbl_req_dist.grid(row=0, column=5, padx=(0, 14))
         return strip
 
     def _req_dist_changed(self, value):
@@ -787,11 +854,12 @@ class _WorkbenchBody:
         self._build_requirement_strip(holder).grid(
             row=0, column=0, sticky="ew", pady=(0, 10))
 
-        bar = ctk.CTkFrame(holder, fg_color="transparent", height=118)
+        # Natural height (no fixed 118 px + grid_propagate(False), which cut
+        # wrapped notes) and 5 / 3 / 2 cards per row by available width --
+        # five fixed columns left ~120 px per card in a narrow window, too
+        # little for "HEDEFTE ÇÖZÜNÜRLÜK" or "UYGUN DEĞİL".
+        bar = ctk.CTkFrame(holder, fg_color="transparent")
         bar.grid(row=1, column=0, sticky="ew")
-        bar.grid_propagate(False)
-        for column in range(5):
-            bar.grid_columnconfigure(column, weight=1, uniform="cards")
 
         specs = [
             ("card_fov",     "Görüş açısı",        CYAN),
@@ -800,11 +868,35 @@ class _WorkbenchBody:
             ("card_ppm",     "Hedefte çözünürlük", CYAN),
             ("card_verdict", "EN 62676-4 uygunluk", C_IDENT),
         ]
-        for column, (attr, label, accent) in enumerate(specs):
+        cards = []
+        for attr, label, accent in specs:
             card = StatCard(bar, label, accent, self.font_ui, self.font_mono)
-            card.grid(row=0, column=column, sticky="nsew",
-                      padx=(0 if column == 0 else 6, 0), pady=2)
             setattr(self, attr, card)
+            cards.append(card)
+
+        state = {"cols": None}
+        card_min = 165     # layout units per card
+
+        def _reflow(_e=None):
+            raw = bar.winfo_width()
+            width = bar._reverse_widget_scaling(raw)
+            if raw <= 1:
+                cols = 5            # not laid out yet: start as one row
+            else:
+                cols = 5 if width >= 5 * card_min else (3 if width >= 3 * card_min else 2)
+            if cols == state["cols"]:
+                return
+            state["cols"] = cols
+            for column in range(5):
+                bar.grid_columnconfigure(column, weight=0, uniform="")
+            for column in range(cols):
+                bar.grid_columnconfigure(column, weight=1, uniform="cards")
+            for i, card in enumerate(cards):
+                card.grid(row=i // cols, column=i % cols, sticky="nsew",
+                          padx=(0 if i % cols == 0 else 6, 0), pady=2)
+
+        tk.Frame.bind(bar, "<Configure>", _reflow, "+")
+        _reflow()
 
     # ── behaviour ─────────────────────────────────────────────────────────
     def _apply_library_model(self):

@@ -13,7 +13,8 @@ from ..database import (
     model_descriptor,
 )
 from ..config import get_admin_password, set_admin_password, DEFAULT_CAMERA_LIBRARY
-from ..theme import is_themed, COLORS, StyledButton, fit_and_center_window, set_window_icon
+from ..theme import (is_themed, COLORS, StyledButton, fit_and_center_window, set_window_icon,
+                     make_scrollable, flow_layout, wrap_label)
 
 
 _TR_THOUSANDS_ONLY = re.compile(r"^\d{1,3}(?:\.\d{3})+$")
@@ -166,54 +167,56 @@ class CameraDatabaseWindow:
         self.tree.tag_configure("complete", background=COLORS["treeview_uyumlu"])
         self.tree.bind("<<TreeviewSelect>>", self._on_selected)
 
-        top_info = ttk.Frame(right)
-        top_info.pack(fill=tk.X, pady=(0, 6))
-        ttk.Label(
-            top_info,
+        # The description used to share one packed row with the two buttons:
+        # in a narrow window it took all the width and both buttons got zero
+        # (vanished). It now wraps on its own line; the buttons wrap below.
+        wrap_label(ttk.Label(
+            right,
             text="Excel'den aktarılan 500+ model broşür verisi düzenlenebilir ve yeni model eklenebilir.",
             font=("Segoe UI", 9, "bold"),
             foreground=COLORS["accent"],
-        ).pack(side=tk.LEFT)
-        StyledButton(top_info, text="🔑 Şifre Değiştir", command=self._change_admin_password, bootstyle="warning-outline").pack(
-            side=tk.RIGHT, padx=(4, 0)
-        )
-        StyledButton(top_info, text="Aktif Kameradan Yeni Kayıt Aç", command=self._new_from_active, bootstyle="info-outline").pack(
-            side=tk.RIGHT
-        )
-        ttk.Label(right, textvariable=self.status_var, foreground="#263238").pack(fill=tk.X, pady=(0, 6))
+        )).pack(fill=tk.X)
+        top_btns = ttk.Frame(right)
+        top_btns.pack(fill=tk.X, pady=(2, 6))
+        flow_layout(top_btns, [
+            StyledButton(top_btns, text="Aktif Kameradan Yeni Kayıt Aç", command=self._new_from_active,
+                         bootstyle="info-outline"),
+            StyledButton(top_btns, text="🔑 Şifre Değiştir", command=self._change_admin_password,
+                         bootstyle="warning-outline"),
+        ], justify="right")
+        wrap_label(ttk.Label(right, textvariable=self.status_var, foreground="#263238")).pack(
+            fill=tk.X, pady=(0, 6))
 
         # ── Action buttons MUST be packed BEFORE the notebook ──
         # Pack with side=BOTTOM first so they are always visible at the bottom.
         action_row = ttk.Frame(right)
         action_row.pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 0))
-        StyledButton(action_row, text="Kaydet / Güncelle", command=self.save_model, bootstyle="success").pack(
-            side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4)
-        )
-        StyledButton(action_row, text="Aktif Kameraya Uygula", command=self._apply_to_active, bootstyle="info").pack(
-            side=tk.LEFT, fill=tk.X, expand=True, padx=4
-        )
-        StyledButton(action_row, text="JSON'dan Kaldır", command=self.delete_model, bootstyle="danger-outline").pack(
-            side=tk.LEFT, fill=tk.X, expand=True, padx=4
-        )
-        StyledButton(action_row, text="Formu Temizle", command=self.clear_form, bootstyle="secondary-outline").pack(
-            side=tk.LEFT, fill=tk.X, expand=True, padx=(4, 0)
-        )
+        flow_layout(action_row, [
+            StyledButton(action_row, text="Kaydet / Güncelle", command=self.save_model, bootstyle="success"),
+            StyledButton(action_row, text="Aktif Kameraya Uygula", command=self._apply_to_active, bootstyle="info"),
+            StyledButton(action_row, text="JSON'dan Kaldır", command=self.delete_model, bootstyle="danger-outline"),
+            StyledButton(action_row, text="Formu Temizle", command=self.clear_form, bootstyle="secondary-outline"),
+        ], expand=True)
 
         self.db_notebook = ttk.Notebook(right)
         self.db_notebook.pack(fill=tk.BOTH, expand=True)
 
-        basic_tab = ttk.Frame(self.db_notebook, padding=8)
-        optic_tab = ttk.Frame(self.db_notebook, padding=8)
-        video_tab = ttk.Frame(self.db_notebook, padding=8)
-        ai_audio_tab = ttk.Frame(self.db_notebook, padding=8)
-        physical_tab = ttk.Frame(self.db_notebook, padding=8)
+        # The field tabs are 10-30 rows tall; at the window's min size (and
+        # the Optik/DORI tab even at laptop height) the lower fields fell off
+        # the bottom with no way to reach them. Scroll instead. "Ham Broşür"
+        # fits and keeps its stretching text boxes, so it stays a plain frame.
+        basic_outer, basic_tab = make_scrollable(self.db_notebook)
+        optic_outer, optic_tab = make_scrollable(self.db_notebook)
+        video_outer, video_tab = make_scrollable(self.db_notebook)
+        ai_audio_outer, ai_audio_tab = make_scrollable(self.db_notebook)
+        physical_outer, physical_tab = make_scrollable(self.db_notebook)
         raw_tab = ttk.Frame(self.db_notebook, padding=8)
 
-        self.db_notebook.add(basic_tab, text="Temel")
-        self.db_notebook.add(optic_tab, text="Optik/DORI")
-        self.db_notebook.add(video_tab, text="Video/Ağ")
-        self.db_notebook.add(ai_audio_tab, text="AI/Ses/Alarm")
-        self.db_notebook.add(physical_tab, text="Fiziksel/Çevre")
+        self.db_notebook.add(basic_outer, text="Temel")
+        self.db_notebook.add(optic_outer, text="Optik/DORI")
+        self.db_notebook.add(video_outer, text="Video/Ağ")
+        self.db_notebook.add(ai_audio_outer, text="AI/Ses/Alarm")
+        self.db_notebook.add(physical_outer, text="Fiziksel/Çevre")
         self.db_notebook.add(raw_tab, text="Ham Broşür")
 
         self._build_basic_tab(basic_tab)

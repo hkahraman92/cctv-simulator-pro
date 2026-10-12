@@ -52,7 +52,7 @@ from ..perimeter_planner import (
 )
 from ..terrain_loader import TerrainData, generate_procedural_terrain, load_geotiff_or_dem
 from ..i18n import t as _t
-from ..theme import COLORS, StyledButton, fit_and_center_window
+from ..theme import COLORS, StyledButton, fit_and_center_window, flow_layout, wrap_label, make_scrollable
 from ..viewshed_3d import (
     PPM_DETECT,
     PPM_IDENT,
@@ -424,7 +424,7 @@ class TerrainViewshedWindow:
             # setting the var ourselves here would just get clobbered by
             # that later event.
             if planner_mode == "perimeter" and len(self.fence_points) >= 2:
-                self.mode_notebook.select(self.tab_perimeter)
+                self.mode_notebook.select(self._page_perimeter)
         except Exception as exc:
             from ..errors import report
             report(exc, "Arazi Projesi / Kaydedilmiş Durum Geri Yükleme")
@@ -465,11 +465,15 @@ class TerrainViewshedWindow:
         self.mode_notebook = ttk.Notebook(left_frame)
         self.mode_notebook.pack(fill=tk.BOTH, expand=True)
 
-        self.tab_single = ttk.Frame(self.mode_notebook, padding=6)
-        self.tab_perimeter = ttk.Frame(self.mode_notebook, padding=6)
+        # Both tabs are tall control stacks; at the window's min height their
+        # lower controls (opacity slider, coverage-heatmap toggle, ...) were
+        # silently dropped by pack. Scroll instead. The notebook pages are
+        # the scroll wrappers -- select them via _page_single/_page_perimeter.
+        self._page_single, self.tab_single = make_scrollable(self.mode_notebook, padding=6)
+        self._page_perimeter, self.tab_perimeter = make_scrollable(self.mode_notebook, padding=6)
 
-        self.mode_notebook.add(self.tab_single, text="⛰️ Tekil Kamera & Viewshed")
-        self.mode_notebook.add(self.tab_perimeter, text="🛡️ Çevre Çiti / Sınır / Otoyol")
+        self.mode_notebook.add(self._page_single, text="⛰️ Tekil Kamera & Viewshed")
+        self.mode_notebook.add(self._page_perimeter, text="🛡️ Çevre Çiti / Sınır / Otoyol")
         self.mode_notebook.bind("<<NotebookTabChanged>>", self._on_mode_tab_changed)
 
         # ── TAB 1: SINGLE CAMERA VIEWSHED (+ inline PTZ tour when a PTZ model) ──
@@ -493,27 +497,35 @@ class TerrainViewshedWindow:
         map_header = tk.Frame(map_container, bg=PANEL_DARK, height=36)
         map_header.pack(fill=tk.X)
 
-        # Title
-        tk.Label(map_header, text="🗺️ TOPOĞRAFYA & HD UYDU HARİTASI", font=("Segoe UI", 9, "bold"), fg=TEXT_WHITE, bg=PANEL_DARK).pack(side=tk.LEFT, padx=10, pady=4)
+        # Title, zoom buttons and tool radios wrap onto a second row in a
+        # narrow window. They used to share one packed row: at the window's
+        # min width the zoom-out button was cut and the Yerleştir/Kaydır tool
+        # radios and the telemetry line got zero width (silently gone).
+        map_header.pack_propagate(True)
+        tools = tk.Frame(map_header, bg=PANEL_DARK)
+        tools.pack(fill=tk.X)
+        tool_widgets = [
+            tk.Label(tools, text="🗺️ TOPOĞRAFYA & HD UYDU HARİTASI", font=("Segoe UI", 9, "bold"),
+                     fg=TEXT_WHITE, bg=PANEL_DARK, padx=8, pady=4),
+            tk.Button(tools, text="➕ Yakınlaş", font=("Segoe UI", 8, "bold"), fg=ACCENT_CYAN, bg="#262D37",
+                      relief="flat", padx=6, pady=2, command=self._zoom_in),
+            tk.Button(tools, text="➖ Uzaklaş", font=("Segoe UI", 8, "bold"), fg=ACCENT_CYAN, bg="#262D37",
+                      relief="flat", padx=6, pady=2, command=self._zoom_out),
+            tk.Button(tools, text="🔍 Sıfırla (%100)", font=("Segoe UI", 8), fg=TEXT_WHITE, bg="#262D37",
+                      relief="flat", padx=6, pady=2, command=self._reset_zoom),
+            tk.Label(tools, textvariable=self.lbl_zoom_readout_var, font=("Segoe UI", 8, "bold"),
+                     fg=ACCENT_AMBER, bg=PANEL_DARK, padx=4),
+            tk.Radiobutton(tools, text="📍 Yerleştir", variable=self.mouse_nav_tool_var, value="place",
+                           bg=PANEL_DARK, fg=TEXT_WHITE, selectcolor="#1E2229", activebackground=PANEL_DARK),
+            tk.Radiobutton(tools, text="✋ Kaydır (Pan)", variable=self.mouse_nav_tool_var, value="pan",
+                           bg=PANEL_DARK, fg=TEXT_WHITE, selectcolor="#1E2229", activebackground=PANEL_DARK),
+        ]
+        flow_layout(tools, tool_widgets, padx=2, pady=1)
 
-        # Navigation & Zoom Buttons Toolbar
-        btn_zoom_in = tk.Button(map_header, text="➕ Yakınlaş", font=("Segoe UI", 8, "bold"), fg=ACCENT_CYAN, bg="#262D37", relief="flat", padx=6, pady=2, command=self._zoom_in)
-        btn_zoom_in.pack(side=tk.LEFT, padx=2)
-
-        btn_zoom_out = tk.Button(map_header, text="➖ Uzaklaş", font=("Segoe UI", 8, "bold"), fg=ACCENT_CYAN, bg="#262D37", relief="flat", padx=6, pady=2, command=self._zoom_out)
-        btn_zoom_out.pack(side=tk.LEFT, padx=2)
-
-        btn_zoom_reset = tk.Button(map_header, text="🔍 Sıfırla (%100)", font=("Segoe UI", 8), fg=TEXT_WHITE, bg="#262D37", relief="flat", padx=6, pady=2, command=self._reset_zoom)
-        btn_zoom_reset.pack(side=tk.LEFT, padx=2)
-
-        tk.Label(map_header, textvariable=self.lbl_zoom_readout_var, font=("Segoe UI", 8, "bold"), fg=ACCENT_AMBER, bg=PANEL_DARK).pack(side=tk.LEFT, padx=6)
-
-        # Tool Radio (Place vs Pan)
-        tk.Radiobutton(map_header, text="📍 Yerleştir", variable=self.mouse_nav_tool_var, value="place", bg=PANEL_DARK, fg=TEXT_WHITE, selectcolor="#1E2229", activebackground=PANEL_DARK).pack(side=tk.LEFT, padx=(8, 2))
-        tk.Radiobutton(map_header, text="✋ Kaydır (Pan)", variable=self.mouse_nav_tool_var, value="pan", bg=PANEL_DARK, fg=TEXT_WHITE, selectcolor="#1E2229", activebackground=PANEL_DARK).pack(side=tk.LEFT, padx=2)
-
-        # Telemetry
-        tk.Label(map_header, textvariable=self.telemetry_var, font=("Segoe UI", 8), fg=ACCENT_CYAN, bg=PANEL_DARK).pack(side=tk.RIGHT, padx=10)
+        # Telemetry (instructions / cursor read-out) on its own wrapping line.
+        wrap_label(tk.Label(map_header, textvariable=self.telemetry_var, font=("Segoe UI", 8),
+                            fg=ACCENT_CYAN, bg=PANEL_DARK, anchor="w", justify="left"), pad=20).pack(
+            fill=tk.X, padx=10, pady=(0, 3))
 
         # Interactive Map Canvas
         self.map_canvas = tk.Canvas(map_container, bg=BG_DARK, highlightthickness=0)
@@ -544,8 +556,10 @@ class TerrainViewshedWindow:
 
         prof_header = tk.Frame(profile_container, bg=PANEL_DARK, height=24)
         prof_header.pack(fill=tk.X)
-        self.lbl_bottom_title = tk.Label(prof_header, text="📐 OPTİK EKSEN ZEMİN & IŞIN KESİT PROFİLİ (ELEVATION PROFILE)", font=("Segoe UI", 8, "bold"), fg=TEXT_MUTED, bg=PANEL_DARK)
-        self.lbl_bottom_title.pack(side=tk.LEFT, padx=10, pady=2)
+        self.lbl_bottom_title = wrap_label(tk.Label(
+            prof_header, text="📐 OPTİK EKSEN ZEMİN & IŞIN KESİT PROFİLİ (ELEVATION PROFILE)",
+            font=("Segoe UI", 8, "bold"), fg=TEXT_MUTED, bg=PANEL_DARK, anchor="w", justify="left"), pad=20)
+        self.lbl_bottom_title.pack(fill=tk.X, padx=10, pady=2)
 
         self.profile_canvas = tk.Canvas(profile_container, bg="#121519", highlightthickness=0, height=140)
         self.profile_canvas.pack(fill=tk.BOTH, expand=True)
@@ -570,8 +584,13 @@ class TerrainViewshedWindow:
         frame_cache = ttk.Frame(grp_layer)
         frame_cache.pack(fill=tk.X, pady=(2, 0))
         self.lbl_tile_cache = ttk.Label(frame_cache, text="", font=("Segoe UI", 8), foreground=ACCENT_CYAN)
-        self.lbl_tile_cache.pack(side=tk.LEFT)
-        StyledButton(frame_cache, text="🗑️ Önbelleği Temizle", command=self._clear_tile_cache, bootstyle="secondary-outline").pack(side=tk.RIGHT)
+        # The usage read-out grows with the cache; on one packed row it cut
+        # the button's text. Wrap the button below it instead.
+        flow_layout(frame_cache, [
+            self.lbl_tile_cache,
+            StyledButton(frame_cache, text="🗑️ Önbelleği Temizle", command=self._clear_tile_cache,
+                         bootstyle="secondary-outline"),
+        ], padx=0)
         self._refresh_tile_cache_label()
 
         # Satellite Opacity Slider

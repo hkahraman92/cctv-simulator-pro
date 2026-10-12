@@ -108,6 +108,25 @@ PEP 562 `__getattr__`. Eager import 362 ms / 654 modüldü; şimdi 2.1 ms.
 Eksik bir opsiyonel bağımlılık artık tüm uygulamayı değil, sadece onu isteyen
 pencereyi durduruyor.
 
+**8. Uzun form/satır sığmazsa kaydır ya da sar — sessizce kaybolmasın.**
+`pack` yer kalmayınca son widget'ları 0 genişlik/yüksekliğe indirip **haritadan
+düşürür** (hata yok, görünmez olur): 900 px'te ana pencerenin 3 başlık düğmesinin
+2'si, 3B görünümün Lens/Palet/Hava/Snapshot kontrolleri böyle kayboluyordu.
+`theme.py` yardımcıları:
+- `make_scrollable(parent)` → `(outer, inner)`: uzun sekme/form; kaydırma
+  çubuğu yalnız gerektiğinde, tekerlek imlecin altındaki widget'a göre
+  yönlendirilir (eski `<Enter>/<Leave>` + `bind_all` deseni alan üzerine
+  gelince tekerleği düşürüyordu). Notebook'a `outer` eklenir — sekme seçimi
+  `outer` ile yapılır (`map_3d_window._page_perimeter`).
+- `flow_layout(container, items, justify=, expand=)`: düğme/araç satırı dar
+  pencerede alt satıra sarar; `(etiket, kontrol)` grupları birlikte kalır.
+- `wrap_label(label)`: uzun/dinamik metin etiketi genişliğe göre sarılır.
+Ana pencerede tablo/öneriler/tuval dikey `PanedWindow`'da; tuval yüksekliğin
+≥%45'ini korur (`_fit_right_panes`) — `calculate()` tuval <120 px ise hiç
+çizmez. Tezgâh (`modern_window`) boyutu **düzen birimi × DPI ölçeği**: CTk
+widget'ları %150'de 1,5× çizilir, gömülü `tk.Toplevel` ise ham pikseldir.
+Canvas üstü yazılarda sabit piksel ofset kullanma, `Font.measure` ile ölç.
+
 ## Arazi ve çevrimiçi harita
 
 **Uydurma rölyefi ölçüm gibi sunma.** Viewshed, arazi engellemesinden ibarettir;

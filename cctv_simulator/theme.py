@@ -87,6 +87,161 @@ def fit_and_center_window(window: tk.Tk, default_w: int = 1400, default_h: int =
             pass
 
 
+# Widgets that scroll themselves; the wheel over them must not also move the
+# surrounding scroll container.
+_SELF_SCROLLING = {"Treeview", "Text", "Listbox", "TCombobox", "Canvas"}
+
+
+def _route_mousewheel(event):
+    w = event.widget
+    if not isinstance(w, tk.Misc) or w.winfo_class() in _SELF_SCROLLING:
+        return
+    while w is not None:
+        if getattr(w, "_cctv_scroller", False):
+            top, bottom = w.yview()
+            if top > 0.0 or bottom < 1.0:
+                w.yview_scroll(int(-event.delta / 120) or (-1 if event.delta > 0 else 1), "units")
+            return
+        w = w.master
+
+
+def make_scrollable(parent, padding=8):
+    """Vertical scroll container for a form/panel that can outgrow its window.
+
+    Returns ``(outer, inner)``: add ``outer`` to the parent layout (e.g. a
+    notebook tab), build the content into ``inner``. The scrollbar only shows
+    when the content is taller than the viewport, and ``inner`` is stretched
+    to the viewport width so ``sticky="ew"`` / ``fill=X`` children still span
+    it. The mouse wheel is routed by the widget under the pointer, not by
+    ``<Enter>``/``<Leave>`` on the canvas -- Tk sends ``<Leave>`` to the canvas
+    as soon as the pointer moves onto any field inside it, so the old
+    bind_all/unbind_all pattern dropped the wheel over the actual content.
+    """
+    outer = _ttk.Frame(parent)
+    canvas = tk.Canvas(outer, highlightthickness=0, borderwidth=0)
+    canvas._cctv_scroller = True
+    try:
+        bg = _ttk.Style(outer).lookup("TFrame", "background")
+        if bg:
+            canvas.configure(background=bg)
+    except tk.TclError:
+        pass
+    sb = _ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=sb.set)
+    canvas.grid(row=0, column=0, sticky="nsew")
+    outer.rowconfigure(0, weight=1)
+    outer.columnconfigure(0, weight=1)
+    inner = _ttk.Frame(canvas, padding=padding)
+    win = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+    def _sync(_e=None):
+        # A Canvas requests a fixed default width (~10 cm), not its content's:
+        # without this the surrounding layout (e.g. a notebook in a sash pane)
+        # sizes to that default and squeezes/truncates wider content.
+        req_w = inner.winfo_reqwidth()
+        if int(canvas.cget("width")) != req_w:
+            canvas.configure(width=req_w)
+        canvas.configure(scrollregion=canvas.bbox("all"))
+        if inner.winfo_reqheight() > canvas.winfo_height() > 1:
+            sb.grid(row=0, column=1, sticky="ns")
+        else:
+            sb.grid_remove()
+            canvas.yview_moveto(0.0)
+
+    inner.bind("<Configure>", _sync)
+    canvas.bind("<Configure>", lambda e: (canvas.itemconfigure(win, width=e.width), _sync()))
+    outer.after_idle(_sync)
+    # bind_all is interpreter-wide (every window shares it): register once,
+    # detected from the Tcl binding itself so a second window or a second Tk
+    # root in the same process never adds a duplicate (double-speed) handler.
+    if "_route_mousewheel" not in outer.bind_all("<MouseWheel>"):
+        outer.bind_all("<MouseWheel>", _route_mousewheel, add="+")
+    return outer, inner
+
+
+def flow_layout(container, widgets, *, padx=3, pady=2, justify="left", expand=False):
+    """Lay ``widgets`` (children of ``container``) out left-to-right, wrapping
+    onto a new row instead of squeezing when the container is too narrow.
+
+    With plain pack/grid, a row of fixed-size buttons in a narrow window gives
+    the last ones a sliver or zero width: their text is cut, or they vanish
+    entirely (no error, just gone). The container must be stretched by its
+    parent (``fill=X`` / ``sticky="ew"``) -- its width drives the wrapping.
+    ``justify="right"`` right-aligns each row; ``expand=True`` stretches the
+    widgets in a row to share its full width. An item may be a tuple/list of
+    widgets kept together on one row (e.g. a caption and its combobox).
+    """
+    rows = []
+    state = {"key": None}
+    themed = container.winfo_class() != "Frame"
+    items = [tuple(i) if isinstance(i, (list, tuple)) else (i,) for i in widgets]
+    widgets = [w for item in items for w in item]
+
+    def _row(i):
+        while len(rows) <= i:
+            rows.append(_ttk.Frame(container) if themed
+                        else tk.Frame(container, bg=container.cget("bg")))
+        return rows[i]
+
+    def _relayout(_e=None):
+        width = container.winfo_width()
+        groups, cur, x = [], [], 0
+        for item in items:
+            ww = sum(w.winfo_reqwidth() + 2 * padx for w in item)
+            if cur and width > 1 and x + ww > width:
+                groups.append(cur)
+                cur, x = [], 0
+            cur.extend(item)
+            x += ww
+        if cur:
+            groups.append(cur)
+        key = [[str(w) for w in g] for g in groups]
+        if key == state["key"]:
+            return
+        state["key"] = key
+        for w in widgets:
+            w.pack_forget()
+        for f in rows:
+            f.pack_forget()
+        for i, group in enumerate(groups):
+            row = _row(i)
+            row.pack(fill=tk.X)
+            for w in (reversed(group) if justify == "right" else group):
+                if expand:
+                    w.pack(in_=row, side=tk.LEFT, fill=tk.X, expand=True, padx=padx, pady=pady)
+                elif justify == "right":
+                    w.pack(in_=row, side=tk.RIGHT, padx=padx, pady=pady)
+                else:
+                    w.pack(in_=row, side=tk.LEFT, padx=padx, pady=pady)
+                # The row frames are created after the widgets, so they sit
+                # above them in the stacking order and would hide them.
+                w.lift(row)
+
+    container.bind("<Configure>", _relayout, add="+")
+    for w in widgets:
+        # a label whose text changes changes its requested width
+        w.bind("<Configure>", _relayout, add="+")
+    _relayout()
+    return _relayout
+
+
+def wrap_label(label, pad=4, initial=280):
+    """Make a (ttk or tk) Label wrap to its current width instead of being cut
+    off. The label must be stretched by its parent (``fill=X`` /
+    ``sticky="ew"``). ``initial`` keeps a long text from requesting its whole
+    one-line width before the first layout pass (which would force its parent
+    wider than the window)."""
+    label.configure(wraplength=initial)
+
+    def _fit(e):
+        wl = max(40, e.width - pad)
+        if int(str(label.cget("wraplength")) or 0) != wl:
+            label.configure(wraplength=wl)
+
+    label.bind("<Configure>", _fit, add="+")
+    return label
+
+
 def set_window_icon(window: tk.Tk):
     """Sets the application window icon using the generated CCTV logo."""
     try:

@@ -1,3 +1,40 @@
+## -13. Pencere boyutlandırma / kırpılma / kaybolan kontroller — ✅ düzeltildi (2026-10-12)
+
+İstek: küçültülen pencerelerde içerik kırpılıyor/kayboluyor, bazı pencereler
+çok küçük açılıyor. Tahmin yerine **ölçüldü**: tüm pencereler (ana, 3B harita,
+3B görünüm, şartname, kamera DB, optik tezgâh) min boyutta, 1366×728'de ve tam
+ekranda açılıp her sekmede her kontrol için dört kontrol yapan bir denetim
+betiğiyle: pencere dışına taşan, 0-2 px'e çökmüş, metni kesilmiş ve —
+en sinsisi — `pack` yer bulamadığı için **haritadan düşürülmüş (görünmez)**
+kontroller. Başlangıç: min boyutta 69 sorun. Son: üç boyutta da **0**.
+
+Bulunan gerçek sorunlar:
+- **Ana pencere:** 900×600'de başlıktaki 3 düğmenin 2'si + bilgi satırı +
+  alt durum satırı kayboluyordu; çizim tuvali 86 px'e düşüp `calculate()`
+  (≥120 px ister) **hiç çizmiyordu**. Proje/PPM/Asistan sekmelerinin altı
+  kesikti. → Başlık iki moda geçiyor (sığınca tek satır, sığmazsa düğmeler
+  alt satıra sarar); tablo/öneri/tuval dikey sürgülü panelde, tuval ≥%45;
+  tüm sol sekmeler kaydırılabilir; sol panel pencere küçülünce %45'i aşmıyor
+  (maksimize→küçült senaryosunda sağ taraf tüm kaybı yutuyordu).
+- **3B görünüm:** 1250 px altında Lens/Palet/Hava, DORI/Izgara ve Snapshot
+  kayboluyordu → kontrol çubuğu sarılıyor; alt HUD metni sarılıyor.
+- **3B harita:** yakınlaştırma/Yerleştir-Kaydır araçları ve talimat satırı
+  kayboluyordu; sol sekmelerin altı (opaklık, ısı haritası onayı) düşüyordu →
+  araç çubuğu sarılıyor, sekmeler kaydırılabilir.
+- **Kamera DB:** "Aktif Kameradan Yeni Kayıt Aç" / "Şifre Değiştir" min
+  boyutta tamamen kayboluyordu; form sekmelerinin altı (Optik/DORI'de 28 alan)
+  ulaşılamazdı → açıklama sarılıyor, düğmeler sarılıyor, formlar kaydırılıyor.
+- **Optik tezgâh:** sabit 1280×880 ham piksel — 768 px'lik laptopa sığmıyordu
+  ve %150 DPI'da CTk içeriği 1,5× çizildiği için ~850 px'lik düzene düşüyordu
+  (kartlar/şartname şeridi kesik). → ekran ve DPI'a göre boyut, kartlar 5/3/2
+  sütuna yeniden diziliyor, başlık/notlar sarılıyor, lejant ölçülen fonta göre.
+
+Ortak yardımcılar `theme.py`'de: `make_scrollable`, `flow_layout`,
+`wrap_label` (bkz. CLAUDE.md Kural 8). İki düğme metni kısaltıldı ("(Camera Eye
+View)" tekrarı, "(ASELSAN Formatı)" → "(ASELSAN)", `en.json` güncellendi).
+Ekran görüntüleriyle de doğrulandı; büyük ekran görünümü korunuyor. Tam
+`pytest` (165) + `ruff` yeşil.
+
 ## -12. Kullanıcı bildirimi: Çevre Çiti sekmesi otomatik çiziyor + kamera yerleştirme analizi donuyor — ✅ düzeltildi (2026-10-12)
 
 Kullanıcı: *"3D Arazi Viewshield ekranında Çevre Çiti/Sınır/Otoyol sekmesine

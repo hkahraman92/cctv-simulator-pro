@@ -14,7 +14,8 @@ from typing import Dict, List, Tuple, Optional, Any
 
 from ..config import SENSOR_DIMS_MM, RESOLUTIONS
 from ..models import CameraConfig, PPMLevel
-from ..theme import is_themed, COLORS, StyledButton, fit_and_center_window, set_window_icon
+from ..theme import (is_themed, COLORS, StyledButton, fit_and_center_window, set_window_icon,
+                     flow_layout, wrap_label)
 from ..perspective_3d import (
     Perspective3DEngine,
     Point3D,
@@ -205,9 +206,8 @@ class Camera3DViewWindow:
         control_bar.pack(side=tk.TOP, fill=tk.X)
 
         # Target Distance Control
-        ttk.Label(control_bar, text="Hedef Mesafe:", font=("Segoe UI", 9, "bold")).pack(side=tk.LEFT, padx=(0, 4))
+        cap_dist = ttk.Label(control_bar, text="Hedef Mesafe:", font=("Segoe UI", 9, "bold"))
         self.lbl_dist_val = ttk.Label(control_bar, text=f"{self.target_dist_var.get():.1f} m", font=("Segoe UI", 9, "bold"), foreground=COLORS["accent"], width=8)
-        self.lbl_dist_val.pack(side=tk.LEFT, padx=(0, 4))
 
         self.scale_dist = ttk.Scale(
             control_bar,
@@ -218,10 +218,9 @@ class Camera3DViewWindow:
             length=160,
             command=self._on_dist_slider_changed,
         )
-        self.scale_dist.pack(side=tk.LEFT, padx=(0, 12))
 
         # Lateral Offset (Left / Right)
-        ttk.Label(control_bar, text="Yanal Konum:").pack(side=tk.LEFT, padx=(0, 4))
+        cap_lateral = ttk.Label(control_bar, text="Yanal Konum:")
         self.scale_lateral = ttk.Scale(
             control_bar,
             from_=-25.0,
@@ -231,10 +230,9 @@ class Camera3DViewWindow:
             length=90,
             command=lambda v: self.schedule_render(fast=True),   # PERF: per-pixel -> per-frame
         )
-        self.scale_lateral.pack(side=tk.LEFT, padx=(0, 12))
 
         # Target Type Combobox
-        ttk.Label(control_bar, text="Hedef:").pack(side=tk.LEFT, padx=(0, 4))
+        cap_target = ttk.Label(control_bar, text="Hedef:")
         combo_target = ttk.Combobox(
             control_bar,
             textvariable=self.target_type_var,
@@ -252,11 +250,10 @@ class Camera3DViewWindow:
         # branch, so target_h silently fell back to 1.0 m instead of 1.8 m
         # on the very first render. Restore the code .current(0) just wiped.
         self.target_type_var.set("human")
-        combo_target.pack(side=tk.LEFT, padx=(0, 10))
         combo_target.bind("<<ComboboxSelected>>", self._on_target_type_selected)
 
         # Lens Mode (Wide / Tele)
-        ttk.Label(control_bar, text="Lens:").pack(side=tk.LEFT, padx=(0, 4))
+        cap_lens = ttk.Label(control_bar, text="Lens:")
         combo_lens = ttk.Combobox(
             control_bar,
             textvariable=self.lens_mode_var,
@@ -265,11 +262,10 @@ class Camera3DViewWindow:
             width=5,
         )
         combo_lens.current(0)
-        combo_lens.pack(side=tk.LEFT, padx=(0, 10))
         combo_lens.bind("<<ComboboxSelected>>", lambda e: self.render_3d_view())
 
         # Palette / Sensor Mode Combobox (Optical, IR, Thermal Palettes)
-        ttk.Label(control_bar, text="Palet:").pack(side=tk.LEFT, padx=(0, 4))
+        cap_palette = ttk.Label(control_bar, text="Palet:")
         self.combo_palette = ttk.Combobox(
             control_bar,
             textvariable=self.palette_mode_var,
@@ -287,25 +283,38 @@ class Camera3DViewWindow:
         # Same fix as target_type_var above: restore the internal code
         # .current(0) just overwrote with the display label.
         self.palette_mode_var.set("auto")
-        self.combo_palette.pack(side=tk.LEFT, padx=(0, 10))
         self.combo_palette.bind("<<ComboboxSelected>>", self._on_palette_selected)
 
         # Weather / atmospheric attenuation
-        ttk.Label(control_bar, text="Hava:").pack(side=tk.LEFT, padx=(0, 4))
+        cap_weather = ttk.Label(control_bar, text="Hava:")
         self.combo_weather = ttk.Combobox(
             control_bar, textvariable=self.weather_var,
             values=list(WEATHER_PRESETS.keys()), state="readonly", width=14,
         )
         self.combo_weather.current(0)
-        self.combo_weather.pack(side=tk.LEFT, padx=(0, 10))
         self.combo_weather.bind("<<ComboboxSelected>>", lambda e: self.render_3d_view())
 
         # Options Checkbuttons
-        ttk.Checkbutton(control_bar, text="DORI/DRI", variable=self.show_dori_zones_var, command=self.render_3d_view).pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Checkbutton(control_bar, text="Izgara", variable=self.show_grid_var, command=self.render_3d_view).pack(side=tk.LEFT, padx=(0, 10))
+        chk_dori = ttk.Checkbutton(control_bar, text="DORI/DRI", variable=self.show_dori_zones_var, command=self.render_3d_view)
+        chk_grid = ttk.Checkbutton(control_bar, text="Izgara", variable=self.show_grid_var, command=self.render_3d_view)
 
         # Action Buttons
-        StyledButton(control_bar, text="📸 Snapshot (PNG)", command=self.save_snapshot, bootstyle="info-outline").pack(side=tk.RIGHT)
+        btn_snapshot = StyledButton(control_bar, text="📸 Snapshot (PNG)", command=self.save_snapshot, bootstyle="info-outline")
+
+        # BUGFIX: these used to be one packed row; below ~1250 px the Lens,
+        # Palet and Hava combos, both checkboxes and the Snapshot button got
+        # zero width and silently disappeared. Wrap instead, each caption kept
+        # on the same row as its control.
+        flow_layout(control_bar, [
+            (cap_dist, self.lbl_dist_val, self.scale_dist),
+            (cap_lateral, self.scale_lateral),
+            (cap_target, combo_target),
+            (cap_lens, combo_lens),
+            (cap_palette, self.combo_palette),
+            (cap_weather, self.combo_weather),
+            (chk_dori, chk_grid),
+            btn_snapshot,
+        ], padx=4, pady=2)
 
         # ── Center 3D Canvas ──
         canvas_container = ttk.Frame(self.window)
@@ -319,7 +328,10 @@ class Camera3DViewWindow:
 
         # ── Bottom Status & HUD Summary Bar ──
         bottom_bar = ttk.Frame(self.window, padding=(12, 6, 12, 8))
-        bottom_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        # Packed BEFORE the canvas: pack hands out space in order, so a bar
+        # packed after the expanding canvas is what gets squeezed out first
+        # in a short window.
+        bottom_bar.pack(side=tk.BOTTOM, fill=tk.X, before=canvas_container)
 
         self.lbl_hud_dori = tk.Label(
             bottom_bar,
@@ -341,12 +353,12 @@ class Camera3DViewWindow:
         )
         self.lbl_hud_ppm.pack(side=tk.LEFT, padx=(0, 20))
 
-        self.lbl_hud_optics = ttk.Label(
+        self.lbl_hud_optics = wrap_label(ttk.Label(
             bottom_bar,
             textvariable=self.hud_optics_var,
             font=("Segoe UI", 9),
             foreground=COLORS["text_fg"],
-        )
+        ))
         self.lbl_hud_optics.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
     def _on_dist_slider_changed(self, val):
