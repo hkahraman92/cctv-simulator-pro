@@ -41,6 +41,9 @@ class PlacedCamera:
     camera_model: str
     sensor_name: str
     resolution_name: str
+    # PTZ rows only: pan_deg is the patrol centre, patrol_span_deg the swept
+    # width (360 = continuous rotation); 0 for a fixed camera.
+    patrol_span_deg: float = 0.0
 
     @property
     def total_z_m(self) -> float:
@@ -77,6 +80,15 @@ class PerimeterPlanResult:
     estimated_storage_30days_tb: float = 0.0
     line_mode: str = "facility"      # "facility" | "border" | "highway"
     watch_side: str = "right"        # only meaningful for line_mode == "border"
+    # Mixed layout: PTZs co-mounted on every Nth fixed pole. Kept apart from
+    # placed_cameras on purpose -- fence-gap analysis, the coverage heatmap,
+    # glare and the BOM rows describe the CONTINUOUS (fixed) coverage; a PTZ
+    # only watches a spot part of the time (perimeter_ptz evaluates it).
+    ptz_cameras: List[PlacedCamera] = field(default_factory=list)
+
+    @property
+    def ptz_count(self) -> int:
+        return len(self.ptz_cameras)
 
 
 def point_along_polyline(points: List[Tuple[float, float]],
@@ -168,7 +180,11 @@ def generate_perimeter_plan(terrain: TerrainData,
                             visibility_km: float = 40.0,
                             weather: str = "",
                             line_mode: str = "facility",
-                            watch_side: str = "right") -> PerimeterPlanResult:
+                            watch_side: str = "right",
+                            ptz_camera: Optional[CameraConfig] = None,
+                            ptz_every_n: int = 0,
+                            ptz_patrol_span_deg: float = 360.0,
+                            ptz_target_ppm: float = PPM_IDENT) -> PerimeterPlanResult:
     """Places cameras along fence line ensuring continuous dead-zone overlapping coverage.
 
     ``line_mode`` picks what the poles actually watch — the three use cases
@@ -187,6 +203,14 @@ def generate_perimeter_plan(terrain: TerrainData,
 
     Corner-guard cameras (the sharp-turn wedge fix) only make sense for the
     facility case and are skipped for "border"/"highway".
+
+    Mixed layout: with ``ptz_camera`` and ``ptz_every_n >= 1`` a PTZ is
+    co-mounted on every Nth regular pole (1st, N+1th, ...). Its patrol is
+    centred on the side being watched -- the outward normal of the fence for
+    "facility", the pole heading for "border"/"highway" -- and spans
+    ``ptz_patrol_span_deg`` (360 = continuous rotation). The PTZ row's
+    ``effective_range_m`` is its slew-to-cue reach: the ground distance where
+    the longest focal still resolves ``ptz_target_ppm``.
     """
     if len(fence_points) < 2:
         return PerimeterPlanResult(
@@ -262,6 +286,7 @@ def generate_perimeter_plan(terrain: TerrainData,
             return (seg_heading_deg + 180.0) % 360.0
         return seg_heading_deg   # facility: look along the fence toward the next pole
 
+    regular_poles: List[Tuple[PlacedCamera, float]] = []    # PTZ hosts
     seg_headings: List[float] = []
     for (p1, p2, seg_len) in zip(pts[:-1], pts[1:], segment_lengths):
         if seg_len < 1e-6:
@@ -280,6 +305,7 @@ def generate_perimeter_plan(terrain: TerrainData,
         for step_idx in range(num_spans):
             f = step_idx / num_spans
             _place(p1[0] + f * dx, p1[1] + f * dy, pole_heading)
+            regular_poles.append((placed_cameras[-1], seg_heading))
 
     # Open perimeter: the far endpoint is not the start of any segment, so add a
     # pole there too. Facility mode looks back along the last leg (it's a dead
@@ -315,6 +341,14 @@ def generate_perimeter_plan(terrain: TerrainData,
             vx, vy = pts[vi]
             _place(vx, vy, h_out, reach=corner_range, dz=corner_dz, tilt=corner_tilt, note="köşe")
 
+    ptz_cams: List[PlacedCamera] = []
+    if ptz_camera is not None and ptz_every_n >= 1 and regular_poles:
+        ptz_cams = _place_ptz_cameras(
+            pts, regular_poles[::int(ptz_every_n)], ptz_camera,
+            line_mode=line_mode, is_closed_loop=is_closed_loop,
+            span_deg=ptz_patrol_span_deg, target_ppm=ptz_target_ppm,
+            visibility_km=visibility_km, weather=weather)
+
     # Coverage / gap analysis along the fence line (with DEM line-of-sight).
     gaps, coverage_pct = _analyse_fence_coverage(
         pts, placed_cameras, visibility_km, weather,
@@ -326,15 +360,9 @@ def generate_perimeter_plan(terrain: TerrainData,
     num_cams = len(placed_cameras)
     avg_spacing = (total_len / max(num_cams, 1)) if num_cams > 0 else 0.0
 
-    # Bandwidth estimation: ~4 Mbps per 4MP H.265 camera / ~8 Mbps for 4K / ~2 Mbps for Thermal
-    if "TERMAL" in camera.model_name.upper() or "LWIR" in camera.sensor_name.upper():
-        bitrate_mbps = 2.5
-    elif "4K" in camera.resolution_name or "8 MP" in camera.resolution_name:
-        bitrate_mbps = 8.0
-    else:
-        bitrate_mbps = 4.0
-
-    total_bandwidth_mbps = num_cams * bitrate_mbps
+    total_bandwidth_mbps = num_cams * _bitrate_mbps(camera)
+    if ptz_cams:
+        total_bandwidth_mbps += len(ptz_cams) * _bitrate_mbps(ptz_camera)
     # Storage for 30 days continuous recording (TB).
     # 1 Mbps = 1e6/8 B/s -> 10.8 GB/day -> 324 GB per Mbps over 30 days.
     storage_30days_tb = (total_bandwidth_mbps * 324.0 * 1.15) / 1024.0  # +15% RAID overhead
@@ -345,7 +373,7 @@ def generate_perimeter_plan(terrain: TerrainData,
         segment_lengths_m=[round(s, 1) for s in segment_lengths],
         placed_cameras=placed_cameras,
         gaps=gaps,
-        camera_count=num_cams,
+        camera_count=num_cams + len(ptz_cams),
         pole_count=num_cams,
         target_ppm=target_ppm,
         avg_spacing_m=round(avg_spacing, 1),
@@ -354,7 +382,73 @@ def generate_perimeter_plan(terrain: TerrainData,
         estimated_storage_30days_tb=round(storage_30days_tb, 1),
         line_mode=line_mode,
         watch_side=watch_side,
+        ptz_cameras=ptz_cams,
     )
+
+
+def _bitrate_mbps(camera: CameraConfig) -> float:
+    """Recording bitrate guess: ~4 Mbps per 4 MP H.265 stream, ~8 for 4K /
+    8 MP, ~2.5 for thermal."""
+    if "TERMAL" in camera.model_name.upper() or "LWIR" in camera.sensor_name.upper():
+        return 2.5
+    if "4K" in camera.resolution_name or "8 MP" in camera.resolution_name:
+        return 8.0
+    return 4.0
+
+
+def _outward_normal_deg(seg_heading_deg: float, pts: List[Tuple[float, float]],
+                        at_xy: Tuple[float, float], is_closed_loop: bool) -> float:
+    """Bearing perpendicular to the fence that points AWAY from the enclosed
+    area. Closed ring: the winding decides (a counter-clockwise ring has its
+    interior on the left of travel). Open line: away from the centroid."""
+    right, left = (seg_heading_deg + 90.0) % 360.0, (seg_heading_deg - 90.0) % 360.0
+    if is_closed_loop and len(pts) >= 4:
+        area2 = sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]))
+        if abs(area2) > 1e-6:
+            return right if area2 > 0 else left
+    cx = sum(p[0] for p in pts) / len(pts)
+    cy = sum(p[1] for p in pts) / len(pts)
+    away = math.degrees(math.atan2(at_xy[0] - cx, at_xy[1] - cy))
+    d_right = abs((right - away + 180.0) % 360.0 - 180.0)
+    d_left = abs((left - away + 180.0) % 360.0 - 180.0)
+    return right if d_right <= d_left else left
+
+
+def _place_ptz_cameras(pts: List[Tuple[float, float]],
+                       hosts: List[Tuple[PlacedCamera, float]], ptz: CameraConfig, *,
+                       line_mode: str, is_closed_loop: bool, span_deg: float,
+                       target_ppm: float, visibility_km: float,
+                       weather: str) -> List[PlacedCamera]:
+    """One PTZ per host pole, same pole id and mast (co-mounted)."""
+    span = float(min(max(span_deg, 10.0), 360.0))
+    wide = camera_optics(ptz, ptz.focal_min_mm)
+    tele = camera_optics(ptz, ptz.focal_max_mm)
+    band = _atm.band_for_camera(ptz.sensor_name, ptz.model_name)
+    out: List[PlacedCamera] = []
+    for host, seg_heading in hosts:
+        mast = host.mast_height_m
+        if line_mode == "facility":
+            centre = _outward_normal_deg(seg_heading, pts, (host.x_m, host.y_m), is_closed_loop)
+        else:
+            centre = host.pan_deg      # border: the watched side; highway: back along the road
+        # Patrol tilt: aim at ~55 % of the wide view's detection range, the
+        # same convention the fixed poles use.
+        det = _atm.usable_range_m(wide.distance_for_ppm(PPM_DETECT), visibility_km, band, weather)
+        det_ground = math.sqrt(max(det ** 2 - mast ** 2, 1.0))
+        tilt = -max(1.0, min(25.0, math.degrees(math.atan(mast / max(det_ground * 0.55, 5.0)))))
+        cue = _atm.usable_range_m(tele.distance_for_ppm(max(target_ppm, 1.0)),
+                                  visibility_km, band, weather)
+        cue_ground = math.sqrt(max(cue ** 2 - mast ** 2, 1.0))
+        out.append(PlacedCamera(
+            pole_id=host.pole_id, x_m=host.x_m, y_m=host.y_m, ground_z_m=host.ground_z_m,
+            mast_height_m=mast, pan_deg=round(centre % 360.0, 1), tilt_deg=round(tilt, 1),
+            focal_mm=ptz.focal_min_mm, hfov_deg=round(wide.hfov_deg, 1),
+            vfov_deg=round(wide.vfov_deg, 1), effective_range_m=round(cue_ground, 1),
+            dead_zone_m=0.0, camera_model=ptz.name + " [PTZ]",
+            sensor_name=ptz.sensor_name, resolution_name=ptz.resolution_name,
+            patrol_span_deg=span,
+        ))
+    return out
 
 
 def _analyse_fence_coverage(pts: List[Tuple[float, float]],
