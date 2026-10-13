@@ -109,6 +109,45 @@ _PATROL_SPANS = [("360° sürekli dönüş", 360.0),
                  ("İzlenen tarafa 180° sektör", 180.0),
                  ("İzlenen tarafa 90° sektör", 90.0)]
 _PATROL_SPAN_BY_LABEL = dict(_PATROL_SPANS)
+
+# Multi-camera / PTZ map layers: (lo, hi, RGBA, legend text) bands, lo <= v < hi.
+# The overlay painter and the on-map legend both read these, so the legend
+# can never describe colours the map does not use.
+_INF = float("inf")
+_LAYER_BANDS = {
+    "dori": ("BİRLEŞİK DORI", (
+        (ZONE_IDENT, ZONE_IDENT + 1, (0, 230, 118, 150), "Teşhis ≥ 250 px/m"),
+        (ZONE_RECOG, ZONE_RECOG + 1, (255, 179, 0, 130), "Tanıma ≥ 125 px/m"),
+        (ZONE_OBSERVE, ZONE_OBSERVE + 1, (255, 112, 67, 115), "Gözlem ≥ 62,5 px/m"),
+        (ZONE_DETECT, ZONE_DETECT + 1, (255, 77, 109, 100), "Algılama ≥ 25 px/m"),
+        (ZONE_OCCLUDED, ZONE_OCCLUDED + 1, (12, 14, 18, 200), "Kör nokta (arazi engeli)"))),
+    "overlap": ("YEDEKLİLİK (fiziksel kamera)", (
+        (1, 2, (255, 214, 0, 110), "1 kamera (yedeksiz)"),
+        (2, 3, (0, 230, 118, 120), "2 kamera"),
+        (3, _INF, (0, 229, 255, 130), "≥ 3 kamera"))),
+    "revisit": ("REVİZİT — en uzun izlenmeyen süre", (
+        (-_INF, 10, (0, 230, 118, 130), "< 10 sn"),
+        (10, 30, (255, 214, 0, 125), "10–30 sn"),
+        (30, 60, (255, 112, 67, 120), "30–60 sn"),
+        (60, _INF, (255, 77, 109, 120), "≥ 60 sn"))),
+    "cue": ("TEPKİ — alarm → teşhis süresi", (
+        (-_INF, 3, (0, 230, 118, 140), "< 3 sn"),
+        (3, 6, (255, 214, 0, 130), "3–6 sn"),
+        (6, 10, (255, 112, 67, 125), "6–10 sn"),
+        (10, _INF, (255, 77, 109, 125), "≥ 10 sn"))),
+    "fused": ("ALGILAMA: SABİT + PTZ", (
+        (2, 3, (0, 230, 118, 130), "Sürekli — sabit kamera"),
+        (1, 2, (255, 179, 0, 125), "Aralıklı — yalnız PTZ devriyesi"))),
+}
+_GLIMPSE_RGBA = (150, 150, 150, 110)
+_GLIMPSE_LABEL = "Yalnız bakış (sayılmayacak kadar hızlı)"
+
+
+def _paint_bands(ov, grid, bands, mask=None):
+    """Paint ``lo <= grid < hi`` cells (finite only) in each band's RGBA, in order."""
+    ok = np.isfinite(grid) if mask is None else mask
+    for lo, hi, rgba, _ in bands:
+        ov[ok & (grid >= lo) & (grid < hi)] = rgba
 _WATCH_SIDE_TO_LABEL = {v: k for k, v in _WATCH_SIDE_BY_LABEL.items()}
 
 
@@ -835,7 +874,7 @@ class TerrainViewshedWindow:
         ttk.Checkbutton(grp_cov, text="Kapsama ısı haritasını göster",
                         variable=self.show_coverage_var,
                         command=self._on_coverage_toggled).pack(anchor="w")
-        self._create_stat_row(grp_cov, "Örtüşen alanda:", self.stat_coverage_map_var, ACCENT_GREEN)
+        self._create_stat_row(grp_cov, "Koruma bandında (±40 m):", self.stat_coverage_map_var, ACCENT_GREEN)
 
         grp_sun = ttk.LabelFrame(parent, text="☀️ Güneş / Parlama (Arkadan Işık)", padding=6)
         grp_sun.pack(fill=tk.X, pady=(0, 6))
@@ -942,7 +981,9 @@ class TerrainViewshedWindow:
             self.mix_stat_var.set(
                 f"{plan.ptz_count} PTZ · Algılama: sürekli {f.continuous_area_m2['detect'] / 1e4:.1f} ha"
                 f" + yalnız PTZ {f.intermittent_area_m2['detect'] / 1e4:.1f} ha (en kötü revizit "
-                f"{f.worst_intermittent_revisit_s['detect']:.0f} sn) · {d2i}")
+                f"{f.worst_intermittent_revisit_s['detect']:.0f} sn) · {d2i}"
+                + (f" · termal PTZ algılama tabanı Johnson {r.ptz_detect_floor_ppm:g} px/m (EN 25 değil)"
+                   .replace(".", ",") if r.ptz_detect_floor_ppm < 25.0 else ""))
             if r.static is not None:
                 self.mc_stat_var.set(f"%{r.static.coverage_pct:.1f} ({len(plan.placed_cameras)} sabit kamera)")
             self.show_multi_var.set(True)
@@ -1377,6 +1418,11 @@ class TerrainViewshedWindow:
                     f"Algılama: sürekli {fused.continuous_area_m2['detect'] / 1e4:.1f} ha · yalnız PTZ "
                     f"{fused.intermittent_area_m2['detect'] / 1e4:.1f} ha "
                     f"(en kötü {fused.worst_intermittent_revisit_s['detect']:.0f} sn)")
+        elif self._multi_vs is not None:
+            # Leaving the Sabit+PTZ layer: the row is "overlap / single" again
+            # (the fused summary used to stay on screen under other layers).
+            mv = self._multi_vs
+            self.mc_overlap_var.set(f"{mv.overlap_area_m2 / 1e4:.1f} / {mv.single_cover_area_m2 / 1e4:.1f} ha")
         self._render_map_canvas()
 
     def _draw_multi_overlay_arr(self, rows, cols):
@@ -1399,23 +1445,16 @@ class TerrainViewshedWindow:
                 return None
             if g.shape != (rows, cols):
                 return None
-            finite = np.isfinite(g)
-            ov[finite & (g < 10)] = [0, 230, 118, 130]
-            ov[finite & (g >= 10) & (g < 30)] = [255, 214, 0, 125]
-            ov[finite & (g >= 30) & (g < 60)] = [255, 112, 67, 120]
-            ov[finite & (g >= 60)] = [255, 77, 109, 120]
+            _paint_bands(ov, g, _LAYER_BANDS["revisit"][1])
             if glimpse is not None:
-                ov[glimpse] = [150, 150, 150, 110]          # crossed too fast to count
+                ov[glimpse] = _GLIMPSE_RGBA                  # crossed too fast to count
+            self._legend_glimpse = glimpse is not None and bool(glimpse.any())
             return np.flipud(ov)
         if mode == "cue":
             g = self._cue_grid
             if g is None or g.shape != (rows, cols):
                 return None
-            finite = np.isfinite(g)
-            ov[finite & (g < 3)] = [0, 230, 118, 140]
-            ov[finite & (g >= 3) & (g < 6)] = [255, 214, 0, 130]
-            ov[finite & (g >= 6) & (g < 10)] = [255, 112, 67, 125]
-            ov[finite & (g >= 10)] = [255, 77, 109, 125]
+            _paint_bands(ov, g, _LAYER_BANDS["cue"][1])
             return np.flipud(ov)
         if mode == "fused":
             fused = self._fused_coverage()
@@ -1424,25 +1463,41 @@ class TerrainViewshedWindow:
             st = fused.status["detect"]
             if st.shape != (rows, cols):
                 return None
-            ov[st == 2] = [0, 230, 118, 130]                 # continuous (fixed camera)
-            ov[st == 1] = [255, 179, 0, 125]                 # intermittent (PTZ only)
+            _paint_bands(ov, st, _LAYER_BANDS["fused"][1], mask=True)
             return np.flipud(ov)
         mv = self._multi_vs
         if mv is None or mv.dori_grid.shape != (rows, cols):
             return None
         if mode == "overlap":
-            s = mv.seen_count_grid
-            ov[s == 1] = [255, 214, 0, 110]
-            ov[s == 2] = [0, 230, 118, 120]
-            ov[s >= 3] = [0, 229, 255, 130]
+            _paint_bands(ov, mv.seen_count_grid, _LAYER_BANDS["overlap"][1], mask=True)
             return np.flipud(ov)
-        d = mv.dori_grid
-        ov[d == ZONE_IDENT] = [0, 230, 118, 150]
-        ov[d == ZONE_RECOG] = [255, 179, 0, 130]
-        ov[d == ZONE_OBSERVE] = [255, 112, 67, 115]
-        ov[d == ZONE_DETECT] = [255, 77, 109, 100]
-        ov[d == ZONE_OCCLUDED] = [12, 14, 18, 200]
+        _paint_bands(ov, mv.dori_grid, _LAYER_BANDS["dori"][1], mask=True)
         return np.flipud(ov)
+
+    def _draw_layer_legend(self, cv):
+        """Top-left key for the active multi/PTZ layer, box sized from its text."""
+        if not self.show_multi_var.get() or not getattr(self, "_layer_drawn", False):
+            return
+        mode = self.multi_overlay_var.get()
+        title, bands = _LAYER_BANDS.get(mode, _LAYER_BANDS["dori"])
+        rows = [(title, TEXT_MUTED, None)] + [(txt, None, rgba) for _, _, rgba, txt in bands]
+        if mode == "revisit" and getattr(self, "_legend_glimpse", False):
+            rows.append((_GLIMPSE_LABEL, None, _GLIMPSE_RGBA))
+        x, y = 18, 14
+        for i, (text, col, rgba) in enumerate(rows):
+            if rgba is None:
+                item = cv.create_text(x, y, text=text, anchor="nw", font=("Segoe UI", 8, "bold"),
+                                      fill=col, tags="layer_legend")
+            else:
+                hexcol = "#%02X%02X%02X" % rgba[:3]
+                sw = cv.create_text(x, y, text="■", anchor="nw", font=("Segoe UI", 9),
+                                    fill=hexcol, tags="layer_legend")
+                item = cv.create_text(cv.bbox(sw)[2] + 4, y, text=text, anchor="nw",
+                                      font=("Segoe UI", 8), fill=TEXT_WHITE, tags="layer_legend")
+            y = cv.bbox(item)[3] + 1
+        x0, y0, x1, y1 = cv.bbox("layer_legend")
+        box = cv.create_rectangle(x0 - 6, y0 - 4, x1 + 6, y1 + 4, fill="#16191E", outline=PANEL_BORDER)
+        cv.tag_lower(box, "layer_legend")
 
     # ── TILE CACHE ──
     def _refresh_tile_cache_label(self):
@@ -2239,9 +2294,21 @@ class TerrainViewshedWindow:
     def _create_stat_row(self, parent, label: str, var: tk.StringVar, color: str):
         row = ttk.Frame(parent)
         row.pack(fill=tk.X, pady=1)
-        ttk.Label(row, text=label, font=("Segoe UI", 8)).pack(side=tk.LEFT)
-        lbl_val = tk.Label(row, textvariable=var, font=("Segoe UI", 8, "bold"), fg=color, bg=PANEL_DARK)
-        lbl_val.pack(side=tk.RIGHT)
+        cap = ttk.Label(row, text=label, font=("Segoe UI", 8))
+        cap.pack(side=tk.LEFT, anchor="n")
+        # Kural 8: a long value (e.g. the mixed fixed+PTZ summary) used to be
+        # clipped at both ends; it now wraps in the space the caption leaves.
+        lbl_val = tk.Label(row, textvariable=var, font=("Segoe UI", 8, "bold"), fg=color, bg=PANEL_DARK,
+                           justify=tk.RIGHT, wraplength=200)
+        lbl_val.pack(side=tk.RIGHT, anchor="ne")
+
+        def _fit(_e=None):
+            wl = max(60, row.winfo_width() - cap.winfo_reqwidth() - 8)
+            if int(str(lbl_val.cget("wraplength")) or 0) != wl:
+                lbl_val.configure(wraplength=wl)
+
+        row.bind("<Configure>", _fit, add="+")
+        return lbl_val
 
     def _on_slider_changed(self, _val=None):
         self.lbl_mast_val.configure(text=f"{self.mast_height_var.get():.1f} m")
@@ -2517,6 +2584,7 @@ class TerrainViewshedWindow:
 
         # 2b. Multi-camera unified viewshed / PTZ revisit overlay
         _mc_arr = self._draw_multi_overlay_arr(rows, cols)
+        self._layer_drawn = _mc_arr is not None
         if _mc_arr is not None:
             _mc_img = Image.fromarray(_mc_arr, mode="RGBA").resize(
                 (full_map_img.width, full_map_img.height), Image.Resampling.NEAREST)
@@ -2643,16 +2711,27 @@ class TerrainViewshedWindow:
 
                 cov = self.perimeter_plan.coverage_percentage
                 gap_n = len(getattr(self.perimeter_plan, "gaps", []))
-                leg_x, leg_y = 30, h - 85
-                cv.create_rectangle(leg_x - 6, leg_y - 6, leg_x + 250, leg_y + 68, fill="#16191E", outline=PANEL_BORDER)
-                cv.create_text(leg_x, leg_y + 2, text=f"ÇEVRE ÇİTİ · {self.perimeter_plan.camera_count} KAMERA AKTİF", anchor="w", font=("Segoe UI", 8, "bold"), fill=ACCENT_CYAN)
-                cv.create_text(leg_x, leg_y + 22, text=f"• Toplam Çit: {self.perimeter_plan.total_fence_length_m:,.0f}m", anchor="w", font=("Segoe UI", 8), fill=TEXT_WHITE)
-                cv.create_text(leg_x, leg_y + 38, text=f"• Ortalama Direk Aralığı: {self.perimeter_plan.avg_spacing_m:.1f}m", anchor="w", font=("Segoe UI", 8), fill=ACCENT_GREEN)
-                cv.create_text(leg_x, leg_y + 54,
-                               text=(f"• Çit kapsaması %{cov:.1f} — kesintisiz" if gap_n == 0
-                                     else f"• Çit kapsaması %{cov:.1f} — {gap_n} boşluk"),
-                               anchor="w", font=("Segoe UI", 8),
-                               fill=(ACCENT_GREEN if gap_n == 0 else ACCENT_RED))
+                # Box sized from the drawn text (was a fixed 250x74 px box: at
+                # >100 % DPI the last line ran past its right edge).
+                p = self.perimeter_plan
+                lines = [
+                    (f"ÇEVRE ÇİTİ · {p.camera_count} KAMERA AKTİF"
+                     + (f" ({len(p.placed_cameras)} sabit + {p.ptz_count} PTZ)" if p.ptz_cameras else ""),
+                     ACCENT_CYAN),
+                    (f"• Toplam Çit: {p.total_fence_length_m:,.0f}m", TEXT_WHITE),
+                    (f"• Ortalama Direk Aralığı: {p.avg_spacing_m:.1f}m", ACCENT_GREEN),
+                    ((f"• Çit kapsaması %{cov:.1f} — kesintisiz" if gap_n == 0
+                      else f"• Çit kapsaması %{cov:.1f} — {gap_n} boşluk"),
+                     ACCENT_GREEN if gap_n == 0 else ACCENT_RED),
+                ]
+                leg_x, y = 30, h - 14
+                for i, (text, col) in reversed(list(enumerate(lines))):
+                    font = ("Segoe UI", 8, "bold") if i == 0 else ("Segoe UI", 8)
+                    item = cv.create_text(leg_x, y, text=text, anchor="sw", font=font, fill=col, tags="fence_info")
+                    y = cv.bbox(item)[1] - 2
+                x0, y0, x1, y1 = cv.bbox("fence_info")
+                box = cv.create_rectangle(x0 - 6, y0 - 4, x1 + 6, y1 + 4, fill="#16191E", outline=PANEL_BORDER)
+                cv.tag_lower(box, "fence_info")
 
         else:
             # 6. SINGLE CAMERA VECTOR OVERLAYS
@@ -2695,6 +2774,8 @@ class TerrainViewshedWindow:
             x0, y0, x1, y1 = cv.bbox("legend")
             box = cv.create_rectangle(x0 - 6, y0 - 4, x1 + 6, y1 + 4, fill="#16191E", outline=PANEL_BORDER)
             cv.tag_lower(box, "legend")
+
+        self._draw_layer_legend(cv)
 
     def _render_profile_canvas(self):
         cv = self.profile_canvas

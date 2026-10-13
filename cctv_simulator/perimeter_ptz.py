@@ -80,6 +80,10 @@ class MixedPerimeterResult:
     worst_d2i_s: float
     ptz_camera_name: str = ""
     speed_deg_s: float = 0.0
+    # The engine's detection floor for the PTZ patrol (view_limits): EN
+    # Detection 25 px/m, or Johnson 1.3 px/m for a thermal -- its "detect"
+    # area is then not 25 px/m coverage and the report must say so.
+    ptz_detect_floor_ppm: float = 25.0
 
     @property
     def identifiable_pct(self) -> float:
@@ -109,8 +113,8 @@ def evaluate_mixed_perimeter(terrain: TerrainData, plan: PerimeterPlanResult,
     # reach: a thermal's engine detection floor is Johnson 1.3 px/m, so a
     # UMA T5 detects to ~1.6 km but identifies to ~75 m. One raster per mast
     # must cover the longer of the two or the sweep is silently clipped.
-    sweep_reach = view_limits(ptz_camera, ptz_camera.focal_min_mm, math.inf,
-                              visibility_km, weather).effective_max_range_m
+    wide_lim = view_limits(ptz_camera, ptz_camera.focal_min_mm, math.inf, visibility_km, weather)
+    sweep_reach = wide_lim.effective_max_range_m
     for p in plan.ptz_cameras:
         rng = float(min(max(p.effective_range_m, sweep_reach, 50.0), max_range_cap_m))
         sweeps.append(evaluate_sweep(
@@ -147,4 +151,5 @@ def evaluate_mixed_perimeter(terrain: TerrainData, plan: PerimeterPlanResult,
         worst_d2i_s=float(vals.max()) if vals.size else math.inf,
         ptz_camera_name=getattr(ptz_camera, "name", "") or "",
         speed_deg_s=speed_deg_s,
+        ptz_detect_floor_ppm=float(wide_lim.min_detect_ppm),
     )

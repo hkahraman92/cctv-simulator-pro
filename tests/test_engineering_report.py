@@ -111,3 +111,24 @@ def test_report_includes_mixed_fixed_plus_ptz(tmp_path):
     export_engineering_report_csv(str(out), project_name="x", terrain=terr, camera=CAM, weather="",
                                   perimeter=plan)
     assert "KARMA KAPSAMA" not in out.read_text(encoding="utf-8-sig")
+
+
+def test_mixed_report_names_the_thermal_detection_floor(tmp_path):
+    # A thermal PTZ "detects" down to the engine's Johnson 1.3 px/m floor; the
+    # report must not label that area as 25 px/m Detection.
+    from cctv_simulator.perimeter_ptz import evaluate_mixed_perimeter
+
+    thermal = CameraConfig(name="Termal PTZ", sensor_name="LWIR 640x512 (12µm)",
+                           resolution_name="LWIR (640x512)", focal_min_mm=25.0, focal_max_mm=225.0)
+    terr = TerrainData(z_grid=np.zeros((80, 80), np.float32), cell_size_m=5.0)
+    square = [(150.0, 150.0), (250.0, 150.0), (250.0, 250.0), (150.0, 250.0)]
+    plan = generate_perimeter_plan(terr, square, CAM, target_ppm=62.5, mast_height_m=6.0,
+                                   ptz_camera=thermal, ptz_every_n=4)
+    mixed = evaluate_mixed_perimeter(terr, plan, CAM, thermal)
+    assert mixed.ptz_detect_floor_ppm < 25.0
+    out = tmp_path / "termal.csv"
+    export_engineering_report_csv(str(out), project_name="x", terrain=terr, camera=CAM, weather="",
+                                  perimeter=plan, mixed=mixed)
+    text = out.read_text(encoding="utf-8-sig")
+    assert "termal PTZ Johnson 1,3 px/m" in text
+    assert "Menzil = tele uçta teşhis erişimi" in text

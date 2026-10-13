@@ -620,6 +620,15 @@ alanı taşır. `map_3d_window`:
   110 px iki sütun >%100 DPI'da üst üste biniyordu); Gözlem satırı eklendi.
 
 Overlay `_draw_multi_overlay_arr` → `_render_map_canvas` 2b bloğunda komposit.
+Katman renkleri **tek tabloda**: `_LAYER_BANDS` (mod → başlık + `(lo, hi, RGBA,
+lejant)` bantları, `_paint_bands`); haritanın sol üstündeki katman lejandı
+(`_draw_layer_legend`, kutusu yazının bbox'ından) aynı tabloyu okur — lejant
+haritanın kullanmadığı rengi anlatamaz. Refaktör beş katmanda bit-aynı.
+`_create_stat_row` değeri başlığın bıraktığı genişlikte sarar (karma özet iki
+uçtan kırpılıyordu, Kural 8); çit bilgi kutusu da yazıdan boyutlanır. Termal
+PTZ'de karma "Algılama" alanı Johnson 1,3 px/m tabanıdır
+(`MixedPerimeterResult.ptz_detect_floor_ppm`) — arayüz özeti ve rapor bunu
+yazar, 25 px/m diye etiketlemez.
 `_export_engineering_report` `multi_viewshed` + `ptz` + `mixed` geçirir.
 
 - **PTZ geçiş modeli** artık `_transition_s`: pan/tilt slew + optik zoom süresi

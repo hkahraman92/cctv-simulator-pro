@@ -1050,7 +1050,11 @@ def _mixed_rows(mixed) -> List[List[str]]:
                               else f"{periods[0]:.0f} sn" if periods else "—")
          + (f" · tarama hızı {mixed.speed_deg_s:g}°/sn" if getattr(mixed, "speed_deg_s", 0) else "")],
     ]
+    floor = getattr(mixed, "ptz_detect_floor_ppm", 25.0)
     for key, label in _MIXED_LEVELS:
+        if key == "detect" and floor < 25.0:
+            # Thermal PTZ: the engine's detection floor is Johnson, not EN.
+            label = f"Algılama (sabit 25 px/m; termal PTZ Johnson {floor:g} px/m)".replace(".", ",")
         cont = f.continuous_area_m2.get(key, 0.0)
         inter = f.intermittent_area_m2.get(key, 0.0)
         worst = f.worst_intermittent_revisit_s.get(key, 0.0)
@@ -1069,6 +1073,8 @@ def _mixed_rows(mixed) -> List[List[str]]:
                      f"en kötü {mixed.worst_d2i_s:.1f} sn"])
     else:
         rows.append(["Tespit → teşhis süresi", "PTZ, sabitlerin tespit ettiği hiçbir yerde teşhise ulaşamıyor"])
+    rows.append(["Direk tablosunda PTZ satırları",
+                 "Pan = devriye merkezi · Odak = devriye (geniş uç) · Menzil = tele uçta teşhis erişimi"])
     rows.append(["Varsayımlar",
                  "Sürekli = en az bir sabit kamera; aralıklı = yalnız PTZ devriyesi (birden çok PTZ'de "
                  "en küçük tekil boşluk, muhafazakâr). Alarmda en hızlı yetişen PTZ yönlendirilir; "

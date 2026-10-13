@@ -1,3 +1,39 @@
+## -24. Arayüz uçtan uca + ekran görüntüsü: kırpılmalar, lejant, termal etiket — ✅ (2026-10-13)
+
+Motor düzeltmesinden sonra karma dizilim arayüzü yeniden sürüldü (UMA T5, her
+3. direk, 180°: 144 sabit + 47 PTZ). Ekran görüntüsü bu kez alındı ve bakıldı;
+bulunan ve düzeltilenler:
+
+- **Kırpılan değerler (Kural 8).** `_create_stat_row` değeri sağa yaslı,
+  sarılmayan etiketti: "Örtüşen / yedeksiz" satırına yazılan Sabit+PTZ özeti
+  ve ısı haritası yüzdeleri iki uçtan kesiliyordu ("a %43 …", "lama: sürekli
+  … (en kötü 20"). Değer artık başlığın bıraktığı genişlikte sarar.
+- **Yanlış başlık.** Isı haritası yüzdeleri "Örtüşen alanda:" altında
+  gösteriliyordu; doğrusu "Koruma bandında (±40 m):".
+- **Eski özet kalıyordu.** Sabit+PTZ katmanından Revizit/Tepki'ye geçince
+  satır karma özetini göstermeye devam ediyordu; artık örtüşme / yedeksiz.
+- **Çit bilgi kutusu** sabit 250 px'ti, son satır taşıyordu; artık yazının
+  bbox'ından, karma dizilimde "(144 sabit + 47 PTZ)" ile.
+- **Katman lejandı yoktu.** Revizit / Tepki / Sabit+PTZ / Örtüşme / DORI
+  renkleri haritada açıklanmıyordu. `_LAYER_BANDS` tek tablo: boyayan ve
+  lejant aynı yerden okur. Refaktör öncesi/sonrası beş katman bit-aynı.
+- **Termal etiket.** Termal PTZ'nin "Algılama" alanı motorun Johnson 1,3 px/m
+  tabanından; raporda "Algılama (25 px/m)" yazıyordu. Artık sonuç
+  `ptz_detect_floor_ppm` taşır, rapor ve arayüz özeti bunu belirtir. Rapora
+  "PTZ satırları: Pan = devriye merkezi · Menzil = tele teşhis erişimi"
+  açıklaması eklendi.
+
+Doğrulama: ekran görüntüleri (Sabit+PTZ, Revizit, Tepki katmanları, panel
+kaydırılmış iki konumda), arayüzden üretilen 9 sayfalık PDF'in karma sayfası
+rasterleştirilip bakıldı; gruplarda çökmüş widget yok. Yeni test
+`test_mixed_report_names_the_thermal_detection_floor`. ruff + tam pytest
+yeşil.
+
+Kalan: Tepki süresi katmanı yalnız sabit kameraların tespit ettiği çit dibi
+hücrelerini boyuyor — mor PTZ halkalarının altında zor görünüyor (halkalar
+bu katmanda soluklaştırılabilir). Revizit her yerde ~20 sn olunca Sabit+PTZ ile
+aynı renkte görünüyor (bantlar 10/30/60 sn).
+
 ## -23. Viewshed motoru düzlemsel yamacı "engel" sayıyordu + ısı haritası paydası — ✅ (2026-10-13)
 
 Hedef "çit ısı haritası karma hesabın direk raster'ını paylaşsın" idi. Önce
