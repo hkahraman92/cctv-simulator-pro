@@ -131,3 +131,28 @@ def test_near_dead_zone_is_out_of_frame():
                                 camera=CAM, lens_mode="max", pan_deg=0, tilt_deg=-2, max_range_m=500)
     # 10 m north of a 12 m mast, a -2 deg tele frame cannot include the ground
     assert res.dori_grid[41, 40] == ZONE_OUT_OF_FOV
+
+
+@pytest.mark.parametrize("cell", [2.0, 5.0, 10.0])
+@pytest.mark.parametrize("slope", [0.05, 0.08, 0.15])
+def test_planar_down_slope_never_hides_itself(cell, slope):
+    # Analytic baseline: a plane seen from above it has no occlusion. With
+    # nearest-cell elevations the march saw terraces and marked 18-52 % of a
+    # plain 8-15 % down-slope as ridge shadow.
+    n = int(600 / cell)
+    z = np.repeat((100.0 - slope * np.arange(n) * cell)[:, None], n, axis=1).astype(np.float32)
+    vs = calculate_3d_viewshed(TerrainData(z_grid=z, cell_size_m=cell), 300.0, 50.0, 6.0, CAM,
+                               pan_deg=0.0, tilt_deg=-4.0, max_range_m=400.0, lens_mode="min",
+                               earth_curvature=False, with_profile=False)
+    assert vs.visibility_mask.sum() > 20
+    assert np.count_nonzero(vs.dori_grid == ZONE_OCCLUDED) == 0
+
+
+def test_mount_raster_sees_all_of_a_planar_slope():
+    from cctv_simulator.mount_visibility import compute_mount_visibility
+    n, cell = 160, 5.0
+    z = np.repeat((100.0 - 0.1 * np.arange(n) * cell)[:, None], n, axis=1).astype(np.float32)
+    mv = compute_mount_visibility(TerrainData(z_grid=z, cell_size_m=cell), 400.0, 400.0, 6.0,
+                                  max_range_m=300.0, earth_curvature=False)
+    assert mv.written.sum() > 1000
+    assert np.all(mv.los_clear[mv.written])

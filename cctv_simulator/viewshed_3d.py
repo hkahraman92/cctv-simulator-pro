@@ -124,9 +124,29 @@ def march_rays(terrain: TerrainData, cam_x_m: float, cam_y_m: float, cam_z: floa
     in_bounds = (cc >= 0) & (cc < cols) & (rr >= 0) & (rr < rows)
     valid = np.logical_and.accumulate(in_bounds, axis=1)          # ray stops at first exit
 
-    rr_s = np.where(valid, rr, 0)
-    cc_s = np.where(valid, cc, 0)
-    elev = terrain.z_grid[rr_s, cc_s].astype(np.float64)
+    # BUGFIX: bilinear elevation at the sample point (node convention, as
+    # TerrainData.get_elevation_at), not the nearest cell's. Nearest-cell
+    # sampling turns every slope into terraces; on ground falling away from
+    # the camera, the far end of each terrace rose above the start of the
+    # next, so a perfectly planar 8 % down-slope read 18-45 % "occluded"
+    # (a plane seen from above never hides itself). Cell attribution (rr/cc)
+    # is unchanged.
+    fc = np.clip((cur_xs - terrain.origin_x) / cell_size, 0.0, cols - 1.0)
+    fr = np.clip((cur_ys - terrain.origin_y) / cell_size, 0.0, rows - 1.0)
+    c0 = np.minimum(fc.astype(np.intp), max(cols - 2, 0))
+    r0 = np.minimum(fr.astype(np.intp), max(rows - 2, 0))
+    fx = fc - c0
+    fy = fr - r0
+    # PERF: one flat index + take() for the four corners (2x faster than
+    # four fancy 2D gathers); the +1 neighbours are in range because c0/r0
+    # stop one short of the edge (a 1-wide grid repeats its only column).
+    zf = terrain.z_grid.ravel()
+    i00 = r0 * cols + c0
+    dc = 1 if cols > 1 else 0
+    dr = cols if rows > 1 else 0
+    z00, z01 = zf.take(i00), zf.take(i00 + dc)
+    z10, z11 = zf.take(i00 + dr), zf.take(i00 + dr + dc)
+    elev = (z00 + (z01 - z00) * fx) * (1.0 - fy) + (z10 + (z11 - z10) * fx) * fy
     curv_drop = (step_dists * step_dists) / (2.0 * _R_EARTH) * (1.0 - _K_REFRACT) if earth_curvature else 0.0
     dz = (elev - curv_drop) - cam_z
     tan_angle = dz / d
