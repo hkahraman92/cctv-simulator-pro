@@ -365,8 +365,8 @@ sayısıyla ağırlıklı, DORI metrikleri yalnız parse edilenler üzerinden). 
   takılma, sarım yönünden bağımsız dışa bakış, sınır modunda izlenen taraf,
   tele teşhis erişimi, `patrol_for`, planın odağıyla yerleşim, uçtan uca karma
   değerlendirme (tespit→teşhis = en hızlı PTZ).
-- `test_database.py` — `is_ptz_camera` (yerleşik ASELSAN UMA T5/Fix, anahtar
-  kelime, açık `is_ptz` alanı önceliği).
+- `test_database.py` — `is_ptz_camera` (yerleşik ASELSAN UMA T5/Fix, görünür
+  bant "Genel … PTZ" modelleri, anahtar kelime, açık `is_ptz` alanı önceliği).
 - `test_i18n.py` — Türkçe kimlik, İngilizce çeviri + geri düşüş, `{}` biçim,
   tercih kalıcılığı, `CCTV_LANG` env önceliği.
 - `test_cli_headless.py` — `--viewshed` / `--ptz` başsız akış + JSON + rapor.
@@ -424,7 +424,9 @@ boşluklar `2(S−hi)/ω + t_e` ve `2·lo/ω + t_e`, 360°'de `(360−HFOV)/ω`.
 **`min_dwell_s`** (vars. 0,5 sn): bakışı bundan kısa süren hücre kapsama
 değil `glimpse_mask` — 30 mm'de 90°/sn dönüş hiçbir hücreyi 0,12 sn'den uzun
 tutmaz. Görünürlük `view_layers`'tan (sabit bakışla aynı kurallar). Sabit hız
-varsayar (ivme yok, `ptz_tour` ile aynı). Testler formülü adım adım zaman
+varsayar (ivme yok, `ptz_tour` ile aynı). `evaluate_sweep` `view_layers`'a
+sınırsız menzil ister: `truncated` = kameranın görüşü analiz menzilini aşıyor
+(raster menzilini istek olarak verince hiç `True` olamıyordu). Testler formülü adım adım zaman
 simülasyonuna karşı doğrular.
 
 **Sabit + PTZ birleşimi ve tespit→teşhis (`ptz_fusion.py`).**
@@ -449,12 +451,15 @@ parlama ve BOM satırları **sürekli** kapsamayı anlatır). PTZ satırında `p
 devriye merkezi (tesis: çitin dış normali — kapalı halkada sarım yönünden, açık
 hatta merkezden uzağa; sınır/otoyol: direğin baktığı yön), `patrol_span_deg`
 (360 = dönüş), `effective_range_m` = tele uçta `ptz_target_ppm`'e (vars. Teşhis
-250) ulaşılan yer mesafesi. `pole_count` değişmez, `camera_count` = sabit + PTZ,
+250) ulaşılan yer mesafesi; devriye tilt'i geniş ucun **motor** tespit erişimine
+(`view_limits`: termalde Johnson 1,3 px/m) göre. `pole_count` değişmez, `camera_count` = sabit + PTZ,
 bant genişliği modele göre (`_bitrate_mbps`). `evaluate_mixed_perimeter(terrain,
 plan, fixed_cam, ptz_cam)` → `MixedPerimeterResult`: sabit direkler
 `calculate_multi_camera_viewshed`, her PTZ `evaluate_sweep` (`patrol_for`:
 Rotation360 / SectorPatrol) + `cue_response` (aynı direk raster'ı, tek önbellek
-girişi), `fuse_coverage`, en hızlı PTZ'nin tepkisi (`cue_s`) ve
+girişi; raster = max(tele teşhis erişimi, geniş uç tespit erişimi) — termal PTZ
+75 m'de teşhis edip ~1,6 km'de tespit eder, yalnız birincisiyle boyutlanan
+raster devriyeyi sessizce kırpıyordu), `fuse_coverage`, en hızlı PTZ'nin tepkisi (`cue_s`) ve
 `detect_to_identify_s` + özet (tespit edilen alanın yüzde kaçı teşhis
 edilebilir, medyan/%90/en kötü). `plan_placements(plan, camera)` sabit
 direkleri **planın kendi odağıyla** (`focal_mm_override`) yerleşime çevirir —

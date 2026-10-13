@@ -30,3 +30,13 @@ def test_unknown_and_bad_input():
     assert is_ptz_camera({}) is False
     assert is_ptz_camera(None) is False
     assert is_ptz_camera({"camera_type": ""}) is False
+
+
+def test_builtin_visible_band_ptz_models():
+    from cctv_simulator.atmosphere import band_for_camera
+    vis = {k: v for k, v in DEFAULT_CAMERA_LIBRARY.items() if "PTZ" in k and "Genel" in k}
+    assert len(vis) == 2
+    for name, m in vis.items():
+        assert is_ptz_camera(dict(m, model_name=name)) is True
+        assert band_for_camera(m["sensor_name"], name) == "visible"
+        assert m["focal_max_mm"] / m["focal_min_mm"] >= 30.0

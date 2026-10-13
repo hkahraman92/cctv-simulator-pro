@@ -1,3 +1,39 @@
+## -22. Görünür bant PTZ modelleri + termal PTZ devriyesi kırpılıyordu — ✅ (2026-10-13)
+
+Kütüphane (`config.DEFAULT_CAMERA_LIBRARY`): "Genel 2MP PTZ speed dome 32x
+4.8-153mm" (1/2.8", 200 m IR) ve "Genel 4MP uzun menzil PTZ 42x 6-252mm"
+(1/1.8", 500 m IR); `camera_type` "PTZ / Speed Dome" → `is_ptz_camera`,
+karma dizilim ve PTZ paneli otomatik görür. Değerler sınıf tipik, marka
+broşürü değil. Motordan: tele uçta teşhis 210 m / 376 m (UMA T5: 75 m).
+
+Ölçerken bulunan üç hata (üçü de termal PTZ'yi etkiliyordu):
+1. `evaluate_mixed_perimeter` PTZ raster'ını tele teşhis erişimiyle
+   boyutluyordu ("cue erişimi her zaman uzun olan" varsayımı). Termal için
+   yanlış: motorun tespit tabanı Johnson 1,3 px/m, UMA T5 geniş uçta ~1,6 km
+   tespit eder ama 75 m'de teşhis eder → devriye 75 m'de sessizce
+   kırpılıyordu. Artık raster = max(teşhis erişimi, `view_limits` geniş uç
+   erişimi), `max_range_cap_m` ile sınırlı. 2×2 km tepelik arazi, 51 T5:
+   yalnız-PTZ algılama **20,1 → 268,7 ha**; görünür PTZ'lerde sonuç bit-aynı.
+   Hesap 51 termal PTZ'de ~5,3 sn (arka planda).
+2. Planlayıcı PTZ tilt'ini 25 px/m menziline göre kuruyordu (T5: 83 m),
+   motor ise 1,3 px/m ile ~1,6 km gösteriyordu (Kural 1 ihlali). Artık
+   `view_limits(...).atmospheric_limit_m`. Görünür bantta değer aynı.
+3. `evaluate_sweep` `view_layers`'a menzil vermiyordu → istek = raster
+   menzili → `truncated` hiç `True` olamıyordu; PTZ panelindeki "⚠ menzil
+   analiz menzilini aşıyor" uyarısı ölü koddu. Artık sınırsız istek
+   (maskeler aynı, `view_layers` zaten raster'a kırpar).
+
+Doğrulama: `test_database` (iki görünür PTZ tanınır, bant "visible", ≥30x),
+`test_ptz_schedule::test_sweep_flags_a_view_reaching_past_the_analysis_range`,
+`test_perimeter_ptz::test_thermal_patrol_is_not_clipped_to_the_identification_reach`;
+üç düzeltmenin her biri geri alınınca test kırılıyor (3/3 mutasyon). Tespit→
+teşhis T5'te %99,62 → %99,5 (tek hücre; büyük raster'ın ışın örneklemesi),
+ortak hücrelerde ≤0,16 sn fark. ruff + tam pytest yeşil.
+
+Kalan: sabit termal direklerin (UMA Fix) planlayıcı tilt'i/aralığı hedef
+PPM'e göre (bilinçli — aralık hedef PPM'den); yalnız PTZ devriyesi motorla
+hizalandı.
+
 ## -21. Mühendislik raporuna karma kapsama bölümü — ✅ (2026-10-12)
 
 `export_engineering_report_pdf` / `_csv` yeni `mixed=` parametresi
