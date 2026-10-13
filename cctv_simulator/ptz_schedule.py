@@ -132,8 +132,13 @@ def evaluate_sweep(terrain: TerrainData, x_m: float, y_m: float, mast_height_m: 
     """Revisit / look-time / DORI maps of one sweeping PTZ."""
     mv = mount_visibility(terrain, x_m, y_m, mast_height_m, max_range_m=max_range_m,
                           earth_curvature=earth_curvature)
+    # Unbounded request: view_layers clamps the view to the raster anyway, so
+    # the masks are unchanged, but ``truncated`` now reports a camera that
+    # sees past the analysis range (with the raster's own range as the
+    # request it could never be true).
     lay = view_layers(mv, camera, tilt_deg=sweep.tilt_deg, focal_mm=sweep.focal_mm,
-                      lens_mode=sweep.lens_mode, visibility_km=visibility_km, weather=weather)
+                      lens_mode=sweep.lens_mode, max_range_m=math.inf,
+                      visibility_km=visibility_km, weather=weather)
     swept, revisit, look, period = sweep_timing(np.degrees(lay.center_az_rad), lay.hfov_deg, sweep)
 
     framed_vis = lay.visible & swept

@@ -40,6 +40,7 @@ from .viewshed_3d import (
     CameraPlacement,
     MultiViewshedResult,
     calculate_multi_camera_viewshed,
+    view_limits,
 )
 
 
@@ -104,10 +105,14 @@ def evaluate_mixed_perimeter(terrain: TerrainData, plan: PerimeterPlanResult,
 
     sweeps: List[SweepResult] = []
     cues: List[CueResponse] = []
+    # The patrol (wide end) can see further than the tele identification
+    # reach: a thermal's engine detection floor is Johnson 1.3 px/m, so a
+    # UMA T5 detects to ~1.6 km but identifies to ~75 m. One raster per mast
+    # must cover the longer of the two or the sweep is silently clipped.
+    sweep_reach = view_limits(ptz_camera, ptz_camera.focal_min_mm, math.inf,
+                              visibility_km, weather).effective_max_range_m
     for p in plan.ptz_cameras:
-        # One raster per mast: the cue reach (tele) is the longer of the two
-        # ranges; the sweep's optical limit cuts the wide view off anyway.
-        rng = float(min(max(p.effective_range_m, 50.0), max_range_cap_m))
+        rng = float(min(max(p.effective_range_m, sweep_reach, 50.0), max_range_cap_m))
         sweeps.append(evaluate_sweep(
             terrain, p.x_m, p.y_m, p.mast_height_m, ptz_camera,
             patrol_for(p, speed_deg_s, end_dwell_s), max_range_m=rng,

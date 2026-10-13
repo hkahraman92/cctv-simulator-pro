@@ -121,3 +121,14 @@ def test_fast_tele_sweep_is_only_glimpses():
     assert r_slow.period_s == pytest.approx(180.0)
     assert r_slow.worst_revisit_s == pytest.approx(180.0 - r_slow.hfov_deg / 2.0)
     assert np.isinf(r_fast.revisit_grid[r_fast.glimpse_mask]).all()          # glimpses are not coverage
+
+
+def test_sweep_flags_a_view_reaching_past_the_analysis_range():
+    # The raster range is the analysis range; truncated used to compare the
+    # view against that same range and so could never be True.
+    clear_mount_cache()
+    terr = TerrainData(z_grid=np.zeros((120, 120), np.float32), cell_size_m=5.0)
+    wide = Rotation360(speed_deg_s=10.0, tilt_deg=-5.0, focal_mm=4.3)      # detects to ~60 m
+    tele = Rotation360(speed_deg_s=10.0, tilt_deg=-1.0, focal_mm=129.0)    # far past 100 m
+    assert not evaluate_sweep(terr, 300.0, 300.0, 6.0, CAM, wide, max_range_m=100.0).truncated
+    assert evaluate_sweep(terr, 300.0, 300.0, 6.0, CAM, tele, max_range_m=100.0).truncated

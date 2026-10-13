@@ -20,7 +20,7 @@ from . import atmosphere as _atm
 from .terrain_loader import TerrainData
 from .models import CameraConfig
 from .calculations import CameraOptics, camera_optics
-from .viewshed_3d import PPM_DETECT, PPM_IDENT, PPM_OBSERVE, PPM_RECOG
+from .viewshed_3d import PPM_DETECT, PPM_IDENT, PPM_OBSERVE, PPM_RECOG, view_limits
 
 
 @dataclass
@@ -424,6 +424,7 @@ def _place_ptz_cameras(pts: List[Tuple[float, float]],
     wide = camera_optics(ptz, ptz.focal_min_mm)
     tele = camera_optics(ptz, ptz.focal_max_mm)
     band = _atm.band_for_camera(ptz.sensor_name, ptz.model_name)
+    wide_det = view_limits(ptz, ptz.focal_min_mm, math.inf, visibility_km, weather).atmospheric_limit_m
     out: List[PlacedCamera] = []
     for host, seg_heading in hosts:
         mast = host.mast_height_m
@@ -432,8 +433,11 @@ def _place_ptz_cameras(pts: List[Tuple[float, float]],
         else:
             centre = host.pan_deg      # border: the watched side; highway: back along the road
         # Patrol tilt: aim at ~55 % of the wide view's detection range, the
-        # same convention the fixed poles use.
-        det = _atm.usable_range_m(wide.distance_for_ppm(PPM_DETECT), visibility_km, band, weather)
+        # same convention the fixed poles use. The detection floor is the
+        # engine's (view_limits: EN Detection 25 px/m, Johnson 1.3 for
+        # thermal) -- a thermal PTZ used to be aimed at its 25 px/m range,
+        # a twentieth of what the sweep engine then shows it detecting.
+        det = wide_det
         det_ground = math.sqrt(max(det ** 2 - mast ** 2, 1.0))
         tilt = -max(1.0, min(25.0, math.degrees(math.atan(mast / max(det_ground * 0.55, 5.0)))))
         cue = _atm.usable_range_m(tele.distance_for_ppm(max(target_ppm, 1.0)),

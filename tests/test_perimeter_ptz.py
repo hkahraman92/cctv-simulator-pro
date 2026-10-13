@@ -127,3 +127,22 @@ def test_mixed_evaluation_needs_ptz():
     terr = _flat()
     with pytest.raises(ValueError):
         evaluate_mixed_perimeter(terr, _plan(terr), FIXED, PTZ)
+
+
+def test_thermal_patrol_is_not_clipped_to_the_identification_reach():
+    # Thermal detection floor in the engine is Johnson 1.3 px/m: the wide
+    # patrol detects far beyond the tele identification reach. The raster
+    # used to be sized by the latter (UMA T5: 75 m vs ~1.6 km) and the
+    # planner aimed the tilt at the 25 px/m range.
+    clear_mount_cache()
+    thermal = CameraConfig(name="Termal PTZ", sensor_name="LWIR 640x512 (12µm)",
+                           resolution_name="LWIR (640x512)", focal_min_mm=25.0, focal_max_mm=225.0)
+    terr = _flat(n=200)
+    m = _plan(terr, fence=[(400.0, 400.0), (600.0, 400.0), (600.0, 600.0), (400.0, 600.0)],
+              ptz_camera=thermal, ptz_every_n=4)
+    p = m.ptz_cameras[0]
+    assert p.tilt_deg == -1.0                     # aimed at ~55 % of a ~1.6 km view: shallowest tilt
+    r = evaluate_mixed_perimeter(terr, m, FIXED, thermal)
+    rows, cols = np.nonzero(r.sweeps[0].seen_mask)
+    dist = np.hypot((cols + 0.5) * 5.0 - p.x_m, (rows + 0.5) * 5.0 - p.y_m)
+    assert dist.max() > 3.0 * p.effective_range_m
