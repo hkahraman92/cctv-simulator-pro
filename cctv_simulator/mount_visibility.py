@@ -43,6 +43,7 @@ from .viewshed_3d import (
     _K_REFRACT,
     _R_EARTH,
     march_rays,
+    ray_chunk,
     ray_step_size,
     view_focal_mm,
     view_limits,
@@ -50,7 +51,6 @@ from .viewshed_3d import (
 )
 
 _MAX_RAYS = 16384
-_RAY_CHUNK = 512          # rays per march block: bounds the (rays x steps) temporaries
 
 
 @dataclass
@@ -119,8 +119,9 @@ def compute_mount_visibility(terrain: TerrainData, x_m: float, y_m: float, mast_
     los = np.zeros((h, w), bool)
     tan_g = np.zeros((h, w), np.float64)
     slant_g = np.zeros((h, w), np.float64)
-    for start in range(0, num_rays, _RAY_CHUNK):
-        m = march_rays(terrain, x_m, y_m, cam_z, angles[start:start + _RAY_CHUNK],
+    chunk = ray_chunk(len(step_dists))
+    for start in range(0, num_rays, chunk):
+        m = march_rays(terrain, x_m, y_m, cam_z, angles[start:start + chunk],
                        step_dists, earth_curvature)
         v = m.valid
         rr, cc = m.rr[v] - r0, m.cc[v] - c0

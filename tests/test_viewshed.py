@@ -156,3 +156,60 @@ def test_mount_raster_sees_all_of_a_planar_slope():
                                   max_range_m=300.0, earth_curvature=False)
     assert mv.written.sum() > 1000
     assert np.all(mv.los_clear[mv.written])
+
+
+@pytest.mark.parametrize("pos", [(0.5, 0.5), (0.02, 0.03), (0.99, 0.98), (-0.05, 0.5), (0.4, -0.01)])
+def test_perf_paths_are_bit_identical(monkeypatch, pos):
+    # Cutting each ray block at its farthest grid exit and marching in small
+    # blocks are pure speed-ups: forcing the old full-length, single-block
+    # march must give the very same grids (edge and off-grid cameras too).
+    import cctv_simulator.viewshed_3d as V
+    from cctv_simulator.mount_visibility import compute_mount_visibility
+
+    terr = TerrainData(z_grid=np.random.default_rng(7).normal(0, 4, (70, 90)).astype(np.float32),
+                       cell_size_m=5.0, origin_x=-13.0, origin_y=21.0)
+    x = terr.origin_x + pos[0] * terr.width_m
+    y = terr.origin_y + pos[1] * terr.height_m
+    th = CameraConfig(name="T", model_name="T Termal", sensor_name="LWIR 640x512 (12µm)",
+                      resolution_name="LWIR (640x512)", focal_min_mm=25.0, focal_max_mm=225.0)
+
+    def run():
+        vs = [calculate_3d_viewshed(terr, x, y, 8.0, cam, pan_deg=pan, tilt_deg=-2.0, max_range_m=900.0,
+                                    lens_mode="min", with_profile=False)
+              for cam, pan in ((CAM, 40.0), (th, 230.0))]
+        mv = compute_mount_visibility(terr, x, y, 8.0, max_range_m=700.0)
+        return ([(v.visibility_mask, v.dori_grid, v.ppm_grid, v.slant_dist_grid) for v in vs],
+                (mv.written, mv.los_clear, mv.sample_elev_rad, mv.sample_slant_m))
+
+    fast = run()
+    monkeypatch.setattr(V, "_steps_inside", lambda terrain, x0, y0, angles, steps: len(steps))
+    monkeypatch.setattr(V, "_CHUNK_ELEMS", 10 ** 12)
+    slow = run()
+    for a, b in zip(fast[0], slow[0]):
+        assert all(np.array_equal(p, q) for p, q in zip(a, b))
+    assert all(np.array_equal(p, q) for p, q in zip(fast[1], slow[1]))
+
+
+@pytest.mark.parametrize("pos", [(0.5, 0.5), (0.01, 0.99), (0.97, 0.02), (1.05, 0.5)])
+def test_range_window_keeps_the_whole_cone(pos):
+    # The analytic cone is evaluated on the camera's range window only; it
+    # must equal the full-grid definition (computed here independently).
+    terr = TerrainData(z_grid=np.random.default_rng(3).normal(0, 2, (80, 100)).astype(np.float32),
+                       cell_size_m=4.0, origin_x=7.0, origin_y=-9.0)
+    x = terr.origin_x + pos[0] * terr.width_m
+    y = terr.origin_y + pos[1] * terr.height_m
+    for pan, rng in ((10.0, 150.0), (200.0, 400.0)):
+        vs = calculate_3d_viewshed(terr, x, y, 8.0, CAM, pan_deg=pan, tilt_deg=-3.0, max_range_m=rng,
+                                   lens_mode="min", earth_curvature=False, with_profile=False)
+        gx = terr.origin_x + np.arange(terr.cols) * terr.cell_size_m
+        gy = terr.origin_y + np.arange(terr.rows) * terr.cell_size_m
+        mx, my = np.meshgrid(gx, gy)
+        d = np.hypot(mx - x, my - y)
+        az = np.arctan2(mx - x, my - y)
+        off = np.abs(np.arctan2(np.sin(az - np.radians(pan)), np.cos(az - np.radians(pan))))
+        r_eff = vs.max_range_m                     # effective: request, optics and atmosphere
+        elev = np.arctan2(terr.z_grid - vs.cam_total_z_m, np.maximum(d, 0.1))
+        cone = ((off <= np.radians(vs.hfov_deg / 2)) & (d <= r_eff) & (d > 1.0)
+                & (elev >= np.radians(vs.tilt_deg - vs.vfov_deg / 2))
+                & (elev <= np.radians(vs.tilt_deg + vs.vfov_deg / 2)))
+        assert vs.fov_area_m2 == pytest.approx(cone.sum() * terr.cell_size_m ** 2)

@@ -637,8 +637,16 @@ yazar, 25 px/m diye etiketlemez.
   yok: ivme profili, alarm-tetikli slew, operatör müdahalesi (revizit sabit
   döngü varsayar).
 - **Perf.** `calculate_multi_camera_viewshed` her kamera için `calculate_3d_
-  viewshed(with_profile=False)` (kesit atlanır) — ~3 ms/kamera; 200 kamera
-  ~0,7 sn. Arazi grid hazırlığı hâlâ kamera başına tekrar ediyor.
+  viewshed(with_profile=False)` (kesit atlanır). Üç bit-aynı hızlandırma
+  (`test_perf_paths_are_bit_identical`, `test_range_window_keeps_the_whole_cone`):
+  (1) analitik koni yalnız kameranın **menzil penceresinde** (eskiden her
+  kamera tüm araziyi tarıyordu: 308 kısa menzilli çit kamerası 0,95 → 0,32 sn);
+  (2) `march_rays` ışın bloğunu en uzak ızgara çıkışında keser
+  (`_steps_inside`; düşük tarafta bir hücre pay — `astype(intp)` sıfıra doğru
+  keser); (3) bloklar ~32k örnek (`ray_chunk`, eskiden sabit 512 ışın ≈ 28 MB
+  ara dizi, bellek bant genişliğine takılıyordu): 1,6 km direk haritası
+  97 → 58 ms. 51 termal PTZ'li karma çit 6,8 → 2,5 sn. İş parçacığı denendi:
+  bellek sınırlı, 4 iş parçacığında yalnız ~1,5×, eklenmedi.
 - **İki çok-kamera motoru ayrı ama ölçülerek uyumlu.** `compute_coverage_grid`
   (çit bandı, kendi ince grid'i, 4 m) ve `calculate_multi_camera_viewshed`
   (arazi grid'i). Isı haritasını motora bağlamak **denendi ve reddedildi**:

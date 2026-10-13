@@ -1,3 +1,37 @@
+## -25. Görüş alanı motoru hızlandırma (bit-aynı) — ✅ (2026-10-13)
+
+Profil (51 termal T5, 2×2 km): süre %81 direk haritalarında (`compute_mount_
+visibility` → `march_rays`), %15 statik birleşik viewshed. Üç değişiklik,
+üçü de çıktıyı **bit bit** değiştirmiyor (eski/yeni 414 dizi: kenar, arazi
+dışı ve kaydırılmış orijinli kameralar; birleşik viewshed 12 dizi):
+
+1. **Bellek dostu bloklar** (`viewshed_3d.ray_chunk`): sabit 512 ışın × ~457
+   adımlık blok ~15 ara dizi × 1,9 MB → bellek bant genişliği sınırı. ~32k
+   örneklik blok: 1,6 km direk haritası 97 → 58 ms (10 m), 986 → 476 ms (2 m).
+   Tekil motor da bloklandı (2 m termal 70 → 54 ms; kısa menzilde nötr).
+2. **Izgaradan çıkınca dur** (`_steps_inside`): ışın ilk ızgara dışı
+   örnekten sonra geçersiz; blok en uzak çıkışta kesilir. Kenar/dışarıdaki
+   kameralarda büyük, ortadakilerde küçük kazanç.
+3. **Koni menzil penceresinde**: `calculate_3d_viewshed` analitik koniyi
+   (mesafe/azimut/dikey çerçeve) tüm arazi yerine kameranın menzil kutusunda
+   hesaplar. 308 kısa menzilli çit kamerası: 0,95 → 0,32 sn.
+
+Sonuç: karma çit 51 T5 **6,8 → 2,5 sn**, 2MP 1,25 → 0,58, 4MP 1,45 → 0,79 sn;
+sayılar birebir aynı. İş parçacığı denendi (16 çekirdek): bellek sınırlı,
+4 iş parçacığında ~1,5× — karmaşıklığına değmedi, eklenmedi.
+
+Testler: `test_perf_paths_are_bit_identical` (kesme + blok kapatılınca aynı
+ızgaralar, 5 konum, tekil + direk haritası), `test_range_window_keeps_the_
+whole_cone` (koni alanı tüm ızgaradaki bağımsız tanımla aynı, 4 konum).
+Mutasyon: düşük taraf payı kaldırma, en yakın çıkışta kesme, pencereyi yarı
+menzile küçültme → üçü de yakalandı. (İlk denenen "pencerenin ilk iki satırını
+sil" mutantı eşdeğerdi — pay satırları zaten menzil dışı.) ruff + pytest yeşil.
+
+Kalan: direk haritası hâlâ toplam sürenin ~%80'i; tam daire 1675 ışın.
+Sektör devriyesinde yalnız sektör + yarım HFOV ışınlanabilir (cue için ayrı,
+kısa menzilli raster) — sonuçları ışın örneklemesi düzeyinde değiştirir,
+yapılmadı.
+
 ## -24. Arayüz uçtan uca + ekran görüntüsü: kırpılmalar, lejant, termal etiket — ✅ (2026-10-13)
 
 Motor düzeltmesinden sonra karma dizilim arayüzü yeniden sürüldü (UMA T5, her
