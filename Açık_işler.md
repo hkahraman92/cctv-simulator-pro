@@ -1,3 +1,47 @@
+## -23. Viewshed motoru düzlemsel yamacı "engel" sayıyordu + ısı haritası paydası — ✅ (2026-10-13)
+
+Hedef "çit ısı haritası karma hesabın direk raster'ını paylaşsın" idi. Önce
+ölçüldü ve plan değişti:
+
+- Düz zeminde iki motor hücre küçüldükçe aynı alana yakınsıyor (tek kamera,
+  0,5 m: ısı haritası 328 m², motor 328–336 m²). Fark ayrıklaştırma: motor
+  10 m arazi hücresinde ~20 m'lik konileri kaba sayıyor. Isı haritasını motora
+  bağlamak 2,5× kaba + ~50× yavaş (0,02 → 1–4 sn) olurdu → **yapılmadı**.
+- Tepelik arazide aynı 2 m çözünürlükte ısı haritası motordan %40 iyimserdi
+  (Algılama %52,8 / %37,3). Ayrıştırma: ısı haritası-yalnız 678 hücrenin 517'si
+  motorda `ZONE_OCCLUDED`. Isı haritasının LOS toleransı (0,5 m) sıfırlanınca
+  hiçbir şey değişmedi → şüphe motora döndü.
+
+**Motor hatası (otorite).** `march_rays` yüksekliği en yakın hücreden
+okuyordu; yamaç basamaklara dönüyor, kameradan uzaklaşan inişte her
+basamağın uzak ucu sonrakini örtüyordu. Analitik referans — kusursuz
+düzlemsel iniş, üstünden bakan kamera, engel = 0 olmalı: eskiden %5 eğimde
+%0,5–32, %8'de %18–45, %15'te %30–52 "engel". Bilinear yükseklikle (düğüm
+kuralı, `get_elevation_at` ile aynı) her çözünürlük/eğimde %0. Tekil kamera
+karşılaştırmasında ısı haritası/motor engel uyuşmazlığı 517 → 0 hücre.
+Etki: tüm viewshed / direk haritası / PTZ / cue sonuçları yukarı (2×2 km,
+yalnız-PTZ algılama: T5 268,7 → 299,7 ha, 2MP 20,1 → 23,6, 4MP 34,0 → 40,5).
+Maliyet: tekil viewshed 6,7 → 8,5 ms, 1,5 km direk haritası 55 → 110 ms,
+51 T5 karma 5,3 → 6,8 sn.
+
+**Isı haritası hataları.** (1) Kutu kenarı 25 m, koruma bandı 40 m → bandın
+dış 15 m'si (paydanın beşte biri, çoğu hiçbir direğin ulaşmadığı hücre)
+düşüyor, her seviye şişiyordu: Algılama %52,8 → doğrusu %41,8; motor %41,6.
+Kenar artık ≥ bant + hücre. (2) >250 kamerada arazi engeli sessizce
+kapanıyordu (tepelik arazi düz okunuyordu); maliyet 970 kamerada 0,45 sn →
+sınır kaldırıldı.
+
+Doğrulama: `test_viewshed` düzlemsel yamaç (9 parametre) + direk raster'ı
+düzlemde tam görünür; `test_perimeter` ısı haritası ↔ motor aynı bantta
+±1,5 puan + tam bant paydası, >250 kamerada engel uygulanır. Üç düzeltmenin
+her biri geri alınınca testler kırılıyor (3/3). ruff + tam pytest yeşil.
+
+Kalan: iki çok-kamera motoru hâlâ ayrı kod (ölçülerek uyumlu, testle
+kilitli). Isı haritası >40 kamerada LOS örneğini seyreltiyor (`n_samp`).
+Yan not: `generate_procedural_terrain` bilinmeyen önayar adını (örn. "flat")
+sessizce "Düzlük & Tümsekler"e düşürüyor — arayüz yalnız geçerli ad
+gönderiyor, dokunulmadı.
+
 ## -22. Görünür bant PTZ modelleri + termal PTZ devriyesi kırpılıyordu — ✅ (2026-10-13)
 
 Kütüphane (`config.DEFAULT_CAMERA_LIBRARY`): "Genel 2MP PTZ speed dome 32x

@@ -614,6 +614,13 @@ def compute_coverage_grid(plan: PerimeterPlanResult, camera: CameraConfig,
     xs = [c.x_m for c in cams]
     ys = [c.y_m for c in cams]
     reach = max((c.effective_range_m for c in cams), default=100.0)
+    # BUGFIX: the box must hold the whole protected band (the percentage
+    # denominator, band_m from the fence). With the old 25 m margin the box
+    # cut off the outer 15 m of the 40 m band -- a fifth of the denominator,
+    # mostly cells no pole reaches -- and inflated every level (measured:
+    # Detection 52.8 % vs 41.8 % with the full band).
+    band_m = 40.0
+    margin_m = max(margin_m, band_m + cell_m)
     x0, x1 = min(xs) - margin_m, max(xs) + margin_m
     y0, y1 = min(ys) - margin_m, max(ys) + margin_m
     # bound the box to a sane size
@@ -629,7 +636,10 @@ def compute_coverage_grid(plan: PerimeterPlanResult, camera: CameraConfig,
     band = _atm.band_for_camera(camera.sensor_name, camera.model_name)
     optics_by_focal: Dict[float, CameraOptics] = {}
 
-    do_occ = terrain is not None and len(cams) <= 250
+    # Terrain line of sight whenever a DEM is given. It used to be dropped
+    # silently above 250 cameras (hills then read like flat ground); with the
+    # per-camera window below it costs ~0.45 s at ~970 cameras.
+    do_occ = terrain is not None
     if do_occ:
         # ~1 sample per terrain cell along the ray so a one-cell-wide ridge
         # cannot slip between samples (was capped at 40 -> ~12 m spacing on a
@@ -695,7 +705,6 @@ def compute_coverage_grid(plan: PerimeterPlanResult, camera: CameraConfig,
     # Denominator = the band we are meant to protect (within band_m of the
     # fence), so degraded weather reads as WORSE protected-zone coverage, not a
     # smaller pie. Falls back to the covered cells when no fence is available.
-    band_m = 40.0
     protect = _fence_band_mask(mx, my, plan.fence_points, band_m)
     if protect is None or not protect.any():
         protect = best > 0.0

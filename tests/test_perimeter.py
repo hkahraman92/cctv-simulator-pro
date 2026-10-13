@@ -268,3 +268,38 @@ def test_border_and_highway_skip_corner_guards(cam):
     assert any("köşe" in c.camera_model for c in facility.placed_cameras)
     assert not any("köşe" in c.camera_model for c in border.placed_cameras)
     assert not any("köşe" in c.camera_model for c in highway.placed_cameras)
+
+
+def test_coverage_grid_matches_the_viewshed_engine_on_hills():
+    # The fence heat-map keeps its own fine grid, but over the same protected
+    # band it must agree with the authoritative engine. It used to read ~11
+    # points high: its box clipped the outer band (smaller denominator) and
+    # the engine's terrace artefact hid down-slopes.
+    import numpy as np
+
+    from cctv_simulator.perimeter_planner import _fence_band_mask
+    from cctv_simulator.perimeter_ptz import plan_placements
+    from cctv_simulator.viewshed_3d import PPM_DETECT, PPM_RECOG, calculate_multi_camera_viewshed
+
+    cam8 = CameraConfig(name="8MP", sensor_name='1/1.8"', resolution_name="8 MP (4K - 3840x2160)",
+                        focal_min_mm=5.0, focal_max_mm=50.0)
+    terr = generate_procedural_terrain("rolling_hills", grid_size=300, cell_size_m=2.0)
+    fence = [(150.0, 150.0), (450.0, 150.0), (450.0, 450.0), (150.0, 450.0)]
+    plan = generate_perimeter_plan(terr, fence, cam8, target_ppm=62.5, lens_mode="min")
+    cov = compute_coverage_grid(plan, cam8, cell_m=2.0, terrain=terr)
+    mv = calculate_multi_camera_viewshed(terr, plan_placements(plan, cam8))
+    ys, xs = np.mgrid[0:terr.rows, 0:terr.cols]
+    band = _fence_band_mask(xs * 2.0, ys * 2.0, plan.fence_points, 40.0)
+    assert cov.analysed_cells == int(band.sum())                 # whole band, no clipping
+    ppm = np.where(mv.visibility_mask, mv.ppm_grid, 0.0)
+    for level, thr in (("detect", PPM_DETECT), ("recog", PPM_RECOG)):
+        engine = 100.0 * np.count_nonzero(band & (ppm >= thr)) / band.sum()
+        assert cov.pct_by_level[level] == pytest.approx(engine, abs=1.5), level
+
+
+def test_coverage_grid_keeps_terrain_occlusion_for_many_cameras(cam):
+    terr = generate_procedural_terrain("ridge_and_valley", grid_size=200, cell_size_m=10.0)
+    plan = generate_perimeter_plan(terr, [(500.0, 500.0), (1500.0, 500.0), (1500.0, 1500.0), (500.0, 1500.0)],
+                                   cam, target_ppm=250.0)
+    assert len(plan.placed_cameras) > 250
+    assert compute_coverage_grid(plan, cam, terrain=terr).occlusion_applied

@@ -567,9 +567,10 @@ Modu" satırı.
 
 - Klasik `main_window` DORI tablosu hâlâ berrak hava (bilinçli — DORI berrak-hava
   standardı; atmosfer 3B/harita/tezgâh pencerelerinde). `k` orada var.
-- Occlusion ışın örneklemesi artık ≤0.5 hücre adım (viewshed) / ≤1 hücre
-  (`compute_coverage_grid`, `n_samp` tavanı 90); DDA değil, çok ince çapraz
-  sırtlar teorik olarak hâlâ kaçabilir. Otorite tekil `calculate_3d_viewshed`.
+- Occlusion ışın örneklemesi artık ≤0.5 hücre adım (viewshed, bilinear
+  yükseklik) / ≤1 hücre (`compute_coverage_grid`, `n_samp` tavanı 90, >40
+  kamerada seyreltilir); DDA değil, çok ince çapraz sırtlar teorik olarak hâlâ
+  kaçabilir. Otorite tekil `calculate_3d_viewshed`.
 - `load_geotiff_or_dem` yerel GeoTIFF için `origin`'i 0,0 yapar (gerçek dünya
   koordinatını atar) — indirilen DEM'lerle tutarlı ama gerçek jeoreferans
   gerekirse dönüştürülmeli.
@@ -629,10 +630,19 @@ Overlay `_draw_multi_overlay_arr` → `_render_map_canvas` 2b bloğunda komposit
 - **Perf.** `calculate_multi_camera_viewshed` her kamera için `calculate_3d_
   viewshed(with_profile=False)` (kesit atlanır) — ~3 ms/kamera; 200 kamera
   ~0,7 sn. Arazi grid hazırlığı hâlâ kamera başına tekrar ediyor.
-- **İki çok-kamera motoru hâlâ ayrı.** `compute_coverage_grid` (çit bandı,
-  kendi grid'i) ve `calculate_multi_camera_viewshed` (tam arazi). Ortak
-  DORI/LOS ilkelini paylaşmıyorlar — çit bandı yüzdeleri için
-  `compute_coverage_grid` kalıyor.
+- **İki çok-kamera motoru ayrı ama ölçülerek uyumlu.** `compute_coverage_grid`
+  (çit bandı, kendi ince grid'i, 4 m) ve `calculate_multi_camera_viewshed`
+  (arazi grid'i). Isı haritasını motora bağlamak **denendi ve reddedildi**:
+  düz zeminde ikisi hücre küçüldükçe aynı alana yakınsıyor (0,5 m'de 328 m²),
+  fark ayrıklaştırma — motor 10 m arazi hücresinde 20 m'lik konileri kaba
+  sayıyor; bağlamak ısı haritasını 2,5× kabalaştırıp ~50× yavaşlatırdı. Gerçek
+  ayrışma iki hatadan geliyordu, ikisi de düzeltildi: motorun basamak
+  artefaktı (yukarıda) ve ısı haritası kutusunun koruma bandını kesmesi
+  (25 m kenar < 40 m bant → paydanın beşte biri düşüyor, Algılama %52,8 vs
+  %41,8). Artık kenar ≥ bant + hücre; `test_coverage_grid_matches_the_viewshed_
+  engine_on_hills` iki motoru aynı bantta ±1,5 puanda tutar. Isı haritası
+  arazi engelini artık her kamera sayısında uygular (eskiden >250 kamerada
+  sessizce düşüyordu; 970 kamerada ~0,45 sn).
 - **Placement doğrulama** var: `viewshed_3d.placement_bounds_warnings` arazi
   sınırı dışı yerleşimi uyarır (GUI dialog + CLI stderr). `terrain.grid` proje
   şemasında (prosedürel çözünürlük). Başsız `geotiff` yolu hâlâ test edilmedi.
@@ -722,6 +732,19 @@ değerin altına indirir, `effective_max_range` bununla kapanır. İkisi de art�
 `np.logical_and.accumulate` durdurur; hücreye scatter ray-major sırada
 (son yazan kazanır — eski döngüyle aynı). PPM/slant `math.hypot` → `np.hypot`
 yüzünden ~1 ULP oynar.
+
+**Işın yüksekliği bilinear.** `march_rays` örnek noktasının yüksekliğini
+`z_grid`'den **bilinear** okur (düğüm kuralı, `get_elevation_at` ile aynı);
+hücre ataması (`rr/cc`) değişmedi. En yakın hücre okuması her yamacı basamağa
+çeviriyordu: kameradan uzaklaşan inişte her basamağın uzak ucu bir sonrakinin
+başını örtüyor, kusursuz %8 düzlemsel yamacın %18–45'i "arazi engeli"
+çıkıyordu (düzlem üstünden bakana kendini asla örtmez). Analitik referans:
+`test_planar_down_slope_never_hides_itself` (2/5/10 m, %5–15). Bu düzeltme
+tekil/birleşik viewshed, direk haritası, PTZ tarama ve tespit→teşhis
+sonuçlarının hepsini yukarı çekti (2×2 km tepelik arazi, yalnız-PTZ
+algılama: T5 268,7 → 299,7 ha). Maliyet: tekil viewshed ~6,7 → 8,5 ms, 1,5 km
+direk haritası 55 → 110 ms (bilinear 4 toplama; float32 yalnız %13 kazandırdı,
+hassasiyet için float64).
 
 **Dikey FOV grid'de uygulanır.** `tilt_deg` eskiden yalnız kesit profilini
 etkiliyordu; grid "araziyi görüyor mu + yatay FOV + piksel" hesaplıyordu, dik
