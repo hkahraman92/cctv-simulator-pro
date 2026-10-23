@@ -27,6 +27,11 @@ def _build_terrain(project):
     from .terrain_loader import generate_procedural_terrain, load_geotiff_or_dem
     if project.terrain_source == "geotiff" and project.terrain_file:
         return load_geotiff_or_dem(project.terrain_file)
+    if project.terrain_source == "region" and project.terrain_region_id:
+        # A saved region (downloaded DEM) -- the exact grid the GUI used.
+        # Missing on this machine is an error, not a silent procedural stand-in.
+        from .region_library import load_region
+        return load_region(project.terrain_region_id)[0]
     grid = max(int(project.terrain_grid or 200), 32)
     return generate_procedural_terrain(
         project.terrain_preset, grid_size=grid,

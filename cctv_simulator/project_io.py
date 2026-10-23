@@ -29,9 +29,10 @@ class ProjectData:
     project_name: str = ""
     # Optional terrain block for the headless viewshed (--viewshed). Cameras use
     # their own pos_x_m / pos_y_m / heading_deg / tilt_deg / pole_height_m.
-    terrain_source: str = "procedural"        # procedural | geotiff
+    terrain_source: str = "procedural"        # procedural | geotiff | region
     terrain_preset: str = "ridge_and_valley"
     terrain_file: str = ""
+    terrain_region_id: str = ""               # region_library id when source == "region"
     terrain_width_m: float = 2000.0
     terrain_grid: int = 200            # procedural grid resolution (cells per side)
     viewshed_range_m: float = 1500.0
@@ -75,6 +76,7 @@ def load_project(path: str | Path) -> ProjectData:
         terrain_source=str(terr.get("source", "procedural")),
         terrain_preset=str(terr.get("preset", "ridge_and_valley")),
         terrain_file=str(terr.get("file", "")),
+        terrain_region_id=str(terr.get("region_id", "") or ""),
         terrain_width_m=float(terr.get("width_m", 2000.0)),
         terrain_grid=int(terr.get("grid", 200)),
         viewshed_range_m=float(terr.get("viewshed_range_m", 1500.0)),
@@ -100,6 +102,7 @@ def save_project(path: str | Path, project: ProjectData) -> None:
             "source": project.terrain_source,
             "preset": project.terrain_preset,
             "file": project.terrain_file,
+            "region_id": project.terrain_region_id,
             "width_m": project.terrain_width_m,
             "grid": project.terrain_grid,
             "viewshed_range_m": project.viewshed_range_m,
