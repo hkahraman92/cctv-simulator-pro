@@ -1,3 +1,53 @@
+## -26. Kayıtlı bölgeler: indirilen haritayı yerelde tut, indirmeden aç — ✅ (2026-10-14)
+
+İstek: 3B görüş alanında indirilen bölgeleri kaydedip her seferinde yeniden
+indirmemek. Önceden diskte yalnız tek tek karolar vardı (mozaik her seferinde
+yeniden kuruluyor, yükselti API yedeği hiç önbelleklenmiyordu, koordinat
+yeniden giriliyordu) ve **proje dosyası indirilen araziyi hiç geri
+yüklemiyordu** — çit noktaları olmayan bir haritaya işaret ediyordu.
+
+Yeni `cctv_simulator/region_library.py` (Tk'siz): `save_region` /
+`list_regions` / `load_region` / `delete_region` / `find_region`.
+Bölge = `region.json` + `dem.npz` (z_grid bit-aynı) + ortofoto (Esri JPEG q92,
+harita kaynakları PNG). Geçici dizin + yeniden adlandırma ile atomik; bozuk /
+yarım kayıt listelenmez; kimlik yol geçişine karşı doğrulanır.
+
+Arayüz (`map_3d_window`):
+- İndiricide "3. Çevrimdışı Kayıt": kutu varsayılan açık, kayıt adı seçili
+  hazır bölgeyi / koordinatı izler (elle yazılırsa dokunmaz). Kayıt worker
+  thread'de; başarı mesajında "Kaydedildi: … (MB)" ya da hata.
+- Aynı konum + boyut + kaynak zaten kayıtlıysa uyarı + "📂 Kayıtlı Olanı
+  İndirmeden Aç".
+- Uydu katmanı grubunda "📂 Kayıtlı Bölgeler": tablo (ad, merkez, kapsam,
+  kaynak, ölçülmüş/TEMSİLİ, tarih, disk) + Aç / Sil (onaylı) / Mevcut Haritayı
+  Kaydet (yerel GeoTIFF dahil herhangi bir arazi) / çift tıkla aç.
+- İndirme ve bölge açma tek yol: `_apply_area`.
+- Proje: `terrain.source = "region"`, `region_id`; açarken bölge çitten önce
+  yüklenir, yoksa uyarı. `project_io` + başsız CLI `region` kaynağını tanır
+  (yoksa `FileNotFoundError`, prosedürel yedeğe düşmez).
+
+Yol üstünde düzeltilenler: (1) önayar değişince `_loaded_terrain_file`
+sıfırlanmıyordu — yerel GeoTIFF'ten sonra prosedürel araziye geçen proje hâlâ
+"geotiff" kaydediliyordu; (2) indirici `maximize=False` geçmiyordu (diğer
+bütün iletişim kutuları geçiyor): 4K ekranda 3840 px tam ekran açılıyordu;
+(3) `theme.fit_and_center_window(scale_to_dpi=True)` + `dpi_scale`: ham
+piksel boyutlu Tk penceresi %200'de kendi düğmesini kırpıyordu (iki yeni /
+düzeltilen iletişim kutusunda kullanılıyor; diğer çağıranlar değişmedi).
+Bölge tablosunun sütunları yazının ölçüsünden (Kural 8).
+
+Doğrulama: `tests/test_region_library.py` (8 test). Gerçek pencere sürüşü
+(sahte uydu/DEM, APPDATA geçici dizin — kullanıcının bölge klasörüne
+dokunulmadı): indir → kaydedildi; aynı bölge → "zaten kayıtlı" + indirmeden
+açıldı (indirme sayacı değişmedi); listele / mevcut haritayı kaydet / sil /
+aç; proje roundtrip bölge + 3 çit noktası + görüntü geri geldi; eksik bölge
+uyarısı. Ekran görüntüleri %200 ölçekte bakıldı (indirici, bölge listesi).
+ruff + tam pytest yeşil.
+
+Kalan: bölge kütüphanesinde toplam boyut sınırı / otomatik temizlik yok
+(pencere toplam MB'yi gösteriyor). Yeniden adlandırma yok (sil + kaydet).
+Bölgeler başka bilgisayara taşınmıyor (dışa/içe aktarma yok); proje başka
+makinede açılınca bölge eksik uyarısı çıkar.
+
 ## -25. Görüş alanı motoru hızlandırma (bit-aynı) — ✅ (2026-10-13)
 
 Profil (51 termal T5, 2×2 km): süre %81 direk haritalarında (`compute_mount_

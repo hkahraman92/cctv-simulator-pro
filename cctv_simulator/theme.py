@@ -56,14 +56,30 @@ except Exception:
         pass
 
 
+def dpi_scale(widget) -> float:
+    """Display scale of a plain Tk window (1.0 at 96 DPI, 2.0 at 200 %)."""
+    try:
+        return max(1.0, float(widget.winfo_fpixels("1i")) / 96.0)
+    except tk.TclError:
+        return 1.0
+
+
 def fit_and_center_window(window: tk.Tk, default_w: int = 1400, default_h: int = 860,
-                           min_w: int = 850, min_h: int = 550, maximize: bool = True):
+                           min_w: int = 850, min_h: int = 550, maximize: bool = True,
+                           scale_to_dpi: bool = False):
     """Dynamically sizes and centers a window based on the user's screen resolution.
 
     On Windows, if ``maximize`` is True the window starts maximized so the user
     gets maximum usable area regardless of monitor size.  A sensible restored-
     size is still set so that un-maximizing produces a good result.
+    ``scale_to_dpi`` reads the sizes as layout units and multiplies them by
+    the display scale: a plain Tk window takes raw pixels while its text is
+    drawn at the scale, so a 620 px form at 200 % clipped its own buttons.
     """
+    if scale_to_dpi:
+        f = dpi_scale(window)
+        default_w, default_h = int(default_w * f), int(default_h * f)
+        min_w, min_h = int(min_w * f), int(min_h * f)
     screen_w = window.winfo_screenwidth()
     screen_h = window.winfo_screenheight()
 

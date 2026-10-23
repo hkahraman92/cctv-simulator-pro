@@ -25,6 +25,7 @@ cctv_dual_view_simulator.py          giriş noktası
   viewshed_3d.py                     vektörel ışın yürütme, dünya eğriliği, atmosfer
   perimeter_planner.py               çevre çiti kamera dizilimi, BOM
   online_map_loader.py               karo indirme, ortofoto mozaik, GERÇEK DEM
+  region_library.py                  kayıtlı bölgeler: DEM + ortofoto diskte, çevrimdışı aç
   compliance.py                      Gemini/Ollama + kural tabanlı şartname analizi
   compliance_optics.py               şartname DORI/menzil isteri → optik motorla doğrula
   compliance_standards.py            EN 62676-4 madde/DORI bilgi tabanı + belirsizlik tarama
@@ -163,6 +164,25 @@ katman NaN'a karşı savunma yapmak zorunda değil.
 aykırı ve IP bloklatır), OSM/OpenTopo için `max_workers=2`, disk önbelleği
 (`%APPDATA%\<uygulama>\tile-cache`), `MAX_TILES=400` bütçesi, kaynağa göre atıf.
 Esri uç noktası `{z}/{y}/{x}`; OSM ve OpenTopoMap `{z}/{x}/{y}` — karıştırma.
+
+**Kayıtlı bölgeler (`region_library.py`).** Karo önbelleği yalnız tek tek
+karoları tutar (mozaik yeniden kurulur, yükselti API yedeği hiç önbelleklenmez);
+bölge **bitmiş ürünü** saklar: `user_data_dir()/regions/<id>/` → `region.json`
+(ad, merkez, kapsam, kaynak, zoom, `is_measured`, istenen lat/lon/genişlik
+`extra`'da), `dem.npz` (z_grid **bit-aynı** + hücre + orijin), `ortho.jpg`
+(Esri fotoğrafı) / `ortho.png` (OSM/topo: yazı, kayıpsız). Yazım geçici
+`.tmp-<id>` dizinine, sonra yeniden adlandırma — yarım kayıt listelenmez.
+`region_id` yol bileşeni olduğu için `^[a-z0-9-]+$` ile doğrulanır (`..`,
+ayraç, sürücü harfi geçemez). İndirici "3. Çevrimdışı Kayıt" grubu (varsayılan
+açık, kayıt adı konumu izler) bölgeyi worker thread'de kaydeder — kayıt hatası
+indirmeyi düşürmez, sonuçta yazılır; aynı istek (`find_region`: merkez ≤25 m,
+genişlik, kaynak) zaten kayıtlıysa "Kayıtlı Olanı İndirmeden Aç". "📂 Kayıtlı
+Bölgeler" penceresi: listele / aç / sil / mevcut haritayı kaydet. İndirme ve
+kayıtlı bölge **aynı** `_apply_area` yolundan uygulanır. Proje dosyası
+`terrain.source = "region"` + `region_id` yazar; GUI açarken bölgeyi çit
+noktalarından **önce** yükler (yoksa uyarır), başsız CLI `load_region` ile
+aynı grid'i kurar (yoksa hata — sessiz prosedürel yedek yok). Ölçülmemiş
+yükseltili bölge açılırken de `showwarning`.
 
 **Kırpma global Mercator piksel uzayında.** Enlemde doğrusal interpolasyon yanlış;
 Mercator Y = `asinh(tan(lat))`.
@@ -365,6 +385,10 @@ sayısıyla ağırlıklı, DORI metrikleri yalnız parse edilenler üzerinden). 
   takılma, sarım yönünden bağımsız dışa bakış, sınır modunda izlenen taraf,
   tele teşhis erişimi, `patrol_for`, planın odağıyla yerleşim, uçtan uca karma
   değerlendirme (tespit→teşhis = en hızlı PTZ).
+- `test_region_library.py` — kayıtlı bölge roundtrip (z_grid bit-aynı, Türkçe
+  ad, PNG kayıpsız / Esri JPEG), ölçülmemiş bayrağı korunur, yarım/bozuk kayıt
+  atlanır, yol geçişi koruması, aynı ad iki kimlik, `find_region` isteğe göre,
+  proje + başsız CLI bölgeyi açar (yoksa hata).
 - `test_database.py` — `is_ptz_camera` (yerleşik ASELSAN UMA T5/Fix, görünür
   bant "Genel … PTZ" modelleri, anahtar kelime, açık `is_ptz` alanı önceliği).
 - `test_i18n.py` — Türkçe kimlik, İngilizce çeviri + geri düşüş, `{}` biçim,

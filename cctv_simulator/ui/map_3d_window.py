@@ -218,6 +218,9 @@ class TerrainViewshedWindow:
         # through the project file's terrain.source/file -- see
         # export_terrain_state / import_terrain_state).
         self._loaded_terrain_file: str = ""
+        # Saved region (region_library) the current terrain came from, if any:
+        # written to the project file so the area reopens with it.
+        self._region_id: str = ""
 
         # Single Camera Variables
         self.cam_x_var = tk.DoubleVar(value=self.terrain.width_m * 0.5)
@@ -397,7 +400,9 @@ class TerrainViewshedWindow:
             }
 
         return {
-            "source": "geotiff" if self._loaded_terrain_file else "procedural",
+            "source": ("region" if self._region_id
+                       else "geotiff" if self._loaded_terrain_file else "procedural"),
+            "region_id": self._region_id,
             "preset": self.terrain_preset_var.get(),
             "file": self._loaded_terrain_file,
             "width_m": self.terrain.width_m,
@@ -431,6 +436,19 @@ class TerrainViewshedWindow:
         window with sane defaults rather than block it.
         """
         try:
+            # The saved area first: applying it clears the fence, which the
+            # fence_points restore below then refills.
+            region_id = str(state.get("region_id", "") or "")
+            if state.get("source") == "region" and region_id:
+                from ..region_library import list_regions
+                if any(r.region_id == region_id for r in list_regions()):
+                    self._open_region(region_id, quiet=True)
+                else:
+                    messagebox.showwarning(
+                        "Kayıtlı bölge bulunamadı",
+                        f"Proje '{region_id}' kayıtlı bölgesini kullanıyor ama bu bilgisayarda yok.\n"
+                        "Bölgeyi yeniden indirip kaydedin; çit noktaları yine de yüklenecek.",
+                        parent=self.window)
             preset = state.get("preset")
             if preset:
                 self.terrain_preset_var.set(str(preset))
@@ -674,6 +692,7 @@ class TerrainViewshedWindow:
         ttk.Radiobutton(frame_mode, text="⛰️ Yükselti", variable=self.map_layer_mode_var, value="elevation", command=self.schedule_recalculate).pack(side=tk.LEFT)
 
         StyledButton(grp_layer, text="🌐 Çevrimiçi Uydu İndir (Koordinat/Bölge)", command=self._open_online_map_downloader_dialog, bootstyle="success").pack(fill=tk.X, pady=(4, 2))
+        StyledButton(grp_layer, text="📂 Kayıtlı Bölgeler (indirmeden aç / kaydet)", command=self._open_saved_regions_dialog, bootstyle="warning-outline").pack(fill=tk.X, pady=(0, 2))
         StyledButton(grp_layer, text="📁 Yerel Uydu / Ortofoto Yükle (.png/.jpg/.tif)", command=self._load_local_satellite, bootstyle="info-outline").pack(fill=tk.X, pady=(0, 2))
 
         frame_cache = ttk.Frame(grp_layer)
@@ -1547,11 +1566,206 @@ class TerrainViewshedWindow:
         self.lbl_op_val.configure(text=f"%{self.satellite_opacity_var.get():.0f}")
         self.schedule_recalculate(30)
 
+    # ── AREA SWAP + SAVED REGIONS (region_library) ──
+    def _apply_area(self, terr, img, label: str, region_id: str = "") -> None:
+        """Make ``terr`` (+ orthophoto) the working area -- one path for a
+        fresh download and a saved region, so they can never diverge."""
+        self.user_satellite_img = img.convert("RGBA") if img is not None else None
+        self.terrain = terr
+        self._loaded_terrain_file = ""
+        self._region_id = region_id
+        self.terrain_width_input_var.set(f"{terr.width_m:.0f}")
+        self.view_center_x = terr.width_m * 0.5
+        self.view_center_y = terr.height_m * 0.5
+        self.cam_x_var.set(terr.width_m * 0.5)
+        self.cam_y_var.set(terr.height_m * 0.5)
+        if img is not None:
+            self.map_layer_mode_var.set("hybrid")
+        self.satellite_path_var.set(label)
+        self._sync_active_camera()
+        # BUGFIX (kept): a new area used to get a fresh centred demo fence,
+        # silently discarding one the user drew. A new extent makes old
+        # points meaningless either way, so just clear.
+        self.fence_points = []
+        self.perimeter_plan = None
+        if self.planner_mode_var.get() == "perimeter":
+            self.distribute_perimeter_cameras()
+        else:
+            self.recalculate_viewshed()
+
+    def _open_region(self, region_id: str, parent=None, quiet: bool = False) -> bool:
+        """Load a saved region into the window. False (after telling the user)
+        if it is missing or unreadable."""
+        from ..region_library import load_region
+        parent = parent or self.window
+        try:
+            self.window.config(cursor="watch")
+            self.window.update_idletasks()
+            terr, img, info = load_region(region_id)
+        except Exception as exc:
+            messagebox.showerror("Kayıtlı Bölge", f"Bölge açılamadı:\n{exc}", parent=parent)
+            return False
+        finally:
+            self.window.config(cursor="")
+        size = f" · {info.image_size[0]}x{info.image_size[1]}px" if info.image_file else ""
+        self._apply_area(terr, img, f"💾 {info.name} ({info.width_m / 1000:.1f} km{size})",
+                         region_id=info.region_id)
+        if not terr.is_measured:
+            # Never let synthetic relief pass as a measurement (also offline).
+            messagebox.showwarning(
+                "Kayıtlı bölge — yükselti TEMSİLİ",
+                f"'{info.name}' açıldı, ancak yükselti verisi ölçülmüş DEM değil.\n"
+                "Görüş alanı (viewshed) sonuçları BAĞLAYICI DEĞİLDİR.\n\n" + (info.source_note or ""),
+                parent=parent)
+        elif not quiet:
+            self.satellite_path_var.set(self.satellite_path_var.get() + " · çevrimdışı açıldı")
+        return True
+
+    def _save_current_region(self, parent=None) -> None:
+        from tkinter import simpledialog
+
+        from ..region_library import save_region
+        parent = parent or self.window
+        name = simpledialog.askstring("Bölgeyi Kaydet", "Kayıt adı:", initialvalue=self.terrain.name,
+                                      parent=parent)
+        if not name:
+            return
+        try:
+            self.window.config(cursor="watch")
+            self.window.update_idletasks()
+            info = save_region(name, self.terrain, self.user_satellite_img,
+                               source="local" if self._loaded_terrain_file else "",
+                               extra={"origin_file": self._loaded_terrain_file})
+        except Exception as exc:
+            messagebox.showerror("Bölgeyi Kaydet", f"Kaydedilemedi:\n{exc}", parent=parent)
+            return
+        finally:
+            self.window.config(cursor="")
+        self._region_id = info.region_id
+        messagebox.showinfo("Bölgeyi Kaydet",
+                            f"'{info.name}' kaydedildi ({info.size_bytes / 1e6:.1f} MB).", parent=parent)
+
+    def _open_saved_regions_dialog(self):
+        from ..region_library import delete_region, list_regions, regions_dir
+        dlg = tk.Toplevel(self.window)
+        dlg.title("📂 Kayıtlı Bölgeler")
+        fit_and_center_window(dlg, default_w=900, default_h=460, min_w=620, min_h=320, maximize=False,
+                              scale_to_dpi=True)
+        dlg.transient(self.window)
+        dlg.grab_set()
+
+        bar = ttk.Frame(dlg, padding=(12, 8))
+        bar.pack(side=tk.BOTTOM, fill=tk.X)
+        info_lbl = wrap_label(ttk.Label(dlg, text="", foreground=TEXT_MUTED, font=("Segoe UI", 8),
+                                        padding=(12, 4)))
+        info_lbl.pack(side=tk.BOTTOM, fill=tk.X)
+
+        cols = ("name", "centre", "size", "source", "dem", "created", "disk")
+        heads = {"name": "Ad", "centre": "Merkez (enlem, boylam)", "size": "Kapsam", "source": "Kaynak",
+                 "dem": "Yükselti", "created": "Kaydedildi", "disk": "Disk"}
+        body = ttk.Frame(dlg, padding=(12, 10, 12, 0))
+        body.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        tree = ttk.Treeview(body, columns=cols, show="headings", selectmode="browse")
+        for c in cols:
+            tree.heading(c, text=heads[c])
+            tree.column(c, minwidth=40, stretch=(c == "name"))
+
+        def _fit_columns():
+            # Kural 8: widths from the rendered text (fixed pixel widths were
+            # clipped at 200 % DPI: "Merkez (enlem, bo…").
+            import tkinter.font as tkfont
+            style = ttk.Style(tree)
+
+            def _font(style_name, fallback):
+                spec = style.lookup(style_name, "font") or fallback
+                try:
+                    return tkfont.Font(root=tree, font=spec)
+                except tk.TclError:
+                    return tkfont.nametofont(fallback)
+
+            body_f = _font("Treeview", "TkDefaultFont")
+            head_f = _font("Treeview.Heading", "TkHeadingFont")
+            for c in cols:
+                vals = [str(tree.set(i, c)) for i in tree.get_children()]
+                need = max([head_f.measure(heads[c])] + [body_f.measure(v) for v in vals])
+                tree.column(c, width=need + body_f.measure("  ") * 2)
+        ysb = ttk.Scrollbar(body, orient="vertical", command=tree.yview)
+        xsb = ttk.Scrollbar(body, orient="horizontal", command=tree.xview)
+        tree.configure(yscrollcommand=ysb.set, xscrollcommand=xsb.set)
+        tree.grid(row=0, column=0, sticky="nsew")
+        ysb.grid(row=0, column=1, sticky="ns")
+        xsb.grid(row=1, column=0, sticky="ew")
+        body.rowconfigure(0, weight=1)
+        body.columnconfigure(0, weight=1)
+
+        def _refresh():
+            tree.delete(*tree.get_children())
+            regions = list_regions()
+            for r in regions:
+                centre = (f"{r.lat_center:.4f}, {r.lon_center:.4f}"
+                          if r.lat_center is not None and r.lon_center is not None else "—")
+                tree.insert("", "end", iid=r.region_id, values=(
+                    r.name, centre, f"{r.width_m / 1000:.1f} km", r.source or "—",
+                    "ölçülmüş DEM" if r.is_measured else "TEMSİLİ",
+                    r.created.replace("T", " ")[:16], f"{r.size_bytes / 1e6:.1f} MB"))
+            _fit_columns()
+            total = sum(r.size_bytes for r in regions)
+            info_lbl.configure(text=f"{len(regions)} bölge · {total / 1e6:.1f} MB · {regions_dir()}")
+            if self._region_id and tree.exists(self._region_id):
+                tree.selection_set(self._region_id)
+                tree.see(self._region_id)
+
+        def _selected():
+            sel = tree.selection()
+            if not sel:
+                messagebox.showinfo("Kayıtlı Bölgeler", "Önce listeden bir bölge seçin.", parent=dlg)
+                return None
+            return sel[0]
+
+        def _open():
+            rid = _selected()
+            if rid and self._open_region(rid, parent=dlg):
+                dlg.destroy()
+
+        def _delete():
+            rid = _selected()
+            if not rid:
+                return
+            name = tree.set(rid, "name")
+            if not messagebox.askyesno("Bölgeyi Sil", f"'{name}' diskten silinsin mi?\nBu işlem geri alınamaz.",
+                                       parent=dlg):
+                return
+            try:
+                delete_region(rid)
+            except Exception as exc:
+                messagebox.showerror("Bölgeyi Sil", f"Silinemedi:\n{exc}", parent=dlg)
+                return
+            if rid == self._region_id:
+                self._region_id = ""
+            _refresh()
+
+        def _save_current():
+            self._save_current_region(parent=dlg)
+            _refresh()
+
+        tree.bind("<Double-1>", lambda _e: _open())
+        flow_layout(bar, [
+            StyledButton(bar, text="📂 Aç", command=_open, bootstyle="success"),
+            StyledButton(bar, text="🗑️ Sil", command=_delete, bootstyle="danger-outline"),
+            StyledButton(bar, text="💾 Mevcut Haritayı Kaydet", command=_save_current, bootstyle="info-outline"),
+            StyledButton(bar, text="Kapat", command=dlg.destroy, bootstyle="secondary-outline"),
+        ], padx=4)
+        _refresh()
+
     # ── ONLINE SATELLITE & DEM DOWNLOADER DIALOG ──
     def _open_online_map_downloader_dialog(self):
         dlg = tk.Toplevel(self.window)
         dlg.title("🌐 Çevrimiçi HD Uydu Haritası & Yükselti İndirici")
-        fit_and_center_window(dlg, default_w=620, default_h=710, min_w=540, min_h=620)
+        # BUGFIX: maximize=False like every other dialog -- the default
+        # maximized this small form to the whole screen (on 4K a 3840 px
+        # window with the form in its top-left corner).
+        fit_and_center_window(dlg, default_w=620, default_h=760, min_w=540, min_h=560, maximize=False,
+                              scale_to_dpi=True)
         dlg.transient(self.window)
         dlg.grab_set()
 
@@ -1590,9 +1804,10 @@ class TerrainViewshedWindow:
         btn_download = StyledButton(btn_row, text="⬇️ HD UYDU VE YÜKSELTİ VERİSİNİ İNDİR & UYGULA", bootstyle="success")
         btn_download.pack(side=tk.RIGHT, fill=tk.X, expand=True)
 
-        # 2. CONTENT BODY
-        frm = ttk.Frame(dlg, padding=(16, 12, 16, 6))
-        frm.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        # 2. CONTENT BODY -- scrollable (Kural 8): with the offline-save
+        # group the form no longer fits the default height on small screens.
+        body_outer, frm = make_scrollable(dlg, padding=(16, 12, 16, 6))
+        body_outer.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         ttk.Label(frm, text="🌐 Çevrimiçi HD Uydu & Sayısal Yükselti İndirici", font=("Segoe UI", 12, "bold"), foreground=TEXT_WHITE).pack(anchor="w", pady=(0, 4))
         ttk.Label(frm, text="Esri World Imagery ve OpenStreetMap üzerinden yüksek çözünürlüklü gerçek uydu ortofotosunu ve 3D arazi modelini doğrudan indirin.", wraplength=570).pack(anchor="w", pady=(0, 10))
@@ -1684,6 +1899,59 @@ class TerrainViewshedWindow:
             _var.trace_add("write", _refresh_quality_info)
         _refresh_quality_info()
 
+        # 3. Offline copy: keep the finished area so it reopens without a download.
+        grp_save = ttk.LabelFrame(frm, text="3. Çevrimdışı Kayıt", padding=10)
+        grp_save.pack(fill=tk.X, pady=(6, 0))
+        save_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(grp_save, text="💾 İndirilen bölgeyi bu bilgisayara kaydet (sonra indirmeden aç)",
+                        variable=save_var).pack(anchor="w")
+        row_name = ttk.Frame(grp_save)
+        row_name.pack(fill=tk.X, pady=(4, 0))
+        ttk.Label(row_name, text="Kayıt adı:").pack(side=tk.LEFT)
+        save_name_var = tk.StringVar(value=preset_var.get())
+        ttk.Entry(row_name, textvariable=save_name_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
+        existing_lbl = wrap_label(ttk.Label(grp_save, text="", foreground=ACCENT_AMBER,
+                                            font=("Segoe UI", 9)))
+        btn_open_saved = StyledButton(grp_save, text="📂 Kayıtlı Olanı İndirmeden Aç",
+                                      bootstyle="warning-outline")
+        match_state = {"region": None}
+        name_state = {"auto": save_name_var.get()}
+
+        def _refresh_saved_match(*_args):
+            # Follow the location unless the user typed their own name.
+            if save_name_var.get() == name_state["auto"]:
+                p = preset_var.get()
+                auto = p if p in PRESET_LOCATIONS else f"Bölge {lat_var.get()}, {lon_var.get()}"
+                name_state["auto"] = auto
+                save_name_var.set(auto)
+            try:
+                from ..region_library import find_region
+                hit = find_region(float(lat_var.get().replace(",", ".")),
+                                  float(lon_var.get().replace(",", ".")),
+                                  float(dim_var.get()), src_var.get())
+            except (ValueError, OSError, tk.TclError):
+                hit = None
+            match_state["region"] = hit
+            if hit is None:
+                existing_lbl.pack_forget()
+                btn_open_saved.pack_forget()
+                return
+            existing_lbl.configure(
+                text=f"Bu bölge zaten kayıtlı: '{hit.name}' ({hit.created.replace('T', ' ')}). "
+                     "Yeniden indirmeniz gerekmez.")
+            existing_lbl.pack(fill=tk.X, pady=(6, 2))
+            btn_open_saved.pack(fill=tk.X)
+
+        def _open_saved_match():
+            hit = match_state["region"]
+            if hit is not None and self._open_region(hit.region_id, parent=dlg):
+                _close_dialog()
+
+        btn_open_saved.configure(command=_open_saved_match)
+        for _var in (dim_var, src_var, lat_var, lon_var, preset_var):
+            _var.trace_add("write", _refresh_saved_match)
+        _refresh_saved_match()
+
         def _post(fn):
             """Hand a callback to the Tk main loop, aborting if the dialog is gone."""
             if dl_state["cancelled"]:
@@ -1706,6 +1974,8 @@ class TerrainViewshedWindow:
                 w_m = float(dim_var.get())
                 source = src_var.get()
                 quality = qual_var.get()
+                want_save = bool(save_var.get())
+                save_name = save_name_var.get().strip() or preset_var.get()
             except ValueError:
                 messagebox.showerror("Hata", "Lütfen geçerli sayısal koordinatlar girin.", parent=dlg)
                 return
@@ -1747,6 +2017,22 @@ class TerrainViewshedWindow:
                         height_m=w_m,
                         progress_callback=_on_dem_progress,
                     )
+                    # Keep the finished area on disk (worker thread: encoding
+                    # a large mosaic takes a moment; no Tk here). A failed
+                    # save never fails the download -- it is reported.
+                    saved, save_err = None, ""
+                    if want_save:
+                        _post(lambda: status_lbl.configure(text="💾 Bölge diske kaydediliyor..."))
+                        try:
+                            from ..region_library import save_region
+                            saved = save_region(
+                                save_name, terr, sat_img, source=source, quality=quality,
+                                zoom=meta.get("zoom"), m_per_px=meta.get("m_per_px"),
+                                attribution=str(meta.get("attribution", "")),
+                                extra={"request_lat": clat, "request_lon": clon,
+                                       "request_width_m": w_m})
+                        except Exception as save_exc:
+                            save_err = str(save_exc) or type(save_exc).__name__
                 except _DownloadCancelled:
                     return                       # dialog closed; nobody to report to
                 except Exception as exc:
@@ -1766,34 +2052,22 @@ class TerrainViewshedWindow:
 
                 def _on_success():
                     dl_state["running"] = False
-                    self.user_satellite_img = sat_img.convert("RGBA")
-                    self.terrain = terr
-                    self.terrain_width_input_var.set(f"{terr.width_m:.0f}")
-                    self.view_center_x = terr.width_m * 0.5
-                    self.view_center_y = terr.height_m * 0.5
-                    self.cam_x_var.set(terr.width_m * 0.5)
-                    self.cam_y_var.set(terr.height_m * 0.5)
-                    self.map_layer_mode_var.set("hybrid")
-                    self.satellite_path_var.set(
+                    self._apply_area(
+                        terr, sat_img,
                         f"{preset_var.get()} ({w_m / 1000:.1f} km · "
                         f"{sat_img.width}x{sat_img.height}px · "
-                        f"~{meta.get('m_per_px', 0.0):.2f} m/px)"
-                    )
-                    self._sync_active_camera()
-                    # BUGFIX: used to replace the fence with a fresh centered
-                    # sample on every new area -- silently discarding a
-                    # fence the user had actually drawn. A genuinely new
-                    # terrain extent makes old points meaningless either
-                    # way, so just clear instead of resurrecting a demo.
-                    self.fence_points = []
-                    self.perimeter_plan = None
+                        f"~{meta.get('m_per_px', 0.0):.2f} m/px)",
+                        region_id=saved.region_id if saved else "")
                     self._refresh_tile_cache_label()
-                    if self.planner_mode_var.get() == "perimeter":
-                        self.distribute_perimeter_cameras()
-                    else:
-                        self.recalculate_viewshed()
                     _close_dialog()
 
+                    if saved is not None:
+                        kept = (f"Kaydedildi: '{saved.name}' ({saved.size_bytes / 1e6:.1f} MB) — "
+                                "'📂 Kayıtlı Bölgeler'den indirmeden açılır.")
+                    elif save_err:
+                        kept = f"Bölge kaydedilemedi: {save_err}"
+                    else:
+                        kept = "Bölge kaydedilmedi (kutu işaretsizdi)."
                     detail = (
                         f"Bölge     : {preset_var.get()}\n"
                         f"Kapsam    : {w_m / 1000:.1f} km × {w_m / 1000:.1f} km\n"
@@ -1802,7 +2076,7 @@ class TerrainViewshedWindow:
                         f"{meta.get('tiles_ok', '?')}/{meta.get('tiles_total', '?')} kare)\n"
                         f"Yükselti  : {terr.name}\n"
                         f"Rakım     : {terr.min_elev_m:.0f} m – {terr.max_elev_m:.0f} m\n\n"
-                        f"{meta.get('attribution', '')}\n{terr.source_note}"
+                        f"{meta.get('attribution', '')}\n{terr.source_note}\n\n{kept}"
                     )
                     if terr.is_measured:
                         messagebox.showinfo("Harita ve Yükselti İndirildi", detail,
@@ -2325,6 +2599,9 @@ class TerrainViewshedWindow:
     def _on_terrain_preset_changed(self, _e=None):
         preset = self.terrain_preset_var.get()
         self.terrain = generate_procedural_terrain(preset, grid_size=200, cell_size_m=10.0)
+        # BUGFIX: a preset after a loaded GeoTIFF still saved as "geotiff".
+        self._loaded_terrain_file = ""
+        self._region_id = ""
         self.terrain_width_input_var.set(f"{self.terrain.width_m:.0f}")
         self.view_center_x = self.terrain.width_m * 0.5
         self.view_center_y = self.terrain.height_m * 0.5
@@ -2350,6 +2627,7 @@ class TerrainViewshedWindow:
         try:
             self.terrain = load_geotiff_or_dem(file_path)
             self._loaded_terrain_file = file_path
+            self._region_id = ""
             self.terrain_width_input_var.set(f"{self.terrain.width_m:.0f}")
             self.view_center_x = self.terrain.width_m * 0.5
             self.view_center_y = self.terrain.height_m * 0.5
