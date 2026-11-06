@@ -1,3 +1,31 @@
+## -28. Arayüz yeniden tasarımı, adım 3: komuta çubuğu + durum paneli — ✅ (2026-11-06)
+
+Rehberin ana ekran planı klasik pencereye uygulandı.
+
+- Üstte lacivert komuta çubuğu: ürün adı, proje adı + kayıt durumu
+  (değişiklik imzasıyla izlenir), dört pencere düğmesi, alarm sayacı,
+  Kaydet + "PDF Rapor". Eski logo/başlık satırı kaldırıldı.
+- Sağda durum paneli: seçili kamera için 2×2 gösterge (tasarım menzili, kör
+  nokta, görüş açısı, kontrol noktası), önem sıralı alarm listesi (tıklayınca
+  kamerayı seçer), sistem sağlığı (kütüphane, yazı tipi, kamera sayısı, plan,
+  arazi kaynağı). İçerik yeni Tk'siz `status_summary.py`'den.
+- Altta durum çubuğu: imleç, optik özet, son mesaj, hesap süresi.
+- Kısayollar: Ctrl+S / Ctrl+O / Ctrl+P, F5, Ctrl+1…4.
+- Bulunup düzeltilen: sol bölme genişliği DPI ile çarpılmıyordu (%150'de
+  formlar sağdan kırpılıyordu); yan kesit metre etiketleri kamera başlığının
+  üstüne biniyor, dar tuvalde birbirine yapışıyordu. IR alarmı ilk
+  denemede "1034 m" yazıyordu (termal Johnson seviyesi) — artık seviyeyi
+  adlandırıyor.
+
+Doğrulama: `tests/test_status_summary.py` (7 test); ekran görüntüsü tam
+ekran, 2600 ve 1900 px genişlikte; alarm tıklama / panel aç-kapa / kayıt
+durumu gerçek pencerede programla denendi. ruff + tam pytest yeşil.
+
+Kalan: rehberin 4. (harita cam bindirmeleri, DORI katmanı soğuk rampa) ve
+5. adımı (emoji → simge seti); harita/3B pencerelerinin sabit renkleri;
+dar pencerede sonuç tablosu sütunları kırpılıyor (eskiden de vardı);
+varsayılan DORI seviye renkleri kararı.
+
 ## -27. Arayüz yeniden tasarımı, adım 1–2: tasarım tokenları + koyu "Konsol" teması — ✅ (2026-11-06)
 
 İstek: arayüzü modern, endüstriyel, koyu mod odaklı ve kurumsal kimlikle

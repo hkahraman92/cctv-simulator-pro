@@ -42,7 +42,9 @@ cctv_dual_view_simulator.py          giriş noktası
   project_io.py                      .json proje şeması, Tk'siz load/save
   __main__.py                        başsız CLI: proje -> optik -> export/JSON
   database.py / config.py / models.py
+  status_summary.py                  durum paneli: gösterge kutuları + önem sıralı alarmlar (Tk'siz)
   ui/main_window.py                  DualViewCCTVDesignApp - klasik arayüz
+    ui/components.py                 tasarım sistemi widget'ları: KpiTile, AlarmList, StatusChip, BarButton
     ui/canvas_drawer.py              yan kesit + kuş bakışı plan
     ui/view_3d_window.py             3B kamera görüşü
     ui/modern_window.py              EN 62676-4 optik tezgâhı (customtkinter)
@@ -85,8 +87,10 @@ Desen (`main_window.py:844-935`, `:1341-1400`):
 
 `light=True` **yalnız şunları atlar** (`:914`, `:926`): `_populate_table`,
 `_populate_recommendations`, `update_lens_suggestion`, `update_alternative_models`
-ve 3B pencere güncellemesi. **`analyze_dead_zone_coverage`, ölü bölge paneli, hedef
-analizi ve `_draw_canvas` her light geçişte yine koşar** — ölü bölge analizi 2.66x
+ve 3B pencere güncellemesi, durum panelinin alarm listesi + sistem sağlığı + kayıt
+durumu (alarm listesi widget yeniden kurar). **`analyze_dead_zone_coverage`, ölü bölge
+paneli, hedef analizi, durum panelinin gösterge kutuları ve `_draw_canvas` her light
+geçişte yine koşar** — ölü bölge analizi 2.66x
 hızlandırıldığı için light yolda bırakıldı. "Sadece geometri + tuval" deme; yanıltıcı.
 
 Sürekli olan her şey (sürükleme, kaydırıcı, `<Configure>`) debouncer'dan geçer.
@@ -394,6 +398,10 @@ sayısıyla ağırlıklı, DORI metrikleri yalnız parse edilenler üzerinden). 
   bant "Genel … PTZ" modelleri, anahtar kelime, açık `is_ptz` alanı önceliği).
 - `test_design_tokens.py` — iki tema aynı tokenlar, kontrast tabanları, tema/dil
   tercihi birbirini ezmez, `CCTV_THEME` önceliği, yazı tipi dosyaları + lisanslar.
+- `test_status_summary.py` — gösterge kutuları motor sonucunu okur, ulaşılamayan
+  tasarım seviyesi / kapatılmayan kör nokta (sırt sırta iki kamera) kritik, IR
+  alarmı seviyeyi adlandırır, önem sırası + karşılaştırma modunda tekilleştirme,
+  kontrol noktası ve hesap hatası alarmı.
 - `test_i18n.py` — Türkçe kimlik, İngilizce çeviri + geri düşüş, `{}` biçim,
   tercih kalıcılığı, `CCTV_LANG` env önceliği.
 - `test_cli_headless.py` — `--viewshed` / `--ptz` başsız akış + JSON + rapor.
@@ -546,6 +554,22 @@ yazılır (`write_pref`) — eskiden dil kaydı dosyayı tümden eziyordu.
   (2.97:1) yakaladı.
 - Kullanıcı verisi olan DORI seviye renkleri (`models.DEFAULT_LEVELS`,
   projelere ve rapora yazılır) bilinçli olarak değiştirilmedi.
+
+**Ana pencere yerleşimi** (artifact `ana-ekran.md`): üstte `brand` komuta
+çubuğu (ürün adı, proje adı + `● Kaydedildi / ▲ Kaydedilmedi` — imza
+`_project_signature`, kayıt/yüklemede `_mark_project_saved`; pencere
+düğmeleri; alarm sayacı; Kaydet + tek birincil "PDF Rapor"), solda formlar,
+ortada tablo/öneriler/tuval, sağda durum paneli, altta durum çubuğu (imleç,
+optik özet, son mesaj, hesap süresi). Çubuk iki temada da lacivert, o yüzden
+üstündeki çipler `tok(name, "dark")` okur. Durum paneli `status_summary`'nin
+`build_kpis` / `build_alarms` çıktısını çizer — fizik türetmez (Kural 1);
+alarm eşikleri `build_recommendations` ile aynı. Alarma tıklamak o kamerayı
+seçer. Panel 320 px (<1600 px'te 280) × DPI; pencere 1150 px × DPI altına
+inince bölmeden çıkar, komuta çubuğundaki alarm sayacı geri açar/kapatır.
+Sol bölme 300–440 px **× DPI** (eskiden ham pikseldi: %150'de formlar 293 px'e
+sıkışıp sağdan kırpılıyordu). Kısayollar: Ctrl+S/O/P, F5, Ctrl+1…4 pencereler.
+Yan kesitte metre etiketleri zemin şeridinde ve ölçülen genişliğe göre
+seyreltilir (şerit başlığıyla aynı satırdaydı, üst üste biniyordu).
 
 ## Arayüz dili (i18n)
 

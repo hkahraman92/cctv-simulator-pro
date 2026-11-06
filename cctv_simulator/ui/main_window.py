@@ -1,5 +1,6 @@
 import json
 import math
+import time
 from dataclasses import asdict
 from pathlib import Path
 import tkinter as tk
@@ -25,7 +26,9 @@ from ..calculations import (
 )
 from ..exporters import export_csv, export_png, export_pdf, export_excel
 from ..spec_writer import write_requirement_docx
-from ..theme import COLORS, FONT_UI, StyledButton, fit_and_center_window, make_scrollable, flow_layout, wrap_label
+from ..status_summary import SYMBOL, build_alarms, build_kpis
+from ..theme import COLORS, FONT_DISPLAY, FONT_MONO, FONT_UI, StyledButton, dpi_scale, fit_and_center_window, make_scrollable, flow_layout, wrap_label
+from .components import AlarmList, BarButton, KpiTile, StatusChip, panel_label
 from .canvas_drawer import CanvasDrawer, canvas_to_world, top_plot_from_rect
 from .spec_assistant import SpecAssistantWindow
 from .camera_db_window import CameraDatabaseWindow
@@ -104,7 +107,12 @@ class DualViewCCTVDesignApp:
             pass
 
     def _build_ui(self):
-        # ── Main horizontal PanedWindow: left controls | right canvas ──
+        # Command bar on top and status bar at the bottom are packed before
+        # the expanding body so a short window squeezes the body, not them.
+        self._build_command_bar()
+        self._build_status_bar()
+
+        # ── Main horizontal PanedWindow: left controls | canvas | status ──
         self.main_paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
         self.main_paned.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
 
@@ -152,16 +160,6 @@ class DualViewCCTVDesignApp:
         # ── Right panel ──
         right_frame = ttk.Frame(self.main_paned, padding=(6, 6, 6, 6))
         self.main_paned.add(right_frame, weight=1)
-
-        top_info = ttk.Frame(right_frame)
-        top_info.pack(fill=tk.X, pady=(0, 6))
-        self._build_header(top_info)
-
-        # Bottom mouse/status line, packed before the expanding body so pack
-        # reserves its row first (packed after it, it was the first thing to
-        # be squeezed out of a short window).
-        ttk.Label(right_frame, textvariable=self.mouse_var, anchor=tk.W).pack(
-            side=tk.BOTTOM, fill=tk.X, pady=(4, 0))
 
         # Table / recommendations / drawing canvas share a vertical sash pane.
         # As a plain pack column the fixed-height table and text box kept
@@ -252,6 +250,8 @@ class DualViewCCTVDesignApp:
         # right-drag never triggered the closing full pass. Bind it.
         self.canvas.bind("<ButtonRelease-3>", self._on_canvas_release)
 
+        self._build_status_panel()
+
         # ── Left/right split: set once laid out, and kept sane on resize ──
         # 440 px fits the longest left-tab button captions (Proje/Asistan
         # tabs; the old 340-420 cut them); the Kamera tab's entries shrink
@@ -267,78 +267,282 @@ class DualViewCCTVDesignApp:
                 width = self.main_paned.winfo_width()
                 if width < 200:
                     return
-                target = max(300, min(440, int(width * 0.45)))
+                # Logical px x DPI scale: at 150 % the raw 440 left the forms
+                # 293 px wide and cut every entry on the right.
+                sc = dpi_scale(self.root)
+                target = max(int(300 * sc), min(int(440 * sc), int(width * 0.45)))
                 cur = self.main_paned.sashpos(0)
                 if self._auto_sash is None or cur == self._auto_sash or cur > int(width * 0.45):
                     if cur != target:
                         self.main_paned.sashpos(0, target)
                     self._auto_sash = self.main_paned.sashpos(0)
+                self._fit_status_pane(width)
             except tk.TclError:
                 pass
 
         self.main_paned.bind("<Configure>", _fit_left_sash, add="+")
         self.root.after(200, _fit_left_sash)
 
-    def _build_header(self, top_info):
-        """Logo/title, info + status read-outs and the three window buttons.
+    # ── Command bar (A), status bar (E2), status panel (D) ──────────────
+    # Layout plan: "CCTV Simülatör Tasarım Sistemi" -> ana-ekran.md. The
+    # brand strip is navy in both themes, so its chips use the dark tokens.
 
-        One row when it fits; otherwise the read-outs drop to a second line
-        and the buttons wrap onto a third. As a single packed row, at the
-        900 px min width two of the three buttons and both read-outs got zero
-        width and silently disappeared.
-        """
-        title_box = ttk.Frame(top_info)
+    def _build_command_bar(self):
+        s = dpi_scale(self.root)
+        brand = _tok("brand")
+        bar = tk.Frame(self.root, bg=brand)
+        bar.pack(side=tk.TOP, fill=tk.X)
+        bar.columnconfigure(1, weight=1)
+        self._command_bar = bar
+
+        left = tk.Frame(bar, bg=brand)
+        left.grid(row=0, column=0, sticky="w", padx=(int(14 * s), int(10 * s)), pady=int(6 * s))
+        tk.Label(left, text="CCTV SİMÜLATÖR", bg=brand, fg=_tok("on-brand"),
+                 font=(FONT_DISPLAY, 13)).pack(side=tk.LEFT)
+        tk.Frame(left, bg=_tok("line-strong", "dark"), width=1).pack(
+            side=tk.LEFT, fill=tk.Y, padx=int(12 * s), pady=2)
+        self.project_name_lbl = tk.Label(left, text="Yeni proje", bg=brand, fg=_tok("on-brand"),
+                                         font=(FONT_UI, 10))
+        self.project_name_lbl.pack(side=tk.LEFT)
+        self.project_state_chip = tk.Label(left, bg=brand, font=(FONT_UI, 9), padx=8)
+        self.project_state_chip.pack(side=tk.LEFT)
+
+        nav = tk.Frame(bar, bg=brand)
+        nav.grid(row=0, column=1, sticky="ew", pady=int(4 * s))
+        flow_layout(nav, [
+            BarButton(nav, "Optik Tezgâhı", self.open_optics_workbench),
+            BarButton(nav, "3B Görüş", self.open_3d_view),
+            BarButton(nav, "Arazi & Görüş Alanı", self.open_terrain_viewshed),
+            BarButton(nav, "Şartname", self.open_spec_assistant),
+        ], padx=1, pady=0)
+
+        right = tk.Frame(bar, bg=brand)
+        right.grid(row=0, column=2, sticky="e", padx=(int(8 * s), int(12 * s)), pady=int(4 * s))
+        self.alarm_chip = tk.Label(right, bg=brand, font=(FONT_UI, 10, "bold"), padx=10, cursor="hand2")
+        self.alarm_chip.pack(side=tk.LEFT, padx=(0, int(8 * s)))
+        self.alarm_chip.bind("<Button-1>", lambda _e: self._toggle_status_panel())
+        BarButton(right, "Kaydet", self.save_project).pack(side=tk.LEFT, padx=1)
+        BarButton(right, "PDF Rapor", self.export_pdf, primary=True).pack(side=tk.LEFT, padx=(4, 0))
+
+        def _key(fn):
+            def _handler(_e):
+                fn()
+                return "break"
+            return _handler
+
+        for seq, fn in (("<Control-s>", self.save_project), ("<Control-o>", self.load_project),
+                        ("<Control-p>", self.export_pdf), ("<F5>", lambda: self.calculate(show_errors=True)),
+                        ("<Control-Key-1>", self.open_optics_workbench), ("<Control-Key-2>", self.open_3d_view),
+                        ("<Control-Key-3>", self.open_terrain_viewshed),
+                        ("<Control-Key-4>", self.open_spec_assistant)):
+            self.root.bind(seq, _key(fn))
+
+    def _build_status_bar(self):
+        bg = _tok("bg-0")
+        bar = tk.Frame(self.root, bg=bg)
+        bar.pack(side=tk.BOTTOM, fill=tk.X)
+        tk.Frame(bar, bg=_tok("line"), height=1).pack(side=tk.TOP, fill=tk.X)
+        self.calc_time_var = tk.StringVar(value="")
+        tk.Label(bar, textvariable=self.calc_time_var, bg=bg, fg=_tok("ink-3"),
+                 font=(FONT_MONO, 8)).pack(side=tk.RIGHT, padx=(8, 10), pady=3)
+        tk.Label(bar, textvariable=self.status_var, bg=bg, fg=_tok("ink-2"),
+                 font=(FONT_UI, 9)).pack(side=tk.RIGHT, padx=8, pady=3)
+        tk.Label(bar, textvariable=self.mouse_var, bg=bg, fg=_tok("ink-2"),
+                 font=(FONT_MONO, 8), anchor="w").pack(side=tk.LEFT, padx=(10, 16), pady=3)
+        wrap_label(tk.Label(bar, textvariable=self.info_var, bg=bg, fg=_tok("ink-3"),
+                            font=(FONT_UI, 9), anchor="w", justify="left")).pack(
+            side=tk.LEFT, fill=tk.X, expand=True, pady=3)
+
+    def _build_status_panel(self):
+        outer, inner = make_scrollable(self.main_paned, padding=(12, 10, 12, 12))
+        self.status_panel = outer
+        self._status_shown = True
+        self._status_user_hidden = False
+        self._auto_status_sash = None
+        self.main_paned.add(outer, weight=0)
+
+        head = ttk.Frame(inner)
+        head.pack(fill=tk.X)
+        panel_label(head, "Durum").pack(side=tk.LEFT)
+        self.last_calc_lbl = tk.Label(head, text="", bg=_tok("bg-1"), fg=_tok("ink-3"), font=(FONT_UI, 8))
+        self.last_calc_lbl.pack(side=tk.RIGHT)
+        self.status_camera_lbl = tk.Label(inner, text="", bg=_tok("bg-1"), fg=_tok("ink"),
+                                          font=(FONT_DISPLAY, 12), anchor="w")
+        self.status_camera_lbl.pack(fill=tk.X, pady=(2, 8))
+
+        grid = ttk.Frame(inner)
+        grid.pack(fill=tk.X)
+        grid.columnconfigure((0, 1), weight=1, uniform="kpi")
+        self.kpi_tiles = []
+        for i in range(4):
+            tile = KpiTile(grid, "")
+            tile.grid(row=i // 2, column=i % 2, sticky="nsew",
+                      padx=(0, 3) if i % 2 == 0 else (3, 0), pady=(0, 6))
+            self.kpi_tiles.append(tile)
+
+        alarm_head = ttk.Frame(inner)
+        alarm_head.pack(fill=tk.X, pady=(10, 4))
+        panel_label(alarm_head, "Alarmlar").pack(side=tk.LEFT)
+        self.alarm_count_lbl = tk.Label(alarm_head, text="", bg=_tok("bg-1"), fg=_tok("ink-3"),
+                                        font=(FONT_UI, 8))
+        self.alarm_count_lbl.pack(side=tk.RIGHT)
+        tk.Frame(inner, bg=_tok("line"), height=1).pack(fill=tk.X)
+        self.alarm_list = AlarmList(inner, on_select=self._on_alarm_selected)
+        self.alarm_list.pack(fill=tk.X)
+
+        panel_label(inner, "Sistem sağlığı").pack(fill=tk.X, pady=(14, 4))
+        tk.Frame(inner, bg=_tok("line"), height=1).pack(fill=tk.X, pady=(0, 4))
+        self.health_chips = {}
+        for key in ("library", "fonts", "cameras", "plan", "terrain"):
+            chip = StatusChip(inner, bg="bg-1", anchor="w")
+            chip.pack(fill=tk.X, pady=1)
+            self.health_chips[key] = chip
+        self._alarms = []
+        self.root.after(2000, self._health_tick)
+
+    def _health_tick(self):
+        # The terrain row follows the map window, which opens/closes and
+        # loads DEMs without a main-window calculate().
         try:
-            from ..config import resource_path
-            logo_path = resource_path("assets/cctv_logo_48.png")
-            if logo_path.exists():
-                self.logo_img = tk.PhotoImage(file=str(logo_path), master=self.root)
-                ttk.Label(title_box, image=self.logo_img).pack(side=tk.LEFT, padx=(0, 6))
-                ttk.Label(
-                    title_box, text="CCTV Simulator",
-                    font=(FONT_UI, 12, "bold"), foreground=COLORS["accent"],
-                ).pack(side=tk.LEFT, padx=(0, 12))
-        except Exception:
+            if self.root.winfo_exists():
+                self._update_health()
+                self.root.after(2000, self._health_tick)
+        except tk.TclError:
             pass
 
-        btn_box = ttk.Frame(top_info)
-        buttons = [
-            StyledButton(btn_box, text="Optik Tezgâhı", command=self.open_optics_workbench, bootstyle="secondary"),
-            StyledButton(btn_box, text="3D Kamera Bakış Açısı", command=self.open_3d_view, bootstyle="secondary"),
-            StyledButton(btn_box, text="3D Arazi & Viewshed Analizi", command=self.open_terrain_viewshed,
-                         bootstyle="secondary"),
-        ]
-        flow_layout(btn_box, buttons, padx=4, justify="right")
-        status_lbl = wrap_label(ttk.Label(top_info, textvariable=self.status_var, foreground=COLORS["danger"]))
-        info_lbl = wrap_label(ttk.Label(top_info, textvariable=self.info_var, font=(FONT_UI, 10, "bold"),
-                                        foreground=COLORS["accent"]))
-        state = {"wide": None}
+    def _status_width(self, width: int) -> int:
+        s = dpi_scale(self.root)
+        return int((320 if width >= 1600 * s else 280) * s)
 
-        def _layout(_e=None):
-            width = top_info.winfo_width()
-            need = (title_box.winfo_reqwidth() + sum(b.winfo_reqwidth() + 8 for b in buttons)
-                    + min(status_lbl.winfo_reqwidth(), 280) + 160)
-            wide = width <= 1 or width >= need
-            if wide == state["wide"]:
-                return
-            state["wide"] = wide
-            for w in (title_box, btn_box, status_lbl, info_lbl):
-                w.grid_forget()
-            for col in range(4):
-                top_info.columnconfigure(col, weight=0)
-            title_box.grid(row=0, column=0, sticky="w")
-            if wide:
-                info_lbl.grid(row=0, column=1, sticky="ew")
-                status_lbl.grid(row=0, column=2, sticky="e", padx=(8, 0))
-                btn_box.grid(row=0, column=3, sticky="e")
+    def _fit_status_pane(self, width: int):
+        """Keep the status panel at its token width; below ~1150 px it is
+        dropped (the canvas needs the room) and the alarm chip in the bar
+        brings it back. A sash the user dragged is left alone."""
+        s = dpi_scale(self.root)
+        want = width >= 1150 * s and not self._status_user_hidden
+        if want != self._status_shown:
+            if want:
+                self.main_paned.add(self.status_panel, weight=0)
             else:
-                status_lbl.grid(row=0, column=1, sticky="e", padx=(8, 0))
-                info_lbl.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(2, 0))
-                btn_box.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(2, 0))
-            top_info.columnconfigure(1, weight=1)
+                self.main_paned.forget(self.status_panel)
+            self._status_shown = want
+            self._auto_status_sash = None
+        if not self._status_shown:
+            return
+        target = width - self._status_width(width)
+        cur = self.main_paned.sashpos(1)
+        auto = self._auto_status_sash
+        if auto is None or cur == auto or width - cur < int(200 * s):
+            if cur != target:
+                self.main_paned.sashpos(1, target)
+            self._auto_status_sash = self.main_paned.sashpos(1)
 
-        top_info.bind("<Configure>", _layout, add="+")
-        _layout()
+    def _toggle_status_panel(self):
+        if self._status_shown:
+            self.main_paned.forget(self.status_panel)
+            self._status_shown = False
+            self._status_user_hidden = True
+            return
+        # Opened on demand from the bar, even in a narrow window.
+        self._status_user_hidden = False
+        self.main_paned.add(self.status_panel, weight=0)
+        self._status_shown = True
+        self._auto_status_sash = None
+        width = self.main_paned.winfo_width()
+        self.root.after_idle(lambda: self.main_paned.sashpos(1, width - self._status_width(width)))
+
+    def _on_alarm_selected(self, alarm):
+        index = alarm.camera_index
+        if index is None or not (0 <= index < len(self.cameras)) or index == self.selected_camera_index:
+            return
+        if not self._commit_form_to_selected():
+            return
+        self.selected_camera_index = index
+        self.combo_camera.current(index)
+        self._load_camera_to_form()
+        self.calculate()
+
+    def _project_signature(self) -> str:
+        return json.dumps({
+            "cameras": [asdict(cam) for cam in self.cameras],
+            "levels": [asdict(lvl) for lvl in self.ppm_levels],
+            "target": asdict(self.target_point), "plan": self.plan_path,
+            "plan_w": self.plan_width_m, "design": self.design_level_var.get(),
+            "design_d": self.design_distance_var.get(),
+        }, sort_keys=True, default=str)
+
+    def _mark_project_saved(self, path: str):
+        self._project_path = path
+        self._saved_signature = self._project_signature()
+        self._update_project_state()
+
+    def _update_project_state(self):
+        path = getattr(self, "_project_path", "")
+        if getattr(self, "_saved_signature", None) is None:
+            self._saved_signature = self._project_signature()
+        self.project_name_lbl.configure(text=Path(path).stem if path else "Yeni proje")
+        if self._project_signature() != self._saved_signature:
+            state, text = "warn", "Kaydedilmedi"
+        elif path:
+            state, text = "ok", "Kaydedildi"
+        else:
+            state, text = "info", "Henüz kaydedilmedi"
+        self.project_state_chip.configure(text=f"{SYMBOL[state]} {text}", fg=_tok(state, "dark"))
+
+    def _update_status_panel(self, light: bool = False):
+        """KPI tiles on every pass (cheap label updates); alarms, health and
+        project state on full passes only -- the alarm list rebuilds widgets."""
+        level = self._selected_design_level()
+        camera = self.cameras[self.selected_camera_index]
+        mode = self.lens_mode.get()
+        mode_txt = {"min": "geniş açı", "max": "dar açı", "compare": "geniş + dar"}.get(mode, mode)
+        self.status_camera_lbl.configure(text=f"{camera.name} · {mode_txt}")
+        for tile, kpi in zip(self.kpi_tiles, build_kpis(self.last_selected_results, level,
+                                                         self.target_point, len(self.cameras))):
+            tile.set(kpi)
+        if light:
+            return
+        self._alarms = build_alarms(self.cameras, self.last_all_results, level, self.target_point,
+                                    self.selected_camera_index, error=getattr(self, "_calc_error", ""),
+                                    levels=self.ppm_levels)
+        self.alarm_list.set(self._alarms, empty_text="Açık alarm yok")
+        counts = {k: sum(1 for a in self._alarms if a.severity == k) for k in ("danger", "warn", "info")}
+        self.alarm_count_lbl.configure(text="  ".join(f"{SYMBOL[k]} {n}" for k, n in counts.items() if n))
+        if counts["danger"]:
+            text, state = f"{SYMBOL['danger']} {counts['danger']} KRİTİK", "danger"
+        elif counts["warn"]:
+            text, state = f"{SYMBOL['warn']} {counts['warn']} UYARI", "warn"
+        else:
+            text, state = f"{SYMBOL['ok']} ALARM YOK", "ok"
+        self.alarm_chip.configure(text=text, fg=_tok(state, "dark"))
+        self.last_calc_lbl.configure(text=f"son hesap {time.strftime('%H:%M:%S')}")
+        self._update_health()
+        self._update_project_state()
+
+    def _update_health(self):
+        chips = self.health_chips
+        n_lib = len(self.camera_library)
+        chips["library"].set("ok" if n_lib else "warn",
+                             f"Kamera kütüphanesi · {n_lib} model" if n_lib else "Kamera kütüphanesi boş")
+        embedded = FONT_UI != "Segoe UI"
+        chips["fonts"].set("ok" if embedded else "warn",
+                           "Yazı tipleri · gömülü" if embedded else "Yazı tipleri · sistem yedeği")
+        chips["cameras"].set("ok", f"Projede {len(self.cameras)} kamera")
+        chips["plan"].set("ok" if self.plan_path else "info",
+                          f"Plan · {Path(self.plan_path).name}" if self.plan_path else "Plan görüntüsü yok")
+        terrain = None
+        vw = getattr(self, "viewshed_window", None)
+        try:
+            if vw is not None and vw.window.winfo_exists():
+                terrain = getattr(vw, "terrain", None)
+        except tk.TclError:
+            terrain = None
+        if terrain is None:
+            chips["terrain"].set("info", "Arazi penceresi kapalı")
+        elif getattr(terrain, "is_measured", False):
+            chips["terrain"].set("ok", "Arazi · ölçülmüş DEM")
+        else:
+            chips["terrain"].set("warn", "Arazi · temsili (ölçüm değil)")
 
     def _fit_right_panes(self, _e=None):
         """Size the table / recommendations panes so the drawing canvas keeps
@@ -1113,6 +1317,7 @@ class DualViewCCTVDesignApp:
         if not self._update_plan_width_from_entry(show_errors=show_errors):
             return
 
+        t0 = time.perf_counter()
         try:
             mode = self.lens_mode.get()
             modes = ["min", "max"] if mode == "compare" else [mode]
@@ -1138,14 +1343,21 @@ class DualViewCCTVDesignApp:
             self._update_dead_zone_panel()
             self._draw_canvas()
             self._update_info_label()
+            self._calc_error = ""
+            self._update_status_panel(light=light)
 
             if not light:
                 view_3d = getattr(self, "view_3d_window", None)
                 if view_3d is not None and view_3d.window.winfo_exists():
                     view_3d.update_from_parent()
-            self.status_var.set("")
+            self.calc_time_var.set(f"hesap {(time.perf_counter() - t0) * 1000:.1f} ms")
         except Exception as exc:
+            self._calc_error = str(exc)
             self.status_var.set(f"Hata: {exc}")
+            try:
+                self._update_status_panel()
+            except Exception:
+                pass
             if show_errors:
                 messagebox.showerror("Hesaplama hatası", str(exc))
 
@@ -1824,6 +2036,7 @@ class DualViewCCTVDesignApp:
         with open(path, "w", encoding="utf-8") as file:
             json.dump(data, file, ensure_ascii=False, indent=4)
         self.status_var.set(f"Proje kaydedildi: {Path(path).name}")
+        self._mark_project_saved(path)
 
     def load_project(self):
         path = filedialog.askopenfilename(
@@ -1865,6 +2078,7 @@ class DualViewCCTVDesignApp:
             self._refresh_level_tree()
             self._load_camera_to_form()
             self.calculate()
+            self._mark_project_saved(path)
             self.status_var.set(f"Proje yüklendi: {Path(path).name}")
         except Exception as exc:
             messagebox.showerror("Proje yükleme", f"Proje dosyası açılamadı:\n{exc}")

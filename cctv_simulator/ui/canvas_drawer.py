@@ -138,6 +138,14 @@ class CanvasDrawer:
     # the BUGFIX note below.
     _MIN_SCALE_PPM = 12.5
 
+    def _measure(self, text: str, font) -> int:
+        cache = self.__dict__.setdefault("_font_cache", {})
+        f = cache.get(font)
+        if f is None:
+            import tkinter.font as tkfont
+            f = cache[font] = tkfont.Font(root=self.canvas, font=font)
+        return f.measure(text)
+
     def _get_max_draw_distance(self, plan_width_m: float, last_all_results: Dict[str, List[OpticResult]],
                                ppm_levels: List[PPMLevel]) -> float:
         # PERF: single running max instead of materialising a list of every
@@ -195,14 +203,21 @@ class CanvasDrawer:
             if step * px_per_m >= 6.0:
                 break
         label_every = tick_m * 5
+        # Labels sit on the ground strip (the lane title owns the top edge --
+        # both on y0 they overprinted) and are spaced by their measured width,
+        # not a fixed 5 ticks: a narrow canvas ran "10m15m20m" together.
+        label_w = self._measure(f"{int(max_draw_dist)}m", (FONT, 7)) + 8
+        major_every = label_every
+        while major_every * px_per_m < label_w:
+            major_every *= 2
         create_line = self.canvas.create_line
         create_text = self.canvas.create_text
         for meter in range(0, int(max_draw_dist) + 2, tick_m):
             x = origin_x + meter * px_per_m
             major = meter % label_every == 0
             create_line(x, y0, x, y1, fill=P["grid"] if major else P["grid-minor"])
-            if major:
-                create_text(x + 2, y0 + 2, text=f"{meter}m", anchor=tk.NW, fill=P["label"], font=(FONT, 7))
+            if meter % major_every == 0:
+                create_text(x + 2, ground_y + 4, text=f"{meter}m", anchor=tk.NW, fill=P["label"], font=(FONT, 7))
 
         self.canvas.create_text(
             x0 + 12,
