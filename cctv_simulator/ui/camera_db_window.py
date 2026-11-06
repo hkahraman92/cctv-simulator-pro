@@ -182,7 +182,7 @@ class CameraDatabaseWindow:
             StyledButton(top_btns, text="Aktif Kameradan Yeni Kayıt Aç", command=self._new_from_active,
                          bootstyle="info-outline"),
             StyledButton(top_btns, text="🔑 Şifre Değiştir", command=self._change_admin_password,
-                         bootstyle="warning-outline"),
+                         bootstyle="secondary-outline"),
         ], justify="right")
         wrap_label(ttk.Label(right, textvariable=self.status_var, foreground="#263238")).pack(
             fill=tk.X, pady=(0, 6))

@@ -1,3 +1,50 @@
+## -27. Arayüz yeniden tasarımı, adım 1–2: tasarım tokenları + koyu "Konsol" teması — ✅ (2026-11-06)
+
+İstek: arayüzü modern, endüstriyel, koyu mod odaklı ve kurumsal kimlikle
+uyumlu yap. Önce bir tasarım sistemi hazırlandı (artifact "CCTV Simülatör
+Tasarım Sistemi": renkler, tipografi, 8 bileşen, ana ekran yerleşim planı,
+Tk'ye uygulama rehberi), sonra rehberin ilk iki adımı uygulandı.
+
+- Yeni `design_tokens.py`: koyu/açık token tabloları, tuval rolleri,
+  tema tercihi, gömülü yazı tiplerinin süreç içi yüklenmesi.
+- `theme.py`: `COLORS` tokenlardan; `cctv-konsol` / `cctv-ofis`
+  ttkbootstrap temaları; adlandırılmış Tk yazı tipleri Barlow / Plex Mono.
+- `canvas_drawer.py`: 45 sabit renk → tuval rolleri (yan kesit + kuş bakışı
+  plan artık beyaz değil). Döküm: tuvaldeki her dolgu/kenar ya bir token ya
+  kullanıcının DORI seviye rengi.
+- `modern_window.py` (optik tezgâhı): kendi neon paleti tokenlara bağlandı,
+  DORI bantları soğuk rampa, köşe 6/8 → 2/4 px.
+- `main_window.py`: sabit renkler tokenlara; bölüm başına tek birincil düğme;
+  üst gezinme düğmeleri ikincil, emoji kaldırıldı; Çıktı sekmesinde
+  "Görünüm" tema seçici.
+- Düzeltme: dil tercihi `ui_prefs.json`'u ezip yazıyordu (artık birleştirir).
+
+Doğrulama: `tests/test_design_tokens.py` (29 test; kontrast testi açık tema
+kenar rengini 2.97:1 ile yakaladı, #828FA0'a koyulaştırıldı). İlk ekran
+görüntüsü turunda ana pencere, harita, 3B görünüm, tezgâh, şartname
+pencerelerine bakıldı. İkinci turda bulunan ve düzeltilenler:
+- İkincil outline düğmelerin yazısı okunmuyordu (Ekle/Kopyala/Sil, k ölç,
+  Optik Tezgâhı, Önbelleği Temizle, GeoTIFF Yükle…): ttkbootstrap
+  `secondary` = `bg-2`, yazı zeminle aynı renk. Artık `steel`; dolu
+  `secondary` düğme `bg-2` yüzeyde kalır.
+- Şartname penceresi: sabit `after(100)` bölme çubuğunu pencere 1 px iken
+  0'a koyuyordu, sol sütunun tamamı gizliydi → `<Configure>` ile. Sonra
+  metin kutusu kontrolleri pencere dışına itiyordu → Analiz grubu alttan
+  paketlenir, matris dışa aktarma düğmeleri matrisin altına (`flow_layout`).
+- Eski `tk.Toplevel` kenarında açık gri şerit → option veritabanı.
+- Tezgâh sol rayı kenara yapışıktı → 16/12 px boşluk.
+- Haritada/şartnamede/veritabanında `warning` düğmeler → ikincil/birincil.
+ruff + tam pytest yeşil.
+
+Kalan (rehberin 3–5. adımları): komuta çubuğu + sağ durum paneli (gösterge
+2×2, alarm listesi, sistem sağlığı) ana pencereye; harita bindirmelerine cam
+efekti (PIL) ve DORI katmanının soğuk rampaya geçmesi (`_LAYER_BANDS`);
+~114 emoji düğme etiketinin simge setiyle değişmesi (bazıları `en.json`
+anahtarı — birlikte taşınmalı); `map_3d_window` (51) ve `view_3d_window`
+(37) sabit renkleri; `DEFAULT_LEVELS` renkleri (kullanıcı verisi, karar
+gerekiyor). Kamera veritabanı penceresi parola diyaloğu yüzünden ekran
+görüntüsü sürücüsünde açılmadı.
+
 ## -26. Kayıtlı bölgeler: indirilen haritayı yerelde tut, indirmeden aç — ✅ (2026-10-14)
 
 İstek: 3B görüş alanında indirilen bölgeleri kaydedip her seferinde yeniden

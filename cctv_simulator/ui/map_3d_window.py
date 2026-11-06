@@ -692,7 +692,7 @@ class TerrainViewshedWindow:
         ttk.Radiobutton(frame_mode, text="⛰️ Yükselti", variable=self.map_layer_mode_var, value="elevation", command=self.schedule_recalculate).pack(side=tk.LEFT)
 
         StyledButton(grp_layer, text="🌐 Çevrimiçi Uydu İndir (Koordinat/Bölge)", command=self._open_online_map_downloader_dialog, bootstyle="success").pack(fill=tk.X, pady=(4, 2))
-        StyledButton(grp_layer, text="📂 Kayıtlı Bölgeler (indirmeden aç / kaydet)", command=self._open_saved_regions_dialog, bootstyle="warning-outline").pack(fill=tk.X, pady=(0, 2))
+        StyledButton(grp_layer, text="📂 Kayıtlı Bölgeler (indirmeden aç / kaydet)", command=self._open_saved_regions_dialog, bootstyle="secondary-outline").pack(fill=tk.X, pady=(0, 2))
         StyledButton(grp_layer, text="📁 Yerel Uydu / Ortofoto Yükle (.png/.jpg/.tif)", command=self._load_local_satellite, bootstyle="info-outline").pack(fill=tk.X, pady=(0, 2))
 
         frame_cache = ttk.Frame(grp_layer)
@@ -902,7 +902,7 @@ class TerrainViewshedWindow:
         ttk.Label(frame_date, text="Tarih (YYYY-AA-GG):").pack(side=tk.LEFT)
         ttk.Entry(frame_date, textvariable=self.glare_date_var, width=12).pack(side=tk.RIGHT)
         StyledButton(grp_sun, text="☀️ Direk Bazında Parlama Analizi",
-                     command=self._run_glare_analysis, bootstyle="warning-outline").pack(fill=tk.X, pady=(2, 2))
+                     command=self._run_glare_analysis, bootstyle="secondary-outline").pack(fill=tk.X, pady=(2, 2))
         self._create_stat_row(grp_sun, "Sonuç:", self.stat_glare_var, ACCENT_AMBER)
 
         grp_bom = ttk.LabelFrame(parent, text="📊 Keşif & Malzeme Listesi (BOM)", padding=6)
@@ -1913,7 +1913,7 @@ class TerrainViewshedWindow:
         existing_lbl = wrap_label(ttk.Label(grp_save, text="", foreground=ACCENT_AMBER,
                                             font=("Segoe UI", 9)))
         btn_open_saved = StyledButton(grp_save, text="📂 Kayıtlı Olanı İndirmeden Aç",
-                                      bootstyle="warning-outline")
+                                      bootstyle="secondary-outline")
         match_state = {"region": None}
         name_state = {"auto": save_name_var.get()}
 
@@ -2230,7 +2230,7 @@ class TerrainViewshedWindow:
     def _toggle_fence_drawing(self):
         self.is_drawing_fence = not self.is_drawing_fence
         if self.is_drawing_fence:
-            self.btn_draw_fence.configure(text="🛑 Çizimi Bitir / Kilitle", bootstyle="warning")
+            self.btn_draw_fence.configure(text="🛑 Çizimi Bitir / Kilitle", bootstyle="primary")
             self.telemetry_var.set("Harita üzerinde sırayla tıklayarak çevre çiti köşe noktalarını belirleyin.")
         else:
             self.btn_draw_fence.configure(text="✏️ Çit Noktaları Ekle / Çiz (Haritaya Tıkla)", bootstyle="info")

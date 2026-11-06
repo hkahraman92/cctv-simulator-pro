@@ -18,6 +18,7 @@ kamera görüşü çizer; arazi üzerinde görüş alanı (viewshed) analizi ve 
 ```
 cctv_dual_view_simulator.py          giriş noktası
   theme.py                           ttkbootstrap pencere fabrikası + Tcl yol kurulumu
+  design_tokens.py                   tasarım tokenları: renk (koyu/açık), tuval rolleri, gömülü yazı tipleri
   errors.py                          global hata yakalama, log, guarded_build
   calculations.py                    OPTİK MOTOR - tek doğruluk kaynağı
   perspective_3d.py                  3B izdüşüm
@@ -391,6 +392,8 @@ sayısıyla ağırlıklı, DORI metrikleri yalnız parse edilenler üzerinden). 
   proje + başsız CLI bölgeyi açar (yoksa hata).
 - `test_database.py` — `is_ptz_camera` (yerleşik ASELSAN UMA T5/Fix, görünür
   bant "Genel … PTZ" modelleri, anahtar kelime, açık `is_ptz` alanı önceliği).
+- `test_design_tokens.py` — iki tema aynı tokenlar, kontrast tabanları, tema/dil
+  tercihi birbirini ezmez, `CCTV_THEME` önceliği, yazı tipi dosyaları + lisanslar.
 - `test_i18n.py` — Türkçe kimlik, İngilizce çeviri + geri düşüş, `{}` biçim,
   tercih kalıcılığı, `CCTV_LANG` env önceliği.
 - `test_cli_headless.py` — `--viewshed` / `--ptz` başsız akış + JSON + rapor.
@@ -505,6 +508,44 @@ Başsız: `--viewshed` (proje `terrain.placements[]`) ve `--ptz` (`terrain.ptz`)
 formatı), `--json` çıktısına özet. `project_io` şeması `terrain` bloğu:
 `source/preset/file/width_m/viewshed_range_m/weather/placements/ptz` — eski
 proje dosyaları değişmeden yüklenir (hepsi varsayılanlı).
+
+## Görünüm: tasarım tokenları
+
+Renk ve yazı tipinin tek kaynağı `design_tokens.py` ("CCTV Simülatör Tasarım
+Sistemi" artifact'inin `tokens.json`'u ile aynı değerler). İki tema aynı token
+adlarını taşır: `dark` ("Konsol", varsayılan) ve `light` ("Ofis"). Sıra:
+`CCTV_THEME` env → `ui_prefs.json` `theme` → `dark`; değişiklik yeniden
+başlatınca etkin (Çıktı sekmesi → Görünüm). `ui_prefs.json`'a **birleştirerek**
+yazılır (`write_pref`) — eskiden dil kaydı dosyayı tümden eziyordu.
+
+- **Yeni kodda hex yazma.** `tok("bg-1")`, tuvalde rol adı (`PALETTE["grid"]`,
+  `_CANVAS_ROLES`: surface/grid/axis/label/ground/camera/ray…), PIL için
+  `rgba(name, alpha)`. `theme.COLORS` eski anahtarlarıyla tokenlardan dolar.
+- `theme._apply_design_theme`: iki ttkbootstrap teması (`cctv-konsol`,
+  `cctv-ofis`) token değerleriyle kaydedilir; Treeview satır yüksekliği DPI
+  ölçekli; eski tk widget'ları (Text/Listbox/Canvas) option veritabanından
+  renk alır. Başarısız olursa stok tema kalır, pencere kaybolmaz.
+- **Bir alanda tek birincil düğme** (`bootstyle="primary"` = yeşil vurgu);
+  diğerleri `secondary`/`secondary-outline`. `warning` bootstyle'ı düğmede
+  yok — sıcak renk yalnız durum/alarm içindir; tek istisna geri alınamaz
+  silme düğmesinde `danger-outline`. ttkbootstrap `secondary` rengi `steel`
+  (outline düğmenin yazısı + kenarı); `bg-2` olduğunda outline düğme yazısı
+  zeminle aynı renkti, ekranda görünmüyordu. Dolu `secondary` düğme
+  `_style_details`'te `bg-2` yüzeye geri çekilir — ttkbootstrap stilleri ilk
+  kullanımda tembel kurduğu için orada önce bir kez kurdurulur, yoksa
+  üstüne yazar. Eski `tk.Toplevel`/`tk.Frame` zemini option veritabanından.
+- Yazı tipleri `cctv_simulator/fonts/` (Barlow, Barlow Semi Condensed, IBM Plex
+  Mono, OFL lisansları yanında), `AddFontResourceExW(FR_PRIVATE)` ile yalnız bu
+  süreç için yüklenir, kurulum yok; PyInstaller paketi `cctv_simulator/`'ı
+  komple aldığı için `.exe`'ye girer. GDI aile adları: kalın başlık için
+  `"Barlow Semi Condensed SemiBold"` (düz `"Barlow Semi Condensed"` Arial'a
+  düşer). `theme.FONT_UI/FONT_DISPLAY/FONT_MONO`; yüklenemezse Segoe UI /
+  Consolas. Barlow'da ■▲●◆ yok — Windows yedek fontundan çizilir.
+- `test_design_tokens.py` iki temada her metin/zemin çiftinin kontrastını
+  (4.5:1, kontrol kenarı 3:1) denetler; ilk koşuda açık temanın kenar rengini
+  (2.97:1) yakaladı.
+- Kullanıcı verisi olan DORI seviye renkleri (`models.DEFAULT_LEVELS`,
+  projelere ve rapora yazılır) bilinçli olarak değiştirilmedi.
 
 ## Arayüz dili (i18n)
 

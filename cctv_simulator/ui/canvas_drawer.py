@@ -3,6 +3,9 @@ import tkinter as tk
 from typing import Dict, List, Any, Tuple, Optional
 from ..calculations import mode_label, polar_point, target_analysis_for_result
 from ..models import CameraConfig, OpticResult, TargetPoint, PPMLevel
+from ..design_tokens import PALETTE as P, font_families
+
+FONT = font_families()["ui"]
 
 try:
     from PIL import Image, ImageTk
@@ -97,26 +100,26 @@ class CanvasDrawer:
         side_rect = (0, 0, width, split_y)
         top_rect = (0, split_y + 1, width, height)
 
-        self.canvas.create_rectangle(0, 0, width, height, fill="#FFFFFF", outline="")
-        self.canvas.create_line(0, split_y, width, split_y, fill="#B0BEC5", width=2)
-        self.canvas.create_text(12, 10, text="YATAY PROFİL", anchor=tk.NW, fill="#37474F", font=("Arial", 8, "bold"))
+        self.canvas.create_rectangle(0, 0, width, height, fill=P["surface"], outline="")
+        self.canvas.create_line(0, split_y, width, split_y, fill=P["axis"], width=2)
+        self.canvas.create_text(12, 10, text="YATAY PROFİL", anchor=tk.NW, fill=P["text-2"], font=(FONT, 8, "bold"))
         self.canvas.create_text(
             12,
             split_y + 10,
             text="KUŞBAKIŞI / PLAN ÜSTÜ",
             anchor=tk.NW,
-            fill="#37474F",
-            font=("Arial", 8, "bold"),
+            fill=P["text-2"],
+            font=(FONT, 8, "bold"),
         )
 
         max_draw_dist = self._get_max_draw_distance(plan_width_m, last_all_results, ppm_levels)
         if len(last_selected_results) == 2:
             top_lane = (0, 26, width, split_y // 2)
             bottom_lane = (0, split_y // 2, width, split_y - 4)
-            self._draw_side_lane(last_selected_results[0], top_lane, max_draw_dist, "#1565C0", ppm_levels)
-            self._draw_side_lane(last_selected_results[1], bottom_lane, max_draw_dist, "#6A1B9A", ppm_levels)
+            self._draw_side_lane(last_selected_results[0], top_lane, max_draw_dist, P["lane-a"], ppm_levels)
+            self._draw_side_lane(last_selected_results[1], bottom_lane, max_draw_dist, P["lane-b"], ppm_levels)
         elif last_selected_results:
-            self._draw_side_lane(last_selected_results[0], (0, 26, width, split_y - 4), max_draw_dist, "#1565C0", ppm_levels)
+            self._draw_side_lane(last_selected_results[0], (0, 26, width, split_y - 4), max_draw_dist, P["lane-a"], ppm_levels)
 
         world = self._draw_top_down(
             top_rect, max_draw_dist, cameras, selected_camera_index,
@@ -197,9 +200,9 @@ class CanvasDrawer:
         for meter in range(0, int(max_draw_dist) + 2, tick_m):
             x = origin_x + meter * px_per_m
             major = meter % label_every == 0
-            create_line(x, y0, x, y1, fill="#E0E0E0" if major else "#F5F5F5")
+            create_line(x, y0, x, y1, fill=P["grid"] if major else P["grid-minor"])
             if major:
-                create_text(x + 2, y0 + 2, text=f"{meter}m", anchor=tk.NW, fill="#757575", font=("Arial", 7))
+                create_text(x + 2, y0 + 2, text=f"{meter}m", anchor=tk.NW, fill=P["label"], font=(FONT, 7))
 
         self.canvas.create_text(
             x0 + 12,
@@ -207,13 +210,13 @@ class CanvasDrawer:
             text=f"{camera.name} - {mode_label(result.mode)} ({result.focal_mm:g} mm)",
             anchor=tk.NW,
             fill=accent,
-            font=("Arial", 8, "bold"),
+            font=(FONT, 8, "bold"),
         )
-        self.canvas.create_line(0, ground_y, x1, ground_y, fill="#37474F", width=2)
-        self.canvas.create_line(origin_x, target_y, x1, target_y, fill="#FFB74D", dash=(3, 3))
-        self.canvas.create_text(x1 - 100, target_y - 12, text=f"Hedef: {camera.target_height_m:g}m", fill="#E65100", font=("Arial", 7))
-        self.canvas.create_line(origin_x, cam_y, x1, cam_y, fill="#CFD8DC", dash=(2, 4))
-        self.canvas.create_text(x1 - 95, cam_y - 12, text="0° ufuk", fill="#90A4AE", font=("Arial", 7))
+        self.canvas.create_line(0, ground_y, x1, ground_y, fill=P["ground"], width=2)
+        self.canvas.create_line(origin_x, target_y, x1, target_y, fill=P["target"], dash=(3, 3))
+        self.canvas.create_text(x1 - 100, target_y - 12, text=f"Hedef: {camera.target_height_m:g}m", fill=P["target"], font=(FONT, 7))
+        self.canvas.create_line(origin_x, cam_y, x1, cam_y, fill=P["axis"], dash=(2, 4))
+        self.canvas.create_text(x1 - 95, cam_y - 12, text="0° ufuk", fill=P["label"], font=(FONT, 7))
 
         # BUGFIX: without this filter the loosest-PPM level (often an
         # auxiliary Johnson/Algorithm thermal-detection criterion, not a
@@ -228,24 +231,24 @@ class CanvasDrawer:
             if dist > result.dead_zone_m:
                 end_x = origin_x + min(dist, max_draw_dist) * px_per_m
                 if end_x > last_x:
-                    self.canvas.create_rectangle(last_x, target_y - 16, end_x, target_y, fill=level.color, outline="#546E7A")
+                    self.canvas.create_rectangle(last_x, target_y - 16, end_x, target_y, fill=level.color, outline=P["axis"])
                     last_x = end_x
 
-        self._draw_side_ray(result, result.bottom_ray_deg, origin_x, cam_y, target_y, px_per_m, max_draw_dist, "#0288D1")
-        self._draw_side_ray(result, camera.tilt_deg, origin_x, cam_y, target_y, px_per_m, max_draw_dist, "#1976D2", dash=(2, 4))
-        self._draw_side_ray(result, result.top_ray_deg, origin_x, cam_y, target_y, px_per_m, max_draw_dist, "#0288D1")
+        self._draw_side_ray(result, result.bottom_ray_deg, origin_x, cam_y, target_y, px_per_m, max_draw_dist, P["ray"])
+        self._draw_side_ray(result, camera.tilt_deg, origin_x, cam_y, target_y, px_per_m, max_draw_dist, P["ray-axis"], dash=(2, 4))
+        self._draw_side_ray(result, result.top_ray_deg, origin_x, cam_y, target_y, px_per_m, max_draw_dist, P["ray"])
 
         dead_x = origin_x + result.dead_zone_m * px_per_m
-        self.canvas.create_line(dead_x, y0, dead_x, y1, fill="#E65100", dash=(2, 2))
+        self.canvas.create_line(dead_x, y0, dead_x, y1, fill=P["warn"], dash=(2, 2))
         self.canvas.create_text(
             dead_x + 4,
             max(y0 + 18, target_y - 34),
             text=f"Kör: {result.dead_zone_m:.1f}m",
-            fill="#D32F2F",
-            font=("Arial", 7, "bold"),
+            fill=P["danger"],
+            font=(FONT, 7, "bold"),
         )
-        self.canvas.create_line(origin_x, ground_y, origin_x, cam_y, fill="#263238", width=3)
-        self.canvas.create_oval(origin_x - 5, cam_y - 5, origin_x + 5, cam_y + 5, fill="#D32F2F", outline="")
+        self.canvas.create_line(origin_x, ground_y, origin_x, cam_y, fill=P["structure"], width=3)
+        self.canvas.create_oval(origin_x - 5, cam_y - 5, origin_x + 5, cam_y + 5, fill=P["camera"], outline="")
 
     def _draw_side_ray(self, result: OpticResult, angle_deg: float, origin_x: float, cam_y: float, target_y: float, px_per_m: float, max_draw_dist: float, color: str, dash=(4, 2)):
         # 0.5, not an independently-chosen 0.2: calculations.py treats
@@ -309,7 +312,7 @@ class CanvasDrawer:
                 min_y, max_y = -half_h, half_h
             world = (min_x, max_x, min_y, max_y)
 
-        self.canvas.create_rectangle(*plot, outline="#90A4AE")
+        self.canvas.create_rectangle(*plot, outline=P["axis"])
         self._draw_plan_grid(plot, world)
 
         for camera in cameras:
@@ -378,7 +381,7 @@ class CanvasDrawer:
 
     def _draw_plan_background(self, plot: Tuple[float, float, float, float], plan_path: str, plan_photo_cache: Dict[str, Any]):
         if not plan_path:
-            self.canvas.create_rectangle(*plot, fill="#FAFAFA", outline="")
+            self.canvas.create_rectangle(*plot, fill=P["surface"], outline="")
             return
         x0, y0, x1, y1 = plot
         target_size = (max(int(x1 - x0), 1), max(int(y1 - y0), 1))
@@ -388,7 +391,7 @@ class CanvasDrawer:
                 if plan_photo_cache.get("photo") is None or plan_photo_cache.get("source") != source_key:
                     image = Image.open(plan_path)
                     image.thumbnail(target_size)
-                    canvas_image = Image.new("RGB", target_size, "#FAFAFA")
+                    canvas_image = Image.new("RGB", target_size, P["surface"])
                     offset = ((target_size[0] - image.width) // 2, (target_size[1] - image.height) // 2)
                     canvas_image.paste(image.convert("RGB"), offset)
                     plan_photo_cache["photo"] = ImageTk.PhotoImage(canvas_image, master=self.canvas)
@@ -400,13 +403,13 @@ class CanvasDrawer:
                     plan_photo_cache["source"] = plan_path
                 self.canvas.create_image((x0 + x1) / 2, (y0 + y1) / 2, image=plan_photo_cache["photo"], anchor=tk.CENTER)
         except Exception:
-            self.canvas.create_rectangle(*plot, fill="#FFF8E1", outline="")
+            self.canvas.create_rectangle(*plot, fill=P["warn-bg"], outline="")
             self.canvas.create_text(
                 (x0 + x1) / 2,
                 (y0 + y1) / 2,
                 text="Plan görseli açılamadı. PNG deneyin veya Pillow kurun.",
-                fill="#E65100",
-                font=("Arial", 9, "bold"),
+                fill=P["warn"],
+                font=(FONT, 9, "bold"),
             )
 
     def _draw_plan_grid(self, plot: Tuple[float, float, float, float], world: Tuple[float, float, float, float]):
@@ -416,15 +419,15 @@ class CanvasDrawer:
         x = start_x
         while x <= max_x + step:
             px, _ = world_to_canvas(x, 0, plot, world)
-            self.canvas.create_line(px, plot[1], px, plot[3], fill="#ECEFF1")
+            self.canvas.create_line(px, plot[1], px, plot[3], fill=P["grid"])
             if x >= min_x:
-                self.canvas.create_text(px + 2, plot[1] + 2, text=f"{x:g}m", anchor=tk.NW, fill="#78909C", font=("Arial", 7))
+                self.canvas.create_text(px + 2, plot[1] + 2, text=f"{x:g}m", anchor=tk.NW, fill=P["label"], font=(FONT, 7))
             x += step
         start_y = math.floor(min_y / step) * step
         y = start_y
         while y <= max_y + step:
             _, py = world_to_canvas(0, y, plot, world)
-            self.canvas.create_line(plot[0], py, plot[2], py, fill="#ECEFF1")
+            self.canvas.create_line(plot[0], py, plot[2], py, fill=P["grid"])
             y += step
 
     def _draw_topdown_result(self, result: OpticResult, plot: Tuple[float, float, float, float], world: Tuple[float, float, float, float], ppm_levels: List[PPMLevel], outline_only=False, max_draw_dist=None):
@@ -441,10 +444,10 @@ class CanvasDrawer:
                 continue
             cur_dist = min(dist, max_draw_dist or dist)
             if outline_only:
-                self._draw_wedge_outline(result.camera, last_dist, cur_dist, result.hfov_deg / 2, plot, world, "#263238")
+                self._draw_wedge_outline(result.camera, last_dist, cur_dist, result.hfov_deg / 2, plot, world, P["structure"])
             else:
                 points = wedge_polygon_points(result.camera, last_dist, cur_dist, result.hfov_deg / 2, plot, world)
-                self.canvas.create_polygon(points, fill=level.color, outline="#455A64", width=1)
+                self.canvas.create_polygon(points, fill=level.color, outline=P["axis"], width=1)
             last_dist = cur_dist
 
         if result.dead_zone_m > 0:
@@ -452,16 +455,16 @@ class CanvasDrawer:
                 result.camera, 0, result.dead_zone_m, result.hfov_deg / 2, plot, world
             )
             if result.dead_zone_covered_by:
-                self.canvas.create_polygon(dz_points, fill="#E8F5E9", outline="#2E7D32", width=1.5, dash=(4, 2), stipple="gray25")
+                self.canvas.create_polygon(dz_points, fill=P["ok-bg"], outline=P["ok"], width=1.5, dash=(4, 2), stipple="gray25")
             else:
-                self.canvas.create_polygon(dz_points, fill="#FFCDD2", outline="#C62828", width=1.5, stipple="gray25")
+                self.canvas.create_polygon(dz_points, fill=P["danger-bg"], outline=P["danger"], width=1.5, stipple="gray25")
             center_dist = result.dead_zone_m * 0.5
             center_point = polar_point(result.camera, center_dist, 0)
             cx, cy = world_to_canvas(center_point[0], center_point[1], plot, world)
             self.canvas.create_text(
                 cx, cy, text=f"Kör\n{result.dead_zone_m:.1f}m",
-                fill="#C62828" if not result.dead_zone_covered_by else "#2E7D32",
-                font=("Arial", 7, "bold"),
+                fill=P["danger"] if not result.dead_zone_covered_by else P["ok"],
+                font=(FONT, 7, "bold"),
             )
 
     def _draw_wedge_outline(self, camera: CameraConfig, start_dist: float, end_dist: float, half_angle: float, plot: Tuple[float, float, float, float], world: Tuple[float, float, float, float], color: str):
@@ -475,9 +478,9 @@ class CanvasDrawer:
         tip = (x + 12 * math.cos(angle), y - 12 * math.sin(angle))
         left = (x + 7 * math.cos(angle + math.radians(145)), y - 7 * math.sin(angle + math.radians(145)))
         right = (x + 7 * math.cos(angle - math.radians(145)), y - 7 * math.sin(angle - math.radians(145)))
-        fill = "#D32F2F" if selected else "#1976D2"
-        self.canvas.create_polygon([tip, left, right], fill=fill, outline="#263238")
-        self.canvas.create_text(x + 8, y + 8, text=camera.name, anchor=tk.NW, fill="#263238", font=("Arial", 8, "bold"))
+        fill = P["selected"] if selected else P["camera"]
+        self.canvas.create_polygon([tip, left, right], fill=fill, outline=P["bg-0"])
+        self.canvas.create_text(x + 8, y + 8, text=camera.name, anchor=tk.NW, fill=P["text"], font=(FONT, 8, "bold"))
 
     def _draw_target_marker(self, plot: Tuple[float, float, float, float], world: Tuple[float, float, float, float], target_point: TargetPoint, selected_level: PPMLevel, last_selected_results: List[OpticResult]):
         if not target_point.active:
@@ -487,7 +490,7 @@ class CanvasDrawer:
         if last_selected_results:
             data = target_analysis_for_result(target_point, last_selected_results[0], selected_level)
             ok = data["inside_angle"] and data["inside_geometry"] and data["ppm_ok"] and data["ir_ok"]
-        color = "#2E7D32" if ok else "#C62828"
+        color = P["ok"] if ok else P["danger"]
         self.canvas.create_line(x - 9, y, x + 9, y, fill=color, width=2)
         self.canvas.create_line(x, y - 9, x, y + 9, fill=color, width=2)
         self.canvas.create_oval(x - 6, y - 6, x + 6, y + 6, outline=color, width=2)
@@ -497,5 +500,5 @@ class CanvasDrawer:
             text=target_point.name,
             anchor=tk.NW,
             fill=color,
-            font=("Arial", 8, "bold"),
+            font=(FONT, 8, "bold"),
         )

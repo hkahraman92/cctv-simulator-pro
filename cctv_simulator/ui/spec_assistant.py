@@ -14,7 +14,7 @@ from typing import Dict, Any, Optional
 from ..compliance import build_compliance_prompt, gemini_response_text, extract_json_object, rule_based_compliance, run_gemini_in_thread
 from ..exporters import export_compliance_excel
 from .. import training_log
-from ..theme import is_themed, COLORS, StyledButton, fit_and_center_window, set_window_icon
+from ..theme import is_themed, COLORS, FONT_UI, StyledButton, fit_and_center_window, flow_layout, set_window_icon
 
 
 class SpecAssistantWindow:
@@ -61,18 +61,27 @@ class SpecAssistantWindow:
         paned.add(left, weight=1)
         paned.add(right, weight=2)
 
-        self.window.after(100, lambda: self._set_sash_pos(paned, 380))
+        # A fixed after(100) could fire while the pane was still 1 px wide; the
+        # sash then clamped to 0 and the whole input column stayed hidden.
+        def _place_sash(event):
+            if event.width < 400:
+                return
+            paned.unbind("<Configure>")
+            self._set_sash_pos(paned, max(380, int(event.width * 0.36)))
+        paned.bind("<Configure>", _place_sash)
 
         text_frame = ttk.LabelFrame(left, text=" Gelen Şartname / Teknik İsterler ", padding=6)
-        text_frame.pack(fill=tk.BOTH, expand=True)
-        self.spec_text = tk.Text(text_frame, wrap=tk.WORD, height=22, font=("Segoe UI", 9))
+        # Packed after the Analiz group (side=BOTTOM below): the text box takes
+        # what is left instead of pushing the controls out of the window.
+        self.spec_text = tk.Text(text_frame, wrap=tk.WORD, height=6, font=(FONT_UI, 10))
         self.spec_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         spec_scroll = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=self.spec_text.yview)
         spec_scroll.pack(side=tk.RIGHT, fill=tk.Y)
         self.spec_text.configure(yscrollcommand=spec_scroll.set)
 
         control_frame = ttk.LabelFrame(left, text=" Analiz ", padding=6)
-        control_frame.pack(fill=tk.X, pady=(8, 0))
+        control_frame.pack(side=tk.BOTTOM, fill=tk.X, pady=(8, 0))
+        text_frame.pack(fill=tk.BOTH, expand=True)
         StyledButton(control_frame, text="Şartname Dosyası Yükle", command=self.load_spec_file, bootstyle="secondary").grid(
             row=0, column=0, columnspan=2, sticky=tk.EW, pady=(0, 4)
         )
@@ -92,7 +101,7 @@ class SpecAssistantWindow:
         self.use_ollama_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(control_frame, text="Yerel model (Ollama) kullan",
                         variable=self.use_ollama_var).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(4, 0))
-        StyledButton(control_frame, text="Yapay Zeka ile Analiz Et", command=self.analyze_spec_with_gemini, bootstyle="warning").grid(
+        StyledButton(control_frame, text="Yapay Zeka ile Analiz Et", command=self.analyze_spec_with_gemini, bootstyle="secondary").grid(
             row=4, column=0, columnspan=2, sticky=tk.EW, pady=(4, 4)
         )
         StyledButton(control_frame, text="Kurallı + Fizik Analizi", command=self.analyze_spec_rule_based, bootstyle="primary").grid(
@@ -110,23 +119,25 @@ class SpecAssistantWindow:
         StyledButton(_tpl_row, text="Sil", command=self.delete_requirement_template, bootstyle="danger-outline").pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
         self._refresh_templates()
 
-        ttk.Separator(control_frame).grid(row=9, column=0, columnspan=2, sticky=tk.EW, pady=4)
-        StyledButton(control_frame, text="Matrix CSV Kaydet", command=self.export_compliance_csv, bootstyle="info-outline").grid(
-            row=10, column=0, columnspan=2, sticky=tk.EW, pady=(0, 4)
-        )
-        StyledButton(control_frame, text="Matrix Excel (.xlsx) Kaydet", command=self.export_compliance_excel, bootstyle="success").grid(
-            row=11, column=0, columnspan=2, sticky=tk.EW, pady=(0, 4)
-        )
-        StyledButton(control_frame, text="📄 EN 62676-4 Uygunluk Beyanı", command=self.export_compliance_statement, bootstyle="primary-outline").grid(
-            row=12, column=0, columnspan=2, sticky=tk.EW, pady=(0, 4)
-        )
-        StyledButton(control_frame, text="🧠 Eğitim Verisi Dışa Aktar (.jsonl)", command=self.export_training_data, bootstyle="secondary-outline").grid(
-            row=13, column=0, columnspan=2, sticky=tk.EW
-        )
         control_frame.columnconfigure(1, weight=1)
 
         matrix_frame = ttk.LabelFrame(right, text=" Compliance Matrix ", padding=6)
         matrix_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Exports act on the matrix, so they sit under it; in the left column
+        # they pushed the specification text box down to a single line.
+        export_bar = ttk.Frame(matrix_frame)
+        export_bar.pack(side=tk.BOTTOM, fill=tk.X, pady=(6, 0))
+        flow_layout(export_bar, [
+            StyledButton(export_bar, text="Matrix CSV Kaydet", command=self.export_compliance_csv,
+                         bootstyle="secondary-outline"),
+            StyledButton(export_bar, text="Matrix Excel (.xlsx) Kaydet", command=self.export_compliance_excel,
+                         bootstyle="secondary-outline"),
+            StyledButton(export_bar, text="📄 EN 62676-4 Uygunluk Beyanı", command=self.export_compliance_statement,
+                         bootstyle="secondary-outline"),
+            StyledButton(export_bar, text="🧠 Eğitim Verisi Dışa Aktar (.jsonl)", command=self.export_training_data,
+                         bootstyle="secondary-outline"),
+        ], padx=2, pady=2, expand=True)
 
         filter_bar = ttk.Frame(matrix_frame)
         filter_bar.pack(fill=tk.X, pady=(0, 4))

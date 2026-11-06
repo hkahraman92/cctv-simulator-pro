@@ -30,32 +30,37 @@ from ..database import load_camera_library
 from ..models import CameraConfig, OpticResult
 from ..calculations import calculate_for_camera, ground_distance_for_ppm, ppm_at_distance
 from ..atmosphere import WEATHER_PRESETS, band_for_camera, usable_range_m
+from .. import design_tokens as _dt
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Design tokens
 # ─────────────────────────────────────────────────────────────────────────────
 
-BG        = "#1E1E2E"   # application ground
-PANEL     = "#2A2A3C"   # panels, cards
-PANEL_HI  = "#33334A"   # raised / hover
-FIELD     = "#232333"   # input wells
-STROKE    = "#3A3A4E"   # hairline separators
-STROKE_HI = "#4A4A63"
+# Values come from the shared design tokens (design_tokens.py); the names
+# below are this module's roles.
+_dt.register_fonts()
+BG        = _dt.tok("bg-0")      # application ground
+PANEL     = _dt.tok("bg-1")      # panels, cards
+PANEL_HI  = _dt.tok("bg-3")      # raised / hover
+FIELD     = _dt.tok("bg-2")      # input wells
+STROKE    = _dt.tok("line")      # hairline separators
+STROKE_HI = _dt.tok("line-strong")
 
-TEXT      = "#E6E6F0"
-TEXT_DIM  = "#8A8AA3"
-TEXT_MUTE = "#5F5F7A"
+TEXT      = _dt.tok("ink")
+TEXT_DIM  = _dt.tok("ink-2")
+TEXT_MUTE = _dt.tok("ink-3")
 
-CYAN      = "#00E5FF"   # primary accent - interactive, active, measured
-AMBER     = "#FFB300"   # secondary accent - attention, Recognition band
+CYAN      = _dt.tok("accent")    # primary accent - interactive, active, measured
+CYAN_HI   = _dt.tok("ok")        # hover of accent controls
+AMBER     = _dt.tok("warn")      # attention
 
-# EN 62676-4 task bands
-C_IDENT   = "#00E676"   # Teşhis / Identification
-C_RECOG   = "#FFB300"   # Tanıma / Recognition
-C_OBSERVE = "#FF7043"   # Gözlem / Observation
-C_DETECT  = "#FF4D6D"   # Algılama / Detection
-C_DEAD    = "#FF4D6D"   # dead zone hatch
+# EN 62676-4 task bands: the cold DORI ramp shared with the map legend
+C_IDENT   = _dt.tok("dori-identify")    # Teşhis / Identification
+C_RECOG   = _dt.tok("dori-recognize")   # Tanıma / Recognition
+C_OBSERVE = _dt.tok("dori-observe")     # Gözlem / Observation
+C_DETECT  = _dt.tok("dori-detect")      # Algılama / Detection
+C_DEAD    = _dt.tok("danger")           # dead zone hatch
 
 # EN 62676-4 pixel density thresholds (px/m across the target)
 PPM_IDENT   = 250.0
@@ -145,7 +150,7 @@ class Field(ctk.CTkFrame):
             self, from_=lo, to=hi, number_of_steps=steps, variable=self.var,
             command=self._changed, height=12,
             fg_color=FIELD, progress_color=CYAN, button_color=CYAN,
-            button_hover_color="#66F0FF", border_width=0,
+            button_hover_color=CYAN_HI, border_width=0,
         )
         self.slider.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(3, 0))
 
@@ -177,7 +182,7 @@ class Select(ctk.CTkFrame):
         self.var = tk.StringVar(value=value)
         self.menu = ctk.CTkOptionMenu(
             self, values=values, variable=self.var, command=lambda _v: on_change(),
-            height=28, corner_radius=6, font=(font_ui, 11),
+            height=28, corner_radius=2, font=(font_ui, 11),
             fg_color=FIELD, button_color=FIELD, button_hover_color=PANEL_HI,
             text_color=TEXT, dropdown_fg_color=PANEL, dropdown_hover_color=PANEL_HI,
             dropdown_text_color=TEXT, dropdown_font=(font_ui, 11),
@@ -193,7 +198,7 @@ class StatCard(ctk.CTkFrame):
     """Bottom-bar readout: accent spine, micro-label, mono value, footnote."""
 
     def __init__(self, master, label: str, accent: str, font_ui: str, font_mono: str):
-        super().__init__(master, fg_color=PANEL, corner_radius=8)
+        super().__init__(master, fg_color=PANEL, corner_radius=4)
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(2, weight=1)
         self._accent = accent
@@ -596,13 +601,13 @@ class _WorkbenchBody:
             except Exception:
                 tk._default_root = self
 
-        ctk.set_appearance_mode("dark")
+        ctk.set_appearance_mode("dark" if _dt.is_dark() else "light")
 
         self.title("CCTV Optics Workbench — EN 62676-4")
         self._fit_to_screen()
 
-        self.font_ui = _pick_font("Segoe UI", "Inter", "Ubuntu", "DejaVu Sans", "Arial")
-        self.font_mono = _pick_font("JetBrains Mono", "Cascadia Mono", "Consolas",
+        self.font_ui = _pick_font(_dt.FONT_UI_PREFERRED, "Segoe UI", "Ubuntu", "DejaVu Sans", "Arial")
+        self.font_mono = _pick_font(_dt.FONT_MONO_PREFERRED, "Cascadia Mono", "Consolas",
                                     "DejaVu Sans Mono", "Courier New")
 
         try:
@@ -669,8 +674,8 @@ class _WorkbenchBody:
 
         self.lens_mode = ctk.CTkSegmentedButton(
             bar, values=["GENİŞ", "DAR"], command=lambda _v: self.request_render(),
-            height=30, corner_radius=6, font=(self.font_ui, 11, "bold"),
-            fg_color=FIELD, selected_color=CYAN, selected_hover_color="#66F0FF",
+            height=30, corner_radius=2, font=(self.font_ui, 11, "bold"),
+            fg_color=FIELD, selected_color=CYAN, selected_hover_color=CYAN_HI,
             unselected_color=FIELD, unselected_hover_color=PANEL_HI,
             text_color=TEXT, text_color_disabled=TEXT_MUTE,
         )
@@ -693,12 +698,12 @@ class _WorkbenchBody:
         def section(title: str):
             nonlocal row
             widget = SectionLabel(rail, title, self.font_ui)
-            widget.grid(row=row, column=0, sticky="ew", pady=(14 if row else 4, 8))
+            widget.grid(row=row, column=0, sticky="ew", padx=(16, 12), pady=(14 if row else 10, 8))
             row += 1
 
         def add(widget, pad=(0, 9)):
             nonlocal row
-            widget.grid(row=row, column=0, sticky="ew", padx=(0, 4), pady=pad)
+            widget.grid(row=row, column=0, sticky="ew", padx=(16, 12), pady=pad)
             row += 1
 
         section("Kamera")
@@ -766,7 +771,7 @@ class _WorkbenchBody:
         self.btn_measure = ctk.CTkButton(
             rail, text="📷  Eğik kenar fotoğrafı → k ölç", command=self._measure_edge,
             fg_color=FIELD, hover_color=PANEL_HI, text_color=TEXT,
-            font=(self.font_ui, 11), height=30, corner_radius=6,
+            font=(self.font_ui, 11), height=30, corner_radius=2,
         )
         add(self.btn_measure, pad=(0, 4))
         self.lbl_iq = ctk.CTkLabel(rail, text="", text_color=TEXT_DIM,
@@ -800,7 +805,7 @@ class _WorkbenchBody:
     def _build_requirement_strip(self, parent) -> ctk.CTkFrame:
         """The design requirement lives beside the verdict it produces, not
         buried at the bottom of the parameter rail."""
-        strip = ctk.CTkFrame(parent, fg_color=PANEL, corner_radius=8, height=48)
+        strip = ctk.CTkFrame(parent, fg_color=PANEL, corner_radius=4, height=48)
         strip.grid_propagate(False)
         # The slider column takes the slack. It used to be a fixed 320 px with
         # an empty stretch column after it: ~830 px of fixed controls in a
@@ -816,7 +821,7 @@ class _WorkbenchBody:
 
         self.sel_task = ctk.CTkOptionMenu(
             strip, values=list(TASKS.keys()), command=lambda _v: self.request_render(),
-            width=210, height=28, corner_radius=6, font=(self.font_ui, 11),
+            width=210, height=28, corner_radius=2, font=(self.font_ui, 11),
             fg_color=FIELD, button_color=FIELD, button_hover_color=PANEL_HI,
             text_color=TEXT, dropdown_fg_color=PANEL, dropdown_hover_color=PANEL_HI,
             dropdown_text_color=TEXT, dropdown_font=(self.font_ui, 11),
@@ -832,7 +837,7 @@ class _WorkbenchBody:
             strip, from_=1.0, to=200.0, number_of_steps=398,
             variable=self.req_dist_var, command=self._req_dist_changed, height=12,
             fg_color=FIELD, progress_color=AMBER, button_color=AMBER,
-            button_hover_color="#FFCC55", border_width=0,
+            button_hover_color=AMBER, border_width=0,
         )
         self.slider_req.configure(width=110)
         self.slider_req.grid(row=0, column=4, sticky="ew", padx=(0, 16))

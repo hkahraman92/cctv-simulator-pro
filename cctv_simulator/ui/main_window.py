@@ -7,6 +7,7 @@ from tkinter import ttk, filedialog, messagebox, colorchooser
 from typing import Dict, List, Any, Optional, Tuple
 
 from ..config import SENSOR_DIMS_MM, RESOLUTIONS, configure_tk_paths, get_admin_password
+from ..design_tokens import tok as _tok, THEMES, THEME_NAMES, get_theme, set_theme
 from ..i18n import t as _t, available_languages, get_language, set_language, LANGUAGE_NAMES
 from ..models import CameraConfig, TargetPoint, PPMLevel, OpticResult, DEFAULT_LEVELS
 from ..database import load_camera_library
@@ -24,7 +25,7 @@ from ..calculations import (
 )
 from ..exporters import export_csv, export_png, export_pdf, export_excel
 from ..spec_writer import write_requirement_docx
-from ..theme import COLORS, StyledButton, fit_and_center_window, make_scrollable, flow_layout, wrap_label
+from ..theme import COLORS, FONT_UI, StyledButton, fit_and_center_window, make_scrollable, flow_layout, wrap_label
 from .canvas_drawer import CanvasDrawer, canvas_to_world, top_plot_from_rect
 from .spec_assistant import SpecAssistantWindow
 from .camera_db_window import CameraDatabaseWindow
@@ -119,9 +120,9 @@ class DualViewCCTVDesignApp:
         self.combo_camera.grid(row=1, column=0, columnspan=3, sticky=tk.EW, pady=(2, 6))
         self.combo_camera.bind("<<ComboboxSelected>>", self._on_camera_selected)
 
-        StyledButton(camera_header, text="Ekle", command=self.add_camera, bootstyle="success-outline").grid(row=2, column=0, sticky=tk.EW, padx=(0, 3))
-        StyledButton(camera_header, text="Kopyala", command=self.duplicate_camera, bootstyle="info-outline").grid(row=2, column=1, sticky=tk.EW, padx=3)
-        StyledButton(camera_header, text="Sil", command=self.delete_camera, bootstyle="danger-outline").grid(row=2, column=2, sticky=tk.EW, padx=(3, 0))
+        StyledButton(camera_header, text="Ekle", command=self.add_camera, bootstyle="secondary-outline").grid(row=2, column=0, sticky=tk.EW, padx=(0, 3))
+        StyledButton(camera_header, text="Kopyala", command=self.duplicate_camera, bootstyle="secondary-outline").grid(row=2, column=1, sticky=tk.EW, padx=3)
+        StyledButton(camera_header, text="Sil", command=self.delete_camera, bootstyle="secondary-outline").grid(row=2, column=2, sticky=tk.EW, padx=(3, 0))
         camera_header.columnconfigure((0, 1, 2), weight=1)
 
         self.left_notebook = ttk.Notebook(left_frame)
@@ -213,13 +214,13 @@ class DualViewCCTVDesignApp:
             recommendation_frame,
             height=4,
             wrap=tk.WORD,
-            font=("Segoe UI", 9),
+            font=(FONT_UI, 9),
             bg=COLORS["text_bg"],
             fg=COLORS["text_fg"],
             relief="flat",
             borderwidth=1,
             highlightthickness=1,
-            highlightbackground="#DEE2E6",
+            highlightbackground=_tok("line"),
         )
         rec_scroll = ttk.Scrollbar(recommendation_frame, orient=tk.VERTICAL,
                                    command=self.recommendation_text.yview)
@@ -295,21 +296,21 @@ class DualViewCCTVDesignApp:
                 ttk.Label(title_box, image=self.logo_img).pack(side=tk.LEFT, padx=(0, 6))
                 ttk.Label(
                     title_box, text="CCTV Simulator",
-                    font=("Segoe UI", 12, "bold"), foreground=COLORS["accent"],
+                    font=(FONT_UI, 12, "bold"), foreground=COLORS["accent"],
                 ).pack(side=tk.LEFT, padx=(0, 12))
         except Exception:
             pass
 
         btn_box = ttk.Frame(top_info)
         buttons = [
-            StyledButton(btn_box, text="◈ Optik Tezgâhı", command=self.open_optics_workbench, bootstyle="info"),
-            StyledButton(btn_box, text="👁️ 3D Kamera Bakış Açısı", command=self.open_3d_view, bootstyle="primary"),
-            StyledButton(btn_box, text="🗺️ 3D Arazi & Viewshed Analizi", command=self.open_terrain_viewshed,
-                         bootstyle="success"),
+            StyledButton(btn_box, text="Optik Tezgâhı", command=self.open_optics_workbench, bootstyle="secondary"),
+            StyledButton(btn_box, text="3D Kamera Bakış Açısı", command=self.open_3d_view, bootstyle="secondary"),
+            StyledButton(btn_box, text="3D Arazi & Viewshed Analizi", command=self.open_terrain_viewshed,
+                         bootstyle="secondary"),
         ]
         flow_layout(btn_box, buttons, padx=4, justify="right")
         status_lbl = wrap_label(ttk.Label(top_info, textvariable=self.status_var, foreground=COLORS["danger"]))
-        info_lbl = wrap_label(ttk.Label(top_info, textvariable=self.info_var, font=("Segoe UI", 10, "bold"),
+        info_lbl = wrap_label(ttk.Label(top_info, textvariable=self.info_var, font=(FONT_UI, 10, "bold"),
                                         foreground=COLORS["accent"]))
         state = {"wide": None}
 
@@ -450,7 +451,7 @@ class DualViewCCTVDesignApp:
         ).pack(anchor=tk.W)
         row += 1
 
-        StyledButton(self.tab_camera, text="Kamerayı Güncelle", command=lambda: self.calculate(show_errors=True), bootstyle="success").grid(
+        StyledButton(self.tab_camera, text="Kamerayı Güncelle", command=lambda: self.calculate(show_errors=True), bootstyle="primary").grid(
             row=row, column=0, columnspan=2, sticky=tk.EW, pady=(4, 2)
         )
         row += 1
@@ -458,7 +459,7 @@ class DualViewCCTVDesignApp:
             row=row, column=0, columnspan=2, sticky=tk.EW, pady=(2, 0)
         )
         row += 1
-        StyledButton(self.tab_camera, text="◈ Optik Tezgâhı (EN 62676-4)", command=self.open_optics_workbench, bootstyle="info-outline").grid(
+        StyledButton(self.tab_camera, text="◈ Optik Tezgâhı (EN 62676-4)", command=self.open_optics_workbench, bootstyle="secondary-outline").grid(
             row=row, column=0, columnspan=2, sticky=tk.EW, pady=(2, 0)
         )
 
@@ -485,9 +486,9 @@ class DualViewCCTVDesignApp:
         StyledButton(self.tab_project, text="👁️ 3D Kamera Bakış Açısı", command=self.open_3d_view, bootstyle="primary").pack(
             fill=tk.X, pady=(0, 8)
         )
-        StyledButton(self.tab_project, text="Projeyi Kaydet", command=self.save_project, bootstyle="success").pack(fill=tk.X, pady=(0, 6))
-        StyledButton(self.tab_project, text="Proje Yükle", command=self.load_project, bootstyle="info").pack(fill=tk.X, pady=(0, 10))
-        StyledButton(self.tab_project, text="Şartname / Compliance Matrix", command=self.open_spec_assistant, bootstyle="warning").pack(
+        StyledButton(self.tab_project, text="Projeyi Kaydet", command=self.save_project, bootstyle="primary").pack(fill=tk.X, pady=(0, 6))
+        StyledButton(self.tab_project, text="Proje Yükle", command=self.load_project, bootstyle="secondary").pack(fill=tk.X, pady=(0, 10))
+        StyledButton(self.tab_project, text="Şartname / Compliance Matrix", command=self.open_spec_assistant, bootstyle="secondary").pack(
             fill=tk.X, pady=(0, 6)
         )
         StyledButton(self.tab_project, text="Kamera Veritabanı", command=self.open_camera_database, bootstyle="secondary").pack(
@@ -511,7 +512,7 @@ class DualViewCCTVDesignApp:
             variable=self.auto_view_scale,
             command=self.calculate,
         ).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(6, 0))
-        self.lbl_plan_path = ttk.Label(plan_frame, text="Plan yok", wraplength=245, foreground="#546E7A")
+        self.lbl_plan_path = ttk.Label(plan_frame, text="Plan yok", wraplength=245, foreground=_tok("ink-3"))
         self.lbl_plan_path.grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(8, 0))
         plan_frame.columnconfigure(1, weight=1)
 
@@ -519,7 +520,7 @@ class DualViewCCTVDesignApp:
             "Plan görüntüsü PNG/GIF ise doğrudan açılır. JPG yeniden boyutlandırma ve PNG çıktı için "
             "Pillow kuruluysa daha iyi sonuç verir."
         )
-        ttk.Label(self.tab_project, text=note, wraplength=260, foreground="#455A64").pack(fill=tk.X, pady=(10, 0))
+        ttk.Label(self.tab_project, text=note, wraplength=260, foreground=_tok("ink-3")).pack(fill=tk.X, pady=(10, 0))
 
     def _build_assistant_tab(self):
         tool_frame = ttk.LabelFrame(self.tab_assistant, text=" Plan Etkileşimi ", padding=8)
@@ -542,7 +543,7 @@ class DualViewCCTVDesignApp:
         ttk.Button(target_frame, text="Hedefi Temizle", command=self.clear_target_point).grid(
             row=2, column=0, columnspan=2, sticky=tk.EW, pady=(6, 4)
         )
-        ttk.Label(target_frame, textvariable=self.target_info_var, wraplength=255, foreground="#37474F").grid(
+        ttk.Label(target_frame, textvariable=self.target_info_var, wraplength=255, foreground=_tok("ink-2")).grid(
             row=3, column=0, columnspan=2, sticky=tk.W
         )
         target_frame.columnconfigure(1, weight=1)
@@ -555,7 +556,7 @@ class DualViewCCTVDesignApp:
         ttk.Button(lens_frame, text="Lens Öner", command=self.update_lens_suggestion).grid(
             row=1, column=0, columnspan=2, sticky=tk.EW, pady=(6, 4)
         )
-        ttk.Label(lens_frame, textvariable=self.lens_suggestion_var, wraplength=255, foreground="#01579B").grid(
+        ttk.Label(lens_frame, textvariable=self.lens_suggestion_var, wraplength=255, foreground=_tok("info")).grid(
             row=2, column=0, columnspan=2, sticky=tk.W
         )
         lens_frame.columnconfigure(1, weight=1)
@@ -572,7 +573,7 @@ class DualViewCCTVDesignApp:
             alternative_frame,
             textvariable=self.alternative_models_var,
             wraplength=255,
-            foreground="#263238",
+            foreground=_tok("ink-2"),
         ).pack(fill=tk.X)
 
         optimize_frame = ttk.LabelFrame(self.tab_assistant, text=" Kör Nokta Optimizasyonu ", padding=8)
@@ -583,7 +584,7 @@ class DualViewCCTVDesignApp:
         ttk.Button(optimize_frame, text="Tilt Değerini Uygula", command=lambda: self.optimize_tilt(True)).pack(
             fill=tk.X, pady=(0, 4)
         )
-        ttk.Label(optimize_frame, textvariable=self.optimization_var, wraplength=255, foreground="#4E342E").pack(
+        ttk.Label(optimize_frame, textvariable=self.optimization_var, wraplength=255, foreground=_tok("ink-2")).pack(
             fill=tk.X
         )
 
@@ -593,7 +594,7 @@ class DualViewCCTVDesignApp:
             setup_frame,
             text="\"Lens Önerisi\" bölümündeki hedef mesafe + seçili PPM seviyesini "
                  "kullanır: önce gereken odağı hesaplar, sonra o odak için en iyi tilt'i tarar.",
-            wraplength=255, foreground="#616161", font=("Segoe UI", 8),
+            wraplength=255, foreground=_tok("ink-3"), font=(FONT_UI, 8),
         ).pack(fill=tk.X, pady=(0, 4))
         ttk.Button(setup_frame, text="Odak + Tilt Hesapla", command=lambda: self.optimize_camera_setup_ui(False)).pack(
             fill=tk.X, pady=(0, 4)
@@ -601,7 +602,7 @@ class DualViewCCTVDesignApp:
         ttk.Button(setup_frame, text="İkisini de Uygula", command=lambda: self.optimize_camera_setup_ui(True)).pack(
             fill=tk.X, pady=(0, 4)
         )
-        ttk.Label(setup_frame, textvariable=self.setup_optimization_var, wraplength=255, foreground="#1B5E20").pack(
+        ttk.Label(setup_frame, textvariable=self.setup_optimization_var, wraplength=255, foreground=_tok("ok")).pack(
             fill=tk.X
         )
 
@@ -611,7 +612,7 @@ class DualViewCCTVDesignApp:
             dead_zone_frame,
             textvariable=self.dead_zone_var,
             wraplength=255,
-            foreground="#B71C1C",
+            foreground=_tok("danger"),
             justify=tk.LEFT,
         ).pack(fill=tk.X)
 
@@ -653,19 +654,19 @@ class DualViewCCTVDesignApp:
         ttk.Button(button_row, text="Sil", command=self.delete_level).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
     def _build_export_tab(self):
-        StyledButton(self.tab_export, text=_t("Excel (.xlsx) Rapor Dışa Aktar"), command=self.export_excel, bootstyle="success").pack(fill=tk.X, pady=(0, 6))
-        StyledButton(self.tab_export, text=_t("PDF Mühendislik Raporu (ASELSAN)"), command=self.export_pdf, bootstyle="danger").pack(fill=tk.X, pady=(0, 6))
-        StyledButton(self.tab_export, text=_t("CSV Tablo Dışa Aktar"), command=self.export_csv, bootstyle="info").pack(fill=tk.X, pady=(0, 6))
-        StyledButton(self.tab_export, text=_t("PNG Görsel Dışa Aktar"), command=self.export_png, bootstyle="info").pack(fill=tk.X, pady=(0, 10))
+        StyledButton(self.tab_export, text=_t("Excel (.xlsx) Rapor Dışa Aktar"), command=self.export_excel, bootstyle="secondary").pack(fill=tk.X, pady=(0, 6))
+        StyledButton(self.tab_export, text=_t("PDF Mühendislik Raporu (ASELSAN)"), command=self.export_pdf, bootstyle="primary").pack(fill=tk.X, pady=(0, 6))
+        StyledButton(self.tab_export, text=_t("CSV Tablo Dışa Aktar"), command=self.export_csv, bootstyle="secondary").pack(fill=tk.X, pady=(0, 6))
+        StyledButton(self.tab_export, text=_t("PNG Görsel Dışa Aktar"), command=self.export_png, bootstyle="secondary").pack(fill=tk.X, pady=(0, 10))
         StyledButton(
             self.tab_export, text=_t("Taslak Teknik Şartname (Word, TR+EN)"),
-            command=self.export_spec_docx, bootstyle="warning",
+            command=self.export_spec_docx, bootstyle="secondary",
         ).pack(fill=tk.X, pady=(0, 6))
         export_note = (
             "PDF Raporu ASELSAN Kurumsal Kimliği ve Savunma Sanayii standartlarında, "
             "DORI menzilleri, kamera matrisi, kör nokta ve şartname uyumluluk tablolarını içeren resmi mühendislik raporu olarak üretilir."
         )
-        ttk.Label(self.tab_export, text=export_note, wraplength=260, foreground="#002D62").pack(fill=tk.X)
+        ttk.Label(self.tab_export, text=export_note, wraplength=260, foreground=_tok("ink-2")).pack(fill=tk.X)
         spec_note = (
             "Taslak Şartname, seçili kameranın veritabanı broşür bilgilerini ve "
             "mevcut kurulumla hesaplanan DORI menzillerini 'en az ... olmalıdır' "
@@ -673,7 +674,7 @@ class DualViewCCTVDesignApp:
             "üretir. Bir ihale/teklif şartnamesi olarak kullanılmadan önce "
             "incelenmesi gereken bir taslaktır."
         )
-        ttk.Label(self.tab_export, text=spec_note, wraplength=260, foreground="#8A6100").pack(fill=tk.X, pady=(6, 0))
+        ttk.Label(self.tab_export, text=spec_note, wraplength=260, foreground=_tok("warn")).pack(fill=tk.X, pady=(6, 0))
 
         lang_frame = ttk.LabelFrame(self.tab_export, text="🌐 " + _t("Dil / Language"), padding=6)
         lang_frame.pack(fill=tk.X, pady=(12, 0))
@@ -684,7 +685,25 @@ class DualViewCCTVDesignApp:
         combo.pack(fill=tk.X)
         combo.bind("<<ComboboxSelected>>", self._on_language_changed)
         ttk.Label(lang_frame, text=_t("Dil değişikliği uygulamanın yeniden başlatılmasıyla etkin olur."),
-                  wraplength=260, foreground="#666").pack(fill=tk.X, pady=(4, 0))
+                  wraplength=260, foreground=_tok("ink-3")).pack(fill=tk.X, pady=(4, 0))
+
+        theme_frame = ttk.LabelFrame(self.tab_export, text=_t("Görünüm"), padding=6)
+        theme_frame.pack(fill=tk.X, pady=(12, 0))
+        self._theme_var = tk.StringVar(value=THEME_NAMES[get_theme()])
+        theme_combo = ttk.Combobox(theme_frame, textvariable=self._theme_var,
+                                   values=[THEME_NAMES[k] for k in THEMES], state="readonly")
+        theme_combo.pack(fill=tk.X)
+        theme_combo.bind("<<ComboboxSelected>>", self._on_theme_changed)
+        ttk.Label(theme_frame, text=_t("Tema değişikliği uygulamanın yeniden başlatılmasıyla etkin olur."),
+                  wraplength=260, foreground=_tok("ink-3")).pack(fill=tk.X, pady=(4, 0))
+
+    def _on_theme_changed(self, _evt=None):
+        chosen = next((k for k, name in THEME_NAMES.items() if name == self._theme_var.get()), None)
+        if chosen is None or chosen == get_theme():
+            return
+        set_theme(chosen)
+        messagebox.showinfo(_t("Görünüm"),
+                            _t("Tema değişikliği uygulamanın yeniden başlatılmasıyla etkin olur."))
 
     def _on_language_changed(self, _evt=None):
         chosen = self._lang_var.get()
@@ -819,7 +838,7 @@ class DualViewCCTVDesignApp:
         ttk.Label(
             dialog,
             text="🔒 Kamera Veritabanı Yönetici Erişimi",
-            font=("Segoe UI", 10, "bold"),
+            font=(FONT_UI, 10, "bold"),
             foreground=COLORS["accent"],
         ).pack(anchor=tk.W, padx=16, pady=(16, 4))
 
@@ -856,7 +875,7 @@ class DualViewCCTVDesignApp:
 
         pass_entry.bind("<Return>", check_pass)
 
-        StyledButton(btn_frame, text="Giriş Yap", command=check_pass, bootstyle="success").pack(side=tk.RIGHT, padx=(4, 0))
+        StyledButton(btn_frame, text="Giriş Yap", command=check_pass, bootstyle="primary").pack(side=tk.RIGHT, padx=(4, 0))
         StyledButton(btn_frame, text="İptal", command=dialog.destroy, bootstyle="secondary-outline").pack(side=tk.RIGHT)
 
         self.root.wait_window(dialog)
