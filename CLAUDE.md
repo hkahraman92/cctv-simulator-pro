@@ -27,6 +27,8 @@ cctv_dual_view_simulator.py          giriş noktası
   perimeter_planner.py               çevre çiti kamera dizilimi, BOM
   online_map_loader.py               karo indirme, ortofoto mozaik, GERÇEK DEM
   region_library.py                  kayıtlı bölgeler: DEM + ortofoto diskte, çevrimdışı aç
+  surface_obstacles.py               OSM bina/ağaç → yüzey modeli (DEM + engel), Overpass
+  ptz_animation.py                   PTZ görsel tarama: anlık bakış + iz + gölge, kesit
   compliance.py                      Gemini/Ollama + kural tabanlı şartname analizi
   compliance_optics.py               şartname DORI/menzil isteri → optik motorla doğrula
   compliance_standards.py            EN 62676-4 madde/DORI bilgi tabanı + belirsizlik tarama
@@ -188,6 +190,39 @@ kayıtlı bölge **aynı** `_apply_area` yolundan uygulanır. Proje dosyası
 noktalarından **önce** yükler (yoksa uyarır), başsız CLI `load_region` ile
 aynı grid'i kurar (yoksa hata — sessiz prosedürel yedek yok). Ölçülmemiş
 yükseltili bölge açılırken de `showwarning`.
+
+**Bina / ağaç yüzey modeli (`surface_obstacles.py`).** DEM çıplak zemindir;
+viewshed binaların ve ormanın içinden görüyordu. Harita penceresi "Bina & Ağaç
+Yüksekliklerini İndir (OSM)" → Overpass (`out body geom`; bina, building:part,
+natural=tree/tree_row/wood, landuse=forest; iki ayna, `osm-cache` disk
+önbelleği, ≤36 km², hepsi başarısızsa `RuntimeError`) → `rasterize` arazi
+ızgarasına (PIL "F" çokgen, kısa önce çizilir → örtüşmede uzun kazanır, iç
+halka temizlenir, dış hat da boyanır → hücreden küçük bina kaybolmaz) →
+`with_obstacles` **yeni** TerrainData: `z_grid` = yüzey (zemin + engel),
+`ground_z_grid` = çıplak zemin, `obstacle_grid` / `obstacle_kind`. Bütün
+motorlar (viewshed, mount raster, PTZ, çit LOS) görüş hattını yüzeye karşı
+test eder; **direk zeminde durur**: `TerrainData.ground_elevation_at`
+(viewshed_3d, mount_visibility, perimeter_planner `_place`). Engel yokken
+`ground_elevation_at == get_elevation_at` → optik golden bit-aynı.
+Yükseklik sırası: `height` etiketi → `building:levels` × 3 m → varsayılan
+(bina 6, ağaç 8, orman 12 m); `ObstacleLayer.counts` kaynakları sayar,
+varsayılan payı > %50 ise `showwarning` — tahmini yüzeyi ölçüm gibi sunma.
+Rapor/CSV kaynak satırı `_surface_line`. Kayıtlı bölge `dem.npz`'yi **her
+zaman çıplak** yazar, engelleri `obstacles.npz`'de tutar, açılışta yeniden
+uygular. Arayüz iki sürümü (`_bare_terrain` / `_surface_terrain`) tutar,
+"Binalar / ağaçlar görüşü engellesin" kutusu aralarında geçer;
+`_sync_obstacle_state` yeni bir arazi gelince eski binaları düşürür. Direk
+hücresindeki engel lensten yüksekse (`mount_obstruction_m`) telemetri uyarır.
+Harita modları: **Hibrit** = fotoğraf × yüzey kabartma gölgesi (sırtlar ve
+bina hacmi fotoğrafın üstünde okunur), sonra kaydırıcıyla yükselti rengi
+karışır (eskiden düz fotoğraf/rampa karışımıydı, %80'de "Uydu" ile aynı
+görünüyordu). Fotoğraflı modlarda bina hafif dolgu + ayak izi kenarı
+(çatı görünür kalır); Yükselti modunda dolu. Yükselti renk rampası çıplak
+zeminden ölçeklenir (76 m'lik bir kule rampayı germiş, zemini tek renge
+çevirmişti).
+Yerel frame: güneybatı 0,0, `calculate_bbox` ile aynı doğrusal enlem/boylam.
+Ölçüldü (Kızılay 1 km², 5 m hücre): 956 özellik, Overpass ~38 sn; 12 m direkte
+görünür alan 11 375 → 175 m².
 
 **Kırpma global Mercator piksel uzayında.** Enlemde doğrusal interpolasyon yanlış;
 Mercator Y = `asinh(tan(lat))`.
@@ -390,6 +425,14 @@ sayısıyla ağırlıklı, DORI metrikleri yalnız parse edilenler üzerinden). 
   takılma, sarım yönünden bağımsız dışa bakış, sınır modunda izlenen taraf,
   tele teşhis erişimi, `patrol_for`, planın odağıyla yerleşim, uçtan uca karma
   değerlendirme (tespit→teşhis = en hızlı PTZ).
+- `test_surface_obstacles.py` — yükseklik etiketi ayrıştırma + kaynak sırası,
+  raster kuzey-yukarı / `z_grid` yönü (aynalanmaz), avlu iç halkası, hücreden
+  küçük bina, duvar gölgesi yalnız yüzeyle, direk bina üstünde de zeminde,
+  ayna sunucuya düşme + önbellek, yüksek sesle hata, alan sınırı, kayıtlı
+  bölge çıplak DEM + engel roundtrip, rapor yüzey satırı.
+- `test_ptz_animation.py` — dönüş/sektör pan modeli, koni dışında ışık yok,
+  tepe arkası gölge, bir turda görülen = direğin görebildiği, iz söner,
+  kare < 30 ms, kesit profili.
 - `test_region_library.py` — kayıtlı bölge roundtrip (z_grid bit-aynı, Türkçe
   ad, PNG kayıpsız / Esri JPEG), ölçülmemiş bayrağı korunur, yarım/bozuk kayıt
   atlanır, yol geçişi koruması, aynı ad iki kimlik, `find_region` isteğe göre,
@@ -450,6 +493,19 @@ taşlarını** kullanır — `viewshed_3d.march_rays` (engelleme), `view_limits`
 `ViewGrids.truncated`: istenen menzil haritanınkini aşıyor.
 `view_layers` bakışın pan'dan bağımsız kısmıdır (dikey çerçeve, menzil, px/m,
 görüş hattı); `view_mask` = katmanlar ∩ yatay FOV konisi.
+
+**PTZ görsel tarama (`ptz_animation.py`).** Tarama/sektör modunda "▶ Görsel
+Tarama (canlı)": `SweepPlayback` direk raster'ını + `view_layers`'ı **bir kez**
+kurar (arka planda), sonra her kare (`frame(t)`, ~1–3 ms) o anki pan
+konisinde görünen hücreleri DORI renginde, koni içinde arazi/bina gölgesinde
+kalanları koyu, geçilen yeri sönen iz (`trail_s` ≈ 1,5 FOV / hız), bir kez
+görüleni silik (`memory_alpha`) boyar. Hareket `pan_at` — `sweep_timing` ile
+aynı sabit hız modeli (sektör: git, bekle, dön, bekle). Tuvalde yalnız
+`ptz_anim` etiketli öğeler her kare silinip çizilir (tam harita render'ı
+yok); raster görünür tuvale kırpılıp büyütülür, `map_raster`'ın hemen üstüne
+konur; okuma kutusu camda. Kesit şeridi her 3 karede o anki pan'ı izler
+(`sight_profile`: zemin + bina/ağaç + görülen/engel arkası). Kamera/arazi
+ayarı değişince (`_anim_key`) oynatma durur. Ölçüldü: kare çizimi 6–12 ms.
 
 **Sürekli PTZ taraması (`ptz_schedule.py`).** `SectorPatrol` (a→b→a, hız,
 uçlarda bekleme) ve `Rotation360`; `evaluate_sweep(...)` → `SweepResult`.

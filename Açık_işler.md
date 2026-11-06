@@ -1,3 +1,26 @@
+## -30. PTZ görsel tarama + bina / ağaç yüzey modeli — ✅ (2026-11-06)
+
+İstek: PTZ 360° dönen kamerayı görsel tarama olarak, yükseltiyi dikkate
+alarak göster; bina, ağaç vb. 3B bilgiyi indirip analize kat.
+
+- `ptz_animation.py`: canlı tarama. O an bakılan dilim DORI renginde,
+  tepe / bina arkası koyu gölge, geçilen yer söner, görülen her yer silik
+  kalır; kesit şeridi o anki yönü izler. Zaman ×1/×2/×5/×10. Mevcut 360°
+  direk raster'ı üzerine kurulu (kare 6–12 ms).
+- `surface_obstacles.py`: OpenStreetMap (Overpass) bina + ağaç + orman →
+  arazi ızgarasına yükseklik → yüzey modeli. Tüm görüş motorları yüzeye
+  karşı test eder, direk zeminde durur. Harita: binalar/ağaçlar renkli,
+  kabartma gölgesi binaları da gösterir; kesitte zemin ve bina ayrı.
+  Kayıtlı bölge engelleri ayrı dosyada saklar; rapor kaynak satırı yazar.
+- Canlı doğrulama (Kızılay, 1 km²): 956 OSM özelliği / 38 sn; 12 m direkte
+  görünür alan 11 375 → 175 m². 22 yeni test; optik golden bit-aynı.
+
+Kalan / bilinen: OSM yüksekliklerinin %62'si varsayılan (Kızılay) — gerçek
+yüzey için yerel LiDAR/nDSM GeoTIFF yükleme yok; ağaç kaydı OSM'de seyrek
+(küresel kanopi yüksekliği haritaları çok büyük, eklenmedi); proje dosyası
+engelleri yalnız kayıtlı bölge üzerinden taşır; yakın zumda harita karesi
+yavaş (raster tamamı büyütülüyor); 5. adım (emoji → simge seti) bekliyor.
+
 ## -29. Arayüz yeniden tasarımı, adım 4: cam bindirmeler + soğuk DORI rampası — ✅ (2026-11-06)
 
 - Harita: katman lejandı, DORI lejandı, ölçek çubuğu, çit bilgi kutusu ve

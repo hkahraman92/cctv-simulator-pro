@@ -33,6 +33,7 @@ TOKENS: Dict[str, Dict[str, str]] = {
         "info": "#7FB0E0", "info-bg": "#14263D",
         "dori-monitor": "#2C4A6E", "dori-detect": "#2F6E9E", "dori-observe": "#3A93C2",
         "dori-recognize": "#5DB5D9", "dori-identify": "#9AD6EC",
+        "veg": "#4F9A6B",
     },
     "light": {
         "bg-0": "#E9EDF2", "bg-1": "#FFFFFF", "bg-2": "#F4F6F9", "bg-3": "#DCE4EE",
@@ -46,6 +47,7 @@ TOKENS: Dict[str, Dict[str, str]] = {
         "info": "#1F5E98", "info-bg": "#E1ECF8",
         "dori-monitor": "#C9DDF0", "dori-detect": "#8DB9E0", "dori-observe": "#4F8FC7",
         "dori-recognize": "#2467A6", "dori-identify": "#0F3F73",
+        "veg": "#3D7A52",
     },
 }
 
@@ -65,6 +67,7 @@ _CANVAS_ROLES = {
     "ground": "steel", "structure": "ink-2", "camera": "accent", "selected": "ink",
     "target": "warn", "ok": "ok", "danger": "danger", "info": "info",
     "ray": "info", "ray-axis": "steel", "lane-a": "info", "lane-b": "dori-recognize",
+    "building": "ink-2", "vegetation": "veg",
 }
 
 FONT_FILES = (

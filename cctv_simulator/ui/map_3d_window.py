@@ -20,6 +20,7 @@ from __future__ import annotations
 import csv
 import math
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -54,7 +55,9 @@ from ..perimeter_planner import (
 from ..terrain_loader import TerrainData, generate_procedural_terrain, load_geotiff_or_dem
 from ..i18n import t as _t
 from ..design_tokens import rgba as _rgba, tok as _tok
-from .components import glass_under
+from .components import glass_under, stack_lines
+from ..ptz_animation import SweepPlayback, sight_profile
+from .. import surface_obstacles as _obs
 from ..theme import (COLORS, FONT_MONO, FONT_UI, StyledButton, fit_and_center_window,
                      flow_layout, wrap_label, make_scrollable)
 from ..viewshed_3d import (
@@ -251,6 +254,24 @@ class TerrainViewshedWindow:
         self.stat_coverage_map_var = tk.StringVar(value="-")
         self._coverage_grid = None
 
+        # Buildings / trees surface model (surface_obstacles). self.terrain is
+        # the one the engines use; these remember both versions of the site
+        # so the checkbox can switch without re-downloading.
+        self._bare_terrain = None
+        self._surface_terrain = None
+        self.use_obstacles_var = tk.BooleanVar(value=True)
+        self.obstacle_stat_var = tk.StringVar(value="Yüklenmedi — yalnız çıplak arazi (DEM).")
+
+        # Animated PTZ sweep (ptz_animation.SweepPlayback)
+        self._anim = None
+        self._anim_job = None
+        self._anim_frame_no = 0
+        self._anim_frame = None
+        self._anim_params = None
+        self._anim_glass = []
+        self.anim_speed_var = tk.StringVar(value="×1")
+        self.anim_btn_var = tk.StringVar(value="▶ Görsel Tarama (canlı)")
+
         # Multi-camera unified viewshed + PTZ tour (tab 3)
         self._multi_vs = None            # MultiViewshedResult
         self._ptz_result = None          # PTZTourResult
@@ -361,6 +382,7 @@ class TerrainViewshedWindow:
             pass
 
     def close(self):
+        self._stop_sweep_animation(redraw=False)
         if self._render_job is not None:
             try:
                 self.window.after_cancel(self._render_job)
@@ -706,6 +728,16 @@ class TerrainViewshedWindow:
         StyledButton(grp_layer, text="🌐 Çevrimiçi Uydu İndir (Koordinat/Bölge)", command=self._open_online_map_downloader_dialog, bootstyle="success").pack(fill=tk.X, pady=(4, 2))
         StyledButton(grp_layer, text="📂 Kayıtlı Bölgeler (indirmeden aç / kaydet)", command=self._open_saved_regions_dialog, bootstyle="secondary-outline").pack(fill=tk.X, pady=(0, 2))
         StyledButton(grp_layer, text="📁 Yerel Uydu / Ortofoto Yükle (.png/.jpg/.tif)", command=self._load_local_satellite, bootstyle="info-outline").pack(fill=tk.X, pady=(0, 2))
+
+        frame_obs = ttk.Frame(grp_layer)
+        frame_obs.pack(fill=tk.X, pady=(4, 2))
+        StyledButton(frame_obs, text="Bina & Ağaç Yüksekliklerini İndir (OSM)",
+                     command=self._download_obstacles, bootstyle="secondary-outline").pack(fill=tk.X)
+        ttk.Checkbutton(frame_obs, text="Binalar / ağaçlar görüşü engellesin",
+                        variable=self.use_obstacles_var,
+                        command=self._apply_obstacle_toggle).pack(anchor="w", pady=(2, 0))
+        wrap_label(ttk.Label(frame_obs, textvariable=self.obstacle_stat_var, font=(FONT_UI, 8),
+                             foreground=TEXT_MUTED, justify="left")).pack(fill=tk.X)
 
         frame_cache = ttk.Frame(grp_layer)
         frame_cache.pack(fill=tk.X, pady=(2, 0))
@@ -1086,6 +1118,18 @@ class TerrainViewshedWindow:
         spin(self._sweep_common, "En kısa bakış (sn):", self.min_dwell_var, 0, 10, 0.1)
         StyledButton(self._sweep_common, text="▶ Taramayı Hesapla (revizit + bakış süresi)",
                      command=self._run_ptz_sweep, bootstyle="success").pack(fill=tk.X, pady=(4, 0))
+        anim_row = ttk.Frame(self._sweep_common)
+        anim_row.pack(fill=tk.X, pady=(4, 0))
+        flow_layout(anim_row, [
+            StyledButton(anim_row, textvariable=self.anim_btn_var, command=self._toggle_sweep_animation,
+                         bootstyle="secondary-outline"),
+            (ttk.Label(anim_row, text="Zaman:"),
+             ttk.Combobox(anim_row, textvariable=self.anim_speed_var, values=["×1", "×2", "×5", "×10"],
+                          state="readonly", width=4)),
+        ], padx=2, pady=1)
+        note(self._sweep_common, "Görsel tarama: kamera dönerken o an gördüğü alan DORI renginde, "
+                                 "tepe / bina arkası koyu; geçtiği yer söner, bir kez görülen "
+                                 "her yer silik kalır. Alttaki kesit o anki bakış yönünü izler.")
 
         # ── slew-to-cue ──
         cue = ttk.Frame(grp)
@@ -1114,6 +1158,7 @@ class TerrainViewshedWindow:
         # the whole group is placed by _update_ptz_panel_visibility()
 
     def _on_ptz_mode_changed(self):
+        self._stop_sweep_animation()
         mode = self.ptz_mode_var.get()
         shown = self._ptz_mode_frames[mode]
         for frame in set(self._ptz_mode_frames.values()):
@@ -1262,6 +1307,287 @@ class TerrainViewshedWindow:
         self.multi_overlay_var.set("revisit")
         self._render_map_canvas()
 
+    # ── buildings / trees surface model (surface_obstacles) ──
+    def _sync_obstacle_state(self):
+        """Keep the bare / surface pair in step with self.terrain: a new site
+        (download, preset, GeoTIFF) drops the old buildings; a region saved
+        with them brings both versions back."""
+        t = self.terrain
+        if t is self._bare_terrain or t is self._surface_terrain:
+            return
+        if t.has_obstacles:
+            self._surface_terrain, self._bare_terrain = t, _obs.bare_earth(t)
+            self.obstacle_stat_var.set(t.obstacle_note or "Bina / ağaç katmanı yüklü.")
+            self.use_obstacles_var.set(True)
+        else:
+            self._bare_terrain, self._surface_terrain = t, None
+            self.obstacle_stat_var.set("Yüklenmedi — yalnız çıplak arazi (DEM).")
+
+    def _download_obstacles(self):
+        self._sync_obstacle_state()
+        bare = self._bare_terrain or self.terrain
+        try:
+            bbox = _obs.terrain_bbox(bare)
+        except ValueError as exc:
+            messagebox.showinfo("Bina & ağaç", str(exc), parent=self.window)
+            return
+
+        def compute():
+            feats = _obs.fetch_osm_obstacles(bbox)
+            return feats, _obs.rasterize(bare, feats)
+
+        def done(res):
+            feats, layer = res
+            if bare is not self._bare_terrain:          # the site changed meanwhile
+                return
+            if not feats:
+                self.obstacle_stat_var.set("OpenStreetMap'te bu alanda bina / ağaç kaydı yok.")
+                messagebox.showinfo("Bina & ağaç", "OpenStreetMap'te bu alan için bina ya da ağaç "
+                                    "kaydı bulunamadı; görüş alanı çıplak arazi üzerinden kalır.",
+                                    parent=self.window)
+                return
+            self._surface_terrain = _obs.with_obstacles(bare, layer)
+            self.obstacle_stat_var.set(f"{layer.summary()} · alanın %{layer.covered_fraction * 100:.1f}'i")
+            self.use_obstacles_var.set(True)
+            self._apply_obstacle_toggle()
+            if layer.estimated_share > 0.5:
+                messagebox.showwarning(
+                    "Bina & ağaç — yükseklikler tahmini",
+                    f"Özelliklerin %{layer.estimated_share * 100:.0f}'inde OSM'de yükseklik ya da kat "
+                    f"sayısı yok; varsayılan kullanıldı (bina {_obs.DEFAULT_BUILDING_M:g} m, ağaç "
+                    f"{_obs.DEFAULT_TREE_M:g} m, orman {_obs.DEFAULT_CANOPY_M:g} m).\n\n"
+                    "Bu engel katmanı ölçüm değildir; sonuçları bağlayıcı sunmayın.",
+                    parent=self.window)
+
+        self._run_in_background("Bina & ağaç", compute, done, stat_var=self.obstacle_stat_var)
+
+    def _apply_obstacle_toggle(self):
+        self._sync_obstacle_state()
+        if self._surface_terrain is None:
+            return
+        want = self._surface_terrain if self.use_obstacles_var.get() else self._bare_terrain
+        cur = self.terrain
+        for t in (self._bare_terrain, self._surface_terrain):   # keep a width rescale
+            t.cell_size_m = cur.cell_size_m
+        if want is cur:
+            return
+        self.terrain = want
+        self._stop_sweep_animation(redraw=False)
+        # results computed on the other surface are stale
+        self._coverage_grid = None
+        for attr in ("_multi_vs", "_sweep_result", "_cue_result", "_mixed", "_ptz_result"):
+            if hasattr(self, attr):
+                setattr(self, attr, None)
+        self.schedule_recalculate()
+
+    def _composite_obstacles(self, img):
+        """Buildings (taller = more opaque) and vegetation on the map. Over a
+        photo (uydu / hibrit) the fill is light and the footprint edge strong,
+        so the real roofs stay visible; over the elevation colours it is solid."""
+        t = self.terrain
+        if not t.has_obstacles or t.obstacle_grid is None:
+            return img
+        h = np.flipud(t.obstacle_grid)
+        k = np.flipud(t.obstacle_kind) if t.obstacle_kind is not None else (h > 0).astype(np.uint8)
+        ov = np.zeros(h.shape + (4,), np.uint8)
+        bld = (k == _obs.KIND_BUILDING) & (h > 0)
+        veg = (k == _obs.KIND_VEGETATION) & (h > 0)
+        photo = self.user_satellite_img is not None and self.map_layer_mode_var.get() != "elevation"
+        ov[bld] = _rgba("building", 0)
+        if photo:
+            ov[..., 3][bld] = np.clip(40 + h[bld] * 1.5, 40, 90).astype(np.uint8)
+            ov[veg] = _rgba("vegetation", 70)
+            # footprint edge: a cell whose 4-neighbour is not the same kind
+            edge = np.zeros_like(bld)
+            for axis, shift in ((0, 1), (0, -1), (1, 1), (1, -1)):
+                edge |= bld & ~np.roll(bld, shift, axis=axis)
+            ov[edge] = _rgba("building", 150)
+        else:
+            ov[..., 3][bld] = np.clip(110 + h[bld] * 4.0, 110, 225).astype(np.uint8)
+            ov[veg] = _rgba("vegetation", 150)
+        layer = Image.fromarray(ov, "RGBA").resize(img.size, Image.Resampling.NEAREST)
+        return Image.alpha_composite(img.convert("RGBA"), layer)
+
+    # ── animated PTZ sweep (ptz_animation) ──
+    def _anim_key(self):
+        return (id(self.terrain), self.cam_x_var.get(), self.cam_y_var.get(), self.mast_height_var.get(),
+                self.tilt_deg_var.get(), self.lens_mode_var.get(), self.current_camera.name,
+                self.max_range_var.get(), self.weather_var.get(), self.ptz_mode_var.get())
+
+    def _toggle_sweep_animation(self):
+        from ..ptz_schedule import Rotation360
+        if self._anim is not None:
+            self._stop_sweep_animation()
+            return
+        built = self._sweep_from_ui("Görsel tarama")
+        if built is None:
+            return
+        sweep, _min_dwell = built
+        c = self._ptz_context()
+        start = self.pan_deg_var.get() if isinstance(sweep, Rotation360) else 0.0
+        colors = {lo: tuple(rgba[:3]) + (215,) for lo, _hi, rgba, _t in _LAYER_BANDS["dori"][1]
+                  if lo != ZONE_OCCLUDED}
+        shadow = _rgba("bg-0", 185)
+        key = self._anim_key()
+
+        def compute():
+            return SweepPlayback(c["terrain"], c["x"], c["y"], c["mast"], c["camera"], sweep,
+                                 colors=colors, shadow_rgba=shadow, max_range_m=c["max_range"],
+                                 visibility_km=c["vis_km"], weather=c["weather"], start_pan_deg=start)
+
+        def done(pb):
+            if self._anim_key() != key:
+                self.ptz_stat_var.set("Görsel tarama başlamadı: kamera / arazi değişti.")
+                return
+            self._anim, self._anim_params = pb, key
+            self._anim_t, self._anim_last, self._anim_frame_no = 0.0, time.perf_counter(), 0
+            self.anim_btn_var.set("■ Görsel Taramayı Durdur")
+            self.ptz_stat_var.set(f"Görsel tarama: tur {pb.period_s:.1f} sn · FOV {pb.hfov_deg:.1f}° · "
+                                  f"menzil {pb.reach_m:.0f} m")
+            self._render_map_canvas()          # drops the static fan, draws frame 0
+            self._anim_tick()
+
+        self._run_in_background("Görsel tarama", compute, done)
+
+    def _stop_sweep_animation(self, redraw: bool = True):
+        if self._anim_job is not None:
+            try:
+                self.window.after_cancel(self._anim_job)
+            except Exception:
+                pass
+            self._anim_job = None
+        was = self._anim is not None
+        self._anim = None
+        self._anim_frame = None
+        self.anim_btn_var.set("▶ Görsel Tarama (canlı)")
+        if was and redraw:
+            try:
+                self._render_map_canvas()
+                self._render_profile_canvas()
+            except tk.TclError:
+                pass
+
+    def _anim_tick(self):
+        self._anim_job = None
+        if self._anim is None:
+            return
+        try:
+            if not self.window.winfo_exists():
+                return
+        except tk.TclError:
+            return
+        if self._anim_key() != self._anim_params:
+            self._stop_sweep_animation()
+            self.ptz_stat_var.set("Görsel tarama durdu: kamera / arazi ayarı değişti — yeniden başlatın.")
+            return
+        now = time.perf_counter()
+        speed = {"×1": 1.0, "×2": 2.0, "×5": 5.0, "×10": 10.0}.get(self.anim_speed_var.get(), 1.0)
+        self._anim_t += min(now - self._anim_last, 0.25) * speed   # a stalled loop must not jump
+        self._anim_last = now
+        self._draw_anim_frame()
+        self._anim_frame_no += 1
+        if self._anim_frame_no % 3 == 1:
+            self._draw_anim_profile()
+        self._anim_job = self.window.after(50, self._anim_tick)
+
+    def _draw_anim_frame(self):
+        """One frame: the DORI / shadow raster of the mount window, cropped to
+        the visible canvas before scaling, the cone edges and a glass read-out."""
+        pb, cv = self._anim, self.map_canvas
+        fr = pb.frame(self._anim_t)
+        self._anim_frame = fr
+        cv.delete("ptz_anim")
+        t = self.terrain
+        cell = t.cell_size_m
+        rs, cs = fr.window
+        sx0, sy0 = self.world_to_screen_px(t.origin_x + cs.start * cell, t.origin_y + rs.stop * cell)
+        sx1, sy1 = self.world_to_screen_px(t.origin_x + cs.stop * cell, t.origin_y + rs.start * cell)
+        arr = np.flipud(fr.rgba)                       # north up
+        nh, nw = arr.shape[:2]
+        W, H = cv.winfo_width(), cv.winfo_height()
+        if nw and nh and sx1 > sx0 and sy1 > sy0:
+            pcx, pcy = (sx1 - sx0) / nw, (sy1 - sy0) / nh
+            ca, cb = max(0, int((0 - sx0) // pcx)), min(nw, int(math.ceil((W - sx0) / pcx)))
+            ra, rb = max(0, int((0 - sy0) // pcy)), min(nh, int(math.ceil((H - sy0) / pcy)))
+            if cb > ca and rb > ra:
+                sub = np.ascontiguousarray(arr[ra:rb, ca:cb])
+                size = (max(1, int(round((cb - ca) * pcx))), max(1, int(round((rb - ra) * pcy))))
+                img = Image.fromarray(sub, "RGBA").resize(size, Image.Resampling.NEAREST)
+                self._anim_photo = ImageTk.PhotoImage(img, master=cv)   # Kural 5
+                item = cv.create_image(sx0 + ca * pcx, sy0 + ra * pcy, image=self._anim_photo,
+                                       anchor="nw", tags="ptz_anim")
+                if cv.find_withtag("map_raster"):
+                    cv.tag_raise(item, "map_raster")
+        cx, cy = self.cam_x_var.get(), self.cam_y_var.get()
+        c_px, c_py = self.world_to_screen_px(cx, cy)
+        for off in (-pb.hfov_deg / 2.0, pb.hfov_deg / 2.0, 0.0):
+            a = math.radians(fr.pan_deg + off)
+            ex, ey = self.world_to_screen_px(cx + pb.reach_m * math.sin(a), cy + pb.reach_m * math.cos(a))
+            cv.create_line(c_px, c_py, ex, ey, fill=C_SELECTED, width=2 if off == 0.0 else 1,
+                           dash=() if off == 0.0 else (4, 3), tags="ptz_anim")
+        cv.create_oval(c_px - 6, c_py - 6, c_px + 6, c_py + 6, fill=C_PTZ, outline=C_MARK_EDGE,
+                       width=2, tags="ptz_anim")
+        ha = 1e4
+        stack_lines(cv, 18, 14, [
+            ("PTZ GÖRSEL TARAMA", TEXT_MUTED, (FONT_UI, 8, "bold")),
+            (f"pan {fr.pan_deg:5.1f}°   t {fr.t_s % pb.period_s:4.1f} / {pb.period_s:.1f} sn",
+             TEXT_WHITE, (FONT_MONO, 9)),
+            (f"şu an görünür {fr.lit_area_m2 / ha:.2f} ha · gölgede {fr.shadow_area_m2 / ha:.2f} ha",
+             TEXT_DIM, (FONT_UI, 8)),
+            (f"bu oynatmada görülen {fr.seen_area_m2 / ha:.2f} ha", TEXT_DIM, (FONT_UI, 8)),
+        ], "ptz_anim_lbl")
+        cv.addtag_withtag("ptz_anim", "ptz_anim_lbl")
+        self._anim_glass = []
+        box = glass_under(cv, "ptz_anim_lbl", getattr(self, "_backdrop", None), self._anim_glass)
+        if box is not None:
+            cv.addtag_withtag("ptz_anim", box)
+
+    def _draw_anim_profile(self):
+        """Bottom strip follows the current pan: ground, buildings / trees and
+        which part of the surface the lens sees."""
+        pb, fr = self._anim, self._anim_frame
+        if pb is None or fr is None:
+            return
+        cv = self.profile_canvas
+        w, h = cv.winfo_width(), cv.winfo_height()
+        if w < 50 or h < 30:
+            return
+        mast = self.mast_height_var.get()
+        d, ground, surf, vis, cam_z = sight_profile(self.terrain, self.cam_x_var.get(), self.cam_y_var.get(),
+                                                    mast, fr.pan_deg, pb.reach_m)
+        cv.delete("all")
+        self._profile_plot = None
+        pad_l, pad_r, pad_t, pad_b = 60, 20, 20, 25
+        plot_w, plot_h = w - pad_l - pad_r, h - pad_t - pad_b
+        max_d = float(d[-1]) or 1.0
+        min_z = min(float(ground.min()), cam_z - mast) - 5.0
+        max_z = max(float(surf.max()), cam_z) + 8.0
+        span = max(max_z - min_z, 5.0)
+
+        def to_x(v):
+            return pad_l + v / max_d * plot_w
+
+        def to_y(z):
+            return pad_t + (1.0 - (z - min_z) / span) * plot_h
+
+        base = to_y(min_z)
+        if self.terrain.has_obstacles:
+            cv.create_polygon([(pad_l, base)] + [(to_x(a), to_y(b)) for a, b in zip(d, surf)]
+                              + [(to_x(max_d), base)], fill=_tok("building"), outline="")
+        cv.create_polygon([(pad_l, base)] + [(to_x(a), to_y(b)) for a, b in zip(d, ground)]
+                          + [(to_x(max_d), base)], fill=C_GROUND, outline=C_GROUND_EDGE, width=2)
+        for i in range(len(d) - 1):
+            cv.create_line(to_x(d[i]), to_y(surf[i]), to_x(d[i + 1]), to_y(surf[i + 1]),
+                           fill=ACCENT_GREEN if vis[i + 1] else ACCENT_RED, width=3 if vis[i + 1] else 1,
+                           dash=() if vis[i + 1] else (3, 2))
+        cv.create_line(pad_l, to_y(cam_z - mast), pad_l, to_y(cam_z), fill=C_PTZ, width=4)
+        for tick in np.linspace(0, max_d, 6):
+            cv.create_text(to_x(tick), pad_t + plot_h + 12, text=f"{tick:.0f}m", fill=TEXT_MUTED,
+                           font=(FONT_UI, 7))
+        cv.create_text(pad_l, 4, anchor="nw", fill=TEXT_MUTED, font=(FONT_UI, 8, "bold"),
+                       text=f"KESİT · pan {fr.pan_deg:.0f}° · yeşil = görülen yüzey, kırmızı = engelin arkası")
+
+
     # ── background work (sweep / slew-to-cue) ──
     def _run_in_background(self, label, compute, on_done, stat_var=None):
         """Run ``compute()`` (numpy only -- it must not touch Tk) on a worker
@@ -1320,6 +1646,32 @@ class TerrainViewshedWindow:
                     mast=self.mast_height_var.get(), camera=self.current_camera,
                     max_range=self.max_range_var.get(), weather=weather,
                     vis_km=WEATHER_PRESETS.get(weather, 40.0))
+
+    def _sweep_from_ui(self, title="PTZ tarama"):
+        """(sweep, min_dwell) from the panel, or None after an error dialog."""
+        from ..ptz_schedule import Rotation360, SectorPatrol
+        sector = self.ptz_mode_var.get() == _PTZ_MODES[1]
+        try:
+            speed = self._read_num(self.sweep_speed_var, "Tarama hızı", 0.1, 1000)
+            min_dwell = self._read_num(self.min_dwell_var, "En kısa bakış", 0, 60)
+            if sector:
+                start = self._read_num(self.sweep_start_var, "Başlangıç pan", 0, 360)
+                end = self._read_num(self.sweep_end_var, "Bitiş pan", 0, 360)
+                end_dwell = self._read_num(self.sweep_end_dwell_var, "Uçlarda bekleme", 0, 600)
+        except ValueError as exc:
+            messagebox.showerror(title, str(exc), parent=self.window)
+            return None
+        tilt, lens = self.tilt_deg_var.get(), self.lens_mode_var.get()
+        if sector:
+            sweep = SectorPatrol(start, end, speed_deg_s=speed, end_dwell_s=end_dwell,
+                                 tilt_deg=tilt, lens_mode=lens)
+            if sweep.span_deg <= 0:
+                messagebox.showerror(title, "Başlangıç ve bitiş aynı — tam tur için "
+                                     "“360° dönüş” modunu seçin.", parent=self.window)
+                return None
+        else:
+            sweep = Rotation360(speed_deg_s=speed, tilt_deg=tilt, lens_mode=lens)
+        return sweep, min_dwell
 
     def _run_ptz_sweep(self):
         from ..ptz_schedule import Rotation360, SectorPatrol, evaluate_sweep
@@ -2722,9 +3074,17 @@ class TerrainViewshedWindow:
 
         if 0.0 <= world_x <= self.terrain.width_m and 0.0 <= world_y <= self.terrain.height_m:
             elev = self.terrain.get_elevation_at(world_x, world_y)
+            if self.terrain.has_obstacles:
+                ground = self.terrain.ground_elevation_at(world_x, world_y)
+                if elev - ground > 0.5:
+                    elev_txt = f"{ground:.1f} m zemin + {elev - ground:.1f} m bina/ağaç"
+                else:
+                    elev_txt = f"{ground:.1f} m"
+            else:
+                elev_txt = f"{elev:.1f} m"
 
             if self.planner_mode_var.get() == "perimeter" and self.perimeter_plan:
-                self.telemetry_var.set(f"Konum: ({world_x:.0f}m, {world_y:.0f}m) · Rakım: {elev:.1f} m · Toplam Çit: {self.perimeter_plan.total_fence_length_m:,.0f} m · {self.perimeter_plan.camera_count} Kamera")
+                self.telemetry_var.set(f"Konum: ({world_x:.0f}m, {world_y:.0f}m) · Rakım: {elev_txt} · Toplam Çit: {self.perimeter_plan.total_fence_length_m:,.0f} m · {self.perimeter_plan.camera_count} Kamera")
             else:
                 dx = world_x - self.cam_x_var.get()
                 dy = world_y - self.cam_y_var.get()
@@ -2738,7 +3098,8 @@ class TerrainViewshedWindow:
                         code = self.result.dori_grid[r, c]
                         ppm = self.result.ppm_grid[r, c]
                         if code == ZONE_OCCLUDED:
-                            status_text = " · ⚠️ KÖR NOKTA (Tepe Arkası)"
+                            status_text = (" · ■ KÖR NOKTA (arazi / bina engeli)" if self.terrain.has_obstacles
+                                           else " · ■ KÖR NOKTA (tepe arkası)")
                         elif code == ZONE_IDENT:
                             status_text = f" · 🟢 Teşhis ({ppm:.0f} px/m)"
                         elif code == ZONE_RECOG:
@@ -2793,6 +3154,10 @@ class TerrainViewshedWindow:
 
         r = self.result
         self.stat_cam_elev_var.set(f"{r.cam_ground_z_m:.1f} m + {r.mast_height_m:.1f} m = {r.cam_total_z_m:.1f} m")
+        buried = _obs.mount_obstruction_m(self.terrain, cam_x, cam_y, mast_h)
+        if buried > 0:
+            self.telemetry_var.set(f"▲ Kamera bir bina / ağaç içinde: engel lensin {buried:.1f} m üstünde — "
+                                   f"direği yükseltin ya da kamerayı taşıyın (görüş ilk metrelerde kapanır).")
         if r.visible_area_m2 >= 1e6:
             self.stat_vis_area_var.set(f"{r.visible_area_m2 / 1e6:.2f} km²")
         else:
@@ -2811,16 +3176,20 @@ class TerrainViewshedWindow:
         cv.delete("all")
         self._glass_photos = []
         self._backdrop = None
+        self._sync_obstacle_state()
         w = cv.winfo_width()
         h = cv.winfo_height()
         if w < 50 or h < 50:
             return
 
         rows, cols = self.terrain.rows, self.terrain.cols
-        z_grid = self.terrain.z_grid
-        z_min, z_max = self.terrain.min_elev_m, self.terrain.max_elev_m
+        z_grid = self.terrain.z_grid            # surface: hillshade shows buildings too
+        # Colour ramp from the bare ground: with buildings in it, one 76 m tower
+        # stretched the ramp and the whole ground relief went one flat green.
+        z_col = self.terrain.ground_z_grid if self.terrain.has_obstacles else z_grid
+        z_min, z_max = float(np.nanmin(z_col)), float(np.nanmax(z_col))
         z_range = max(z_max - z_min, 1.0)
-        norm_z = (z_grid - z_min) / z_range
+        norm_z = np.clip((z_col - z_min) / z_range, 0.0, 1.0)
 
         # 1. Base Hillshade Matrix
         dz_dx, dz_dy = np.gradient(z_grid)
@@ -2851,9 +3220,18 @@ class TerrainViewshedWindow:
             elif layer_mode == "elevation":
                 full_map_img = elev_img
             else:
-                # Hybrid: Blend high-res satellite with North-Up hillshade without flipping satellite!
+                # Hybrid = the photo carrying the relief: multiplied by the
+                # (surface) hillshade, so ridges and building blocks read in
+                # the photo itself; the slider then blends in the elevation
+                # colours. It used to be a plain photo/ramp blend that at 80 %
+                # looked identical to "Uydu".
                 sat_rgba = self.user_satellite_img.convert("RGBA")
-                full_map_img = Image.blend(sat_rgba, elev_img, 1.0 - sat_opacity)
+                shade = Image.fromarray(np.flipud(np.clip(shaded, 0.55, 1.3)).astype(np.float32), mode="F")
+                shade = np.asarray(shade.resize((base_w, base_h), Image.Resampling.BILINEAR))
+                arr = np.asarray(sat_rgba, dtype=np.float32)
+                arr[..., :3] = np.clip(arr[..., :3] * shade[..., None], 0, 255)
+                relief = Image.fromarray(arr.astype(np.uint8), mode="RGBA")
+                full_map_img = Image.blend(relief, elev_img, 1.0 - sat_opacity)
 
         else:
             # Procedural Photorealistic Satellite Orthophoto Generator (Render at sharp 800x800)
@@ -2878,7 +3256,13 @@ class TerrainViewshedWindow:
             full_map_img = Image.fromarray(np.flipud(comp), mode="RGB").resize((base_w, base_h), Image.Resampling.BILINEAR).convert("RGBA")
 
         # 2. Composite DORI Overlay on full terrain grid (North-Up)
-        if self.planner_mode_var.get() == "single" and self.show_dori_var.get() and self.result is not None:
+        # Buildings / trees: hillshade above already relieves them (z_grid is
+        # the surface); a tint says which is which.
+        full_map_img = self._composite_obstacles(full_map_img)
+
+        # While the live sweep plays, its own frame replaces the static fan.
+        if (self._anim is None and self.planner_mode_var.get() == "single"
+                and self.show_dori_var.get() and self.result is not None):
             if self.result.dori_grid.shape == (rows, cols):
                 dori = np.flipud(self.result.dori_grid)
                 dori_overlay = np.zeros((rows, cols, 4), dtype=np.uint8)
@@ -2904,7 +3288,7 @@ class TerrainViewshedWindow:
         if img_w > 10 and img_h > 10:
             resized_terrain = full_map_img.resize((img_w, img_h), Image.Resampling.BILINEAR)
             self._map_photo = ImageTk.PhotoImage(resized_terrain, master=cv)  # Kural 5
-            cv.create_image(img_x0, img_y0, image=self._map_photo, anchor="nw")
+            cv.create_image(img_x0, img_y0, image=self._map_photo, anchor="nw", tags="map_raster")
             # Canvas-sized copy of what is under the overlays, for the glass boxes.
             backdrop = Image.new("RGBA", (w, h), _rgba("bg-0", 255))
             backdrop.paste(resized_terrain, (int(round(img_x0)), int(round(img_y0))))
@@ -3054,12 +3438,12 @@ class TerrainViewshedWindow:
             ray_r_x, ray_r_y = self.world_to_screen_px(cx + reach_m * math.sin(pan_rad + half_hfov_rad),
                                                        cy + reach_m * math.cos(pan_rad + half_hfov_rad))
 
-            cv.create_line(c_px, c_py, ray_l_x, ray_l_y, fill=ACCENT_CYAN, width=2, dash=(6, 3))
-            cv.create_line(c_px, c_py, ray_r_x, ray_r_y, fill=ACCENT_CYAN, width=2, dash=(6, 3))
-
-            ray_c_x, ray_c_y = self.world_to_screen_px(cx + reach_m * math.sin(pan_rad),
-                                                       cy + reach_m * math.cos(pan_rad))
-            cv.create_line(c_px, c_py, ray_c_x, ray_c_y, fill=C_SELECTED, width=1)
+            if self._anim is None:      # the live sweep draws its own moving cone
+                cv.create_line(c_px, c_py, ray_l_x, ray_l_y, fill=ACCENT_CYAN, width=2, dash=(6, 3))
+                cv.create_line(c_px, c_py, ray_r_x, ray_r_y, fill=ACCENT_CYAN, width=2, dash=(6, 3))
+                ray_c_x, ray_c_y = self.world_to_screen_px(cx + reach_m * math.sin(pan_rad),
+                                                           cy + reach_m * math.cos(pan_rad))
+                cv.create_line(c_px, c_py, ray_c_x, ray_c_y, fill=C_SELECTED, width=1)
 
             cv.create_oval(c_px - 8, c_py - 8, c_px + 8, c_py + 8, fill=ACCENT_CYAN, outline=C_MARK_EDGE, width=2)
             cv.create_text(c_px, c_py - 16, text=f"Kamera · {reach_m:.0f} m optik menzil", tags="cam_label",
@@ -3068,11 +3452,17 @@ class TerrainViewshedWindow:
 
             # One column, box sized from the drawn text (Kural 8); rows and
             # colours from _LAYER_BANDS, the table the overlay is painted from.
-            if self.show_dori_var.get():
-                rows = [(txt, rgba) for _, _, rgba, txt in _LAYER_BANDS["dori"][1]]
+            if self.show_dori_var.get() or self.terrain.has_obstacles:
+                rows = ([(txt, rgba) for _, _, rgba, txt in _LAYER_BANDS["dori"][1]]
+                        if self.show_dori_var.get() else [])
+                if self.terrain.has_obstacles:
+                    rows += [("Bina (OSM)", _rgba("building", 255)),
+                             ("Ağaç / orman (OSM)", _rgba("vegetation", 255))]
                 self._draw_band_legend(cv, "DORI & görüş", rows, 30, h - 20, "sw", "legend")
 
         self._draw_layer_legend(cv)
+        if self._anim is not None:
+            self._draw_anim_frame()
 
     def _render_profile_canvas(self):
         cv = self.profile_canvas
@@ -3180,7 +3570,18 @@ class TerrainViewshedWindow:
             for d, el in zip(dists, elevs):
                 pts_terrain.append((to_x(d), to_y(el)))
             pts_terrain.append((to_x(max_d), to_y(min_z)))
-            cv.create_polygon(pts_terrain, fill=C_GROUND, outline=C_GROUND_EDGE, width=2)
+            if self.terrain.has_obstacles:
+                # surface (with buildings / trees) first, bare ground on top of it
+                cv.create_polygon(pts_terrain, fill=_tok("building"), outline="")
+                pan_r = math.radians(self.pan_deg_var.get())
+                cx0, cy0 = self.cam_x_var.get(), self.cam_y_var.get()
+                ground = [self.terrain.ground_elevation_at(cx0 + d * math.sin(pan_r), cy0 + d * math.cos(pan_r))
+                          for d in dists]
+                pts_ground = ([(pad_l, to_y(min_z))] + [(to_x(d), to_y(g)) for d, g in zip(dists, ground)]
+                              + [(to_x(max_d), to_y(min_z))])
+                cv.create_polygon(pts_ground, fill=C_GROUND, outline=C_GROUND_EDGE, width=2)
+            else:
+                cv.create_polygon(pts_terrain, fill=C_GROUND, outline=C_GROUND_EDGE, width=2)
 
             cam_base_y = to_y(self.result.cam_ground_z_m)
             cam_top_y = to_y(self.result.cam_total_z_m)
