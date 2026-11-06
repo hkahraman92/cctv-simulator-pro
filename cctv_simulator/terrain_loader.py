@@ -31,6 +31,15 @@ class TerrainData:
     # and the exported reports can never present invented relief as survey data.
     is_measured: bool = False
     source_note: str = ""
+    # Surface model (surface_obstacles.py): when buildings / trees are merged
+    # in, z_grid is the SURFACE every sightline is tested against and
+    # ground_z_grid the bare earth under it. Masts stand on the ground
+    # (ground_elevation_at); targets and occluders are the surface. None =
+    # bare-earth terrain, and everything below behaves exactly as before.
+    ground_z_grid: Optional[np.ndarray] = None
+    obstacle_grid: Optional[np.ndarray] = None    # m above ground (z_grid - ground)
+    obstacle_kind: Optional[np.ndarray] = None    # 0 none, 1 building, 2 vegetation
+    obstacle_note: str = ""
 
     def __post_init__(self):
         # NaN in the grid (DEM nodata, void) propagates silently through bilinear
@@ -99,6 +108,17 @@ class TerrainData:
         z_bot = z10 * (1.0 - fx) + z11 * fx
         return float(z_top * (1.0 - fy) + z_bot * fy)
 
+    @property
+    def has_obstacles(self) -> bool:
+        return self.ground_z_grid is not None
+
+    def ground_elevation_at(self, x_m: float, y_m: float) -> float:
+        """Bare-earth elevation (where a mast stands). Same as
+        get_elevation_at on a terrain without a surface model."""
+        if self.ground_z_grid is None:
+            return self.get_elevation_at(x_m, y_m)
+        return _bilinear(self.ground_z_grid, self.origin_x, self.origin_y, self.cell_size_m, x_m, y_m)
+
     def get_profile_between(self, x0: float, y0: float, x1: float, y1: float,
                             num_samples: int = 200) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Extracts distance and elevation profile between two points."""
@@ -111,6 +131,20 @@ class TerrainData:
         elevs = np.array([self.get_elevation_at(x, y) for x, y in zip(xs, ys)])
         coords = np.column_stack((xs, ys))
         return dists, elevs, coords
+
+
+def _bilinear(z: np.ndarray, origin_x: float, origin_y: float, cell: float,
+              x_m: float, y_m: float) -> float:
+    rows, cols = z.shape
+    col = (x_m - origin_x) / cell
+    row = (y_m - origin_y) / cell
+    if col < 0 or col >= cols - 1 or row < 0 or row >= rows - 1:
+        return float(z[max(0, min(rows - 1, int(round(row)))), max(0, min(cols - 1, int(round(col))))])
+    c0, r0 = int(col), int(row)
+    fx, fy = col - c0, row - r0
+    top = z[r0, c0] * (1.0 - fx) + z[r0, c0 + 1] * fx
+    bot = z[r0 + 1, c0] * (1.0 - fx) + z[r0 + 1, c0 + 1] * fx
+    return float(top * (1.0 - fy) + bot * fy)
 
 
 def generate_procedural_terrain(preset: str = "ridge_and_valley",

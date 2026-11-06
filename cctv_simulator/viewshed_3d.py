@@ -271,7 +271,7 @@ def calculate_3d_viewshed(terrain: TerrainData,
     cell_size = terrain.cell_size_m
 
     # 1. Camera 3D Position
-    cam_ground_z = terrain.get_elevation_at(cam_x_m, cam_y_m)
+    cam_ground_z = terrain.ground_elevation_at(cam_x_m, cam_y_m)   # mast on the ground, not a roof
     cam_z = cam_ground_z + mast_height_m
 
     # 2. Camera Optics & FOV

@@ -99,7 +99,7 @@ def compute_mount_visibility(terrain: TerrainData, x_m: float, y_m: float, mast_
                              ray_step_m: float = 3.0) -> MountVisibility:
     """March rays round the full circle from one mast (uncached)."""
     rows, cols, cell = terrain.rows, terrain.cols, terrain.cell_size_m
-    cam_z = terrain.get_elevation_at(x_m, y_m) + mast_height_m
+    cam_z = terrain.ground_elevation_at(x_m, y_m) + mast_height_m   # mast stands on the ground
 
     step = ray_step_size(cell, ray_step_m)
     step_dists = np.arange(1, max(int(max_range_m / step), 1) + 1) * step

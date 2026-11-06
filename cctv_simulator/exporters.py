@@ -1124,12 +1124,22 @@ def _perimeter_rows(perim) -> List[List[str]]:
     return rows
 
 
+def _surface_line(terrain) -> str:
+    """Buildings / trees merged into the terrain (surface_obstacles), or ""."""
+    if getattr(terrain, "ground_z_grid", None) is None:
+        return ""
+    return (" Engelleme yüzey modeliyle hesaplandı (DEM + bina/ağaç): "
+            f"{getattr(terrain, 'obstacle_note', '') or 'OpenStreetMap'}. OSM yükseklikleri "
+            "çoğunlukla etiket / kat sayısı / varsayılandan gelir; ölçülmüş yüzey (LiDAR) değildir.")
+
+
 def _provenance_line(terrain) -> str:
     if getattr(terrain, "is_measured", False):
-        return f"Yükselti verisi: ÖLÇÜLMÜŞ DEM ({getattr(terrain, 'source_note', '') or terrain.name})."
+        return (f"Yükselti verisi: ÖLÇÜLMÜŞ DEM ({getattr(terrain, 'source_note', '') or terrain.name})."
+                + _surface_line(terrain))
     return ("Yükselti verisi: TEMSİLİ / PROSEDÜREL — ölçüm değildir. Görüş alanı, kör nokta "
             "ve kapsama oranları bu arazi üzerinde BAĞLAYICI DEĞİLDİR; gerçek DEM ile "
-            "yeniden hesaplanmalıdır.")
+            "yeniden hesaplanmalıdır." + _surface_line(terrain))
 
 
 def export_engineering_report_csv(path: str, *, project_name: str, terrain, camera,
@@ -1147,6 +1157,8 @@ def export_engineering_report_csv(path: str, *, project_name: str, terrain, came
         w.writerow(["# Arazi", terrain.name])
         w.writerow(["# Yükselti verisi", "ÖLÇÜLMÜŞ DEM" if getattr(terrain, "is_measured", False)
                     else "TEMSİLİ — ölçüm değil, sonuçlar bağlayıcı değildir"])
+        if _surface_line(terrain):
+            w.writerow(["# Yüzey modeli", _surface_line(terrain).strip()])
         w.writerow([])
         if multi_viewshed is not None:
             w.writerow(["=== ÇOKLU KAMERA BİRLEŞİK GÖRÜŞ ALANI ==="])

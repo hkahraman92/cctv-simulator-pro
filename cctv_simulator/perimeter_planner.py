@@ -261,7 +261,7 @@ def generate_perimeter_plan(terrain: TerrainData,
     def _place(px: float, py: float, pan_deg: float, *, reach: float = ground_reach,
                dz: float = dead_zone, tilt: float = default_tilt, note: str = "") -> None:
         nonlocal pole_counter
-        gz = terrain.get_elevation_at(px, py)
+        gz = terrain.ground_elevation_at(px, py)
         placed_cameras.append(PlacedCamera(
             pole_id=pole_counter,
             x_m=round(px, 1), y_m=round(py, 1), ground_z_m=round(gz, 1),

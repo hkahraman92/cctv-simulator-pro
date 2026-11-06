@@ -12,6 +12,10 @@ Layout, one directory per region under ``user_data_dir()/regions``:
     <region_id>/region.json   metadata (name, centre, extent, source, ...)
     <region_id>/dem.npz       z_grid + cell size + origin (compressed)
     <region_id>/ortho.jpg|png orthophoto (JPEG for photo sources, PNG for maps)
+    <region_id>/obstacles.npz optional: buildings / trees height + kind grids
+                              (surface_obstacles). dem.npz is ALWAYS bare
+                              earth, so a surface model never gets baked
+                              into the DEM; loading re-applies it.
 
 Writes go to a temporary sibling directory that is renamed into place, so a
 crash never leaves a half-written region that lists as valid. No Tk.
@@ -35,6 +39,7 @@ from .terrain_loader import TerrainData
 FORMAT_VERSION = 1
 _META = "region.json"
 _DEM = "dem.npz"
+_OBSTACLES = "obstacles.npz"
 # Photographic imagery compresses ~10x better as JPEG with no visible loss;
 # street / topo maps carry text and hard edges and stay lossless.
 _PHOTO_SOURCES = {"esri"}
@@ -61,6 +66,7 @@ class RegionInfo:
     is_measured: bool = False
     image_file: str = ""               # "" = no orthophoto saved
     image_size: Tuple[int, int] = (0, 0)
+    obstacle_note: str = ""            # "" = no surface model saved
     size_bytes: int = 0
     extra: dict = field(default_factory=dict)
 
@@ -120,10 +126,15 @@ def save_region(name: str, terrain: TerrainData, image: Optional[Image.Image] = 
         shutil.rmtree(tmp)
     tmp.mkdir()
     try:
-        np.savez_compressed(tmp / _DEM, z_grid=terrain.z_grid,
+        bare = terrain.ground_z_grid if terrain.ground_z_grid is not None else terrain.z_grid
+        np.savez_compressed(tmp / _DEM, z_grid=bare,
                             cell_size_m=np.float64(terrain.cell_size_m),
                             origin_x=np.float64(terrain.origin_x),
                             origin_y=np.float64(terrain.origin_y))
+        if terrain.obstacle_grid is not None:
+            np.savez_compressed(tmp / _OBSTACLES, height=terrain.obstacle_grid,
+                                kind=terrain.obstacle_kind if terrain.obstacle_kind is not None
+                                else (terrain.obstacle_grid > 0).astype(np.uint8))
         image_file, image_size = "", (0, 0)
         if image is not None:
             if source in _PHOTO_SOURCES:
@@ -142,6 +153,7 @@ def save_region(name: str, terrain: TerrainData, image: Optional[Image.Image] = 
             terrain_name=terrain.name, source_note=terrain.source_note,
             is_measured=bool(terrain.is_measured), image_file=image_file,
             image_size=image_size, extra=dict(extra or {}),
+            obstacle_note=terrain.obstacle_note if terrain.obstacle_grid is not None else "",
         )
         meta = asdict(info)
         meta.pop("size_bytes")
@@ -203,6 +215,16 @@ def load_region(region_id: str, base: Optional[Path] = None
             lon_center=info.lon_center, is_measured=info.is_measured,
             source_note=info.source_note,
         )
+    obs = path / _OBSTACLES
+    if obs.is_file():
+        from dataclasses import replace
+        with np.load(obs, allow_pickle=False) as o:
+            height, kind = o["height"].astype(np.float32), o["kind"].astype(np.uint8)
+        if height.shape == terrain.z_grid.shape:
+            ground = terrain.z_grid
+            terrain = replace(terrain, z_grid=(ground.astype(np.float64) + height).astype(ground.dtype),
+                              ground_z_grid=ground, obstacle_grid=height, obstacle_kind=kind,
+                              obstacle_note=info.obstacle_note)
     image = None
     if info.image_file:
         with Image.open(path / info.image_file) as im:
