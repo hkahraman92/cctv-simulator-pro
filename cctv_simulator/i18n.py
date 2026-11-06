@@ -82,12 +82,9 @@ def _pref_path() -> Path:
 
 
 def _save_preference(lang: str) -> None:
-    try:
-        p = _pref_path()
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({"language": lang}), encoding="utf-8")
-    except OSError:
-        pass
+    # Merge, not overwrite: the same file holds the theme choice.
+    from .design_tokens import write_pref
+    write_pref("language", lang, _pref_path())
 
 
 def load_preferred_language() -> str:

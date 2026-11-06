@@ -23,25 +23,113 @@ except ImportError:
     pass
 
 
-LIGHT_THEME = "cosmo"
+from . import design_tokens as _dt
 
-# Colors matched to cosmo light theme
+_dt.load_preferred_theme()
+
+# ttkbootstrap theme names registered from the design tokens.
+THEME_NAMES = {"dark": "cctv-konsol", "light": "cctv-ofis"}
+LIGHT_THEME = THEME_NAMES["light"]
+ACTIVE_THEME = THEME_NAMES[_dt.get_theme()]
+
+_FAMILIES = _dt.font_families()
+FONT_UI = _FAMILIES["ui"]
+FONT_DISPLAY = _FAMILIES["display"]
+FONT_MONO = _FAMILIES["mono"]
+
+# Legacy keys kept so callers need no change; values come from the tokens.
 COLORS = {
-    "canvas_bg": "#F8F9FA",
-    "text_bg": "#FFFFFF",
-    "text_fg": "#212529",
-    "accent": "#2780E3",
-    "success": "#3FB618",
-    "warning": "#FF7518",
-    "danger": "#FF0039",
-    "info": "#9954BB",
-    "header_fg": "#0D6EFD",
-    "muted_fg": "#6C757D",
-    "treeview_uyumlu": "#D1E7DD",
-    "treeview_kismi": "#FFF3CD",
-    "treeview_uyumsuz": "#F8D7DA",
-    "treeview_bulunamadi": "#E9ECEF",
+    "canvas_bg": _dt.tok("bg-0"),
+    "text_bg": _dt.tok("bg-2"),
+    "text_fg": _dt.tok("ink"),
+    "accent": _dt.tok("accent"),
+    "success": _dt.tok("ok"),
+    "warning": _dt.tok("warn"),
+    "danger": _dt.tok("danger"),
+    "info": _dt.tok("info"),
+    "header_fg": _dt.tok("ink"),
+    "muted_fg": _dt.tok("ink-3"),
+    "treeview_uyumlu": _dt.tok("ok-bg"),
+    "treeview_kismi": _dt.tok("warn-bg"),
+    "treeview_uyumsuz": _dt.tok("danger-bg"),
+    "treeview_bulunamadi": _dt.tok("bg-2"),
 }
+
+
+def _bootstrap_colors(theme: str) -> dict:
+    t = _dt.TOKENS[theme]
+    return {
+        "primary": t["accent"], "secondary": t["steel"], "success": t["ok"],
+        "info": t["info"], "warning": t["warn"], "danger": t["danger"],
+        "light": t["steel"], "dark": t["bg-0"], "bg": t["bg-1"], "fg": t["ink"],
+        "selectbg": t["bg-3"], "selectfg": t["ink"], "border": t["line-strong"],
+        "inputfg": t["ink"], "inputbg": t["bg-2"], "active": t["bg-3"],
+    }
+
+
+def _apply_design_theme(root) -> None:
+    """Register both token themes, activate the preferred one, set fonts."""
+    from ttkbootstrap.style import ThemeDefinition
+    style = _ttkbootstrap_mod.Style()
+    for theme, name in THEME_NAMES.items():
+        if name not in style.theme_names():
+            style.register_theme(ThemeDefinition(name=name, colors=_bootstrap_colors(theme),
+                                                 mode="dark" if theme == "dark" else "light"))
+    style.theme_use(ACTIVE_THEME)
+    _configure_fonts(root)
+    _style_details(style, root)
+
+
+def _configure_fonts(root) -> None:
+    import tkinter.font as tkfont
+    for name, family, size in (("TkDefaultFont", FONT_UI, 10), ("TkTextFont", FONT_UI, 10),
+                               ("TkMenuFont", FONT_UI, 10), ("TkHeadingFont", FONT_DISPLAY, 10),
+                               ("TkCaptionFont", FONT_DISPLAY, 11), ("TkTooltipFont", FONT_UI, 9),
+                               ("TkFixedFont", FONT_MONO, 9)):
+        try:
+            tkfont.nametofont(name, root=root).configure(family=family, size=size)
+        except tk.TclError:
+            pass
+
+
+def _style_details(style, root) -> None:
+    """Flat, sharp industrial details the bootstrap builder leaves out."""
+    t = _dt.TOKENS[_dt.get_theme()]
+    rowh = int(26 * dpi_scale(root))
+    style.configure("Treeview", rowheight=rowh, fieldbackground=t["bg-1"], background=t["bg-1"],
+                    foreground=t["ink"], bordercolor=t["line"])
+    style.configure("Treeview.Heading", font=(FONT_DISPLAY, 9), background=t["bg-2"],
+                    foreground=t["ink-3"], bordercolor=t["line-strong"], relief="flat")
+    style.map("Treeview", background=[("selected", t["bg-3"])], foreground=[("selected", t["ink"])])
+    style.configure("TLabelframe", bordercolor=t["line"])
+    style.configure("TLabelframe.Label", font=(FONT_DISPLAY, 10), foreground=t["ink-2"])
+    style.configure("TNotebook", bordercolor=t["line"], tabmargins=0)
+    style.configure("TNotebook.Tab", font=(FONT_DISPLAY, 10), padding=(12, 6),
+                    foreground=t["ink-2"], bordercolor=t["line"])
+    style.map("TNotebook.Tab", foreground=[("selected", t["ink"])])
+    # "secondary" is steel so outline buttons read as text + border; the solid
+    # secondary button stays a raised bg-2 surface instead of a steel slab.
+    # ttkbootstrap builds bootstyles lazily on first use and would overwrite
+    # these, so build them now.
+    for bs in ("secondary", "secondary-outline"):
+        _ttkbootstrap_mod.Button(root, bootstyle=bs).destroy()
+    style.configure("secondary.TButton", background=t["bg-2"], foreground=t["ink"],
+                    bordercolor=t["line-strong"], lightcolor=t["bg-2"], darkcolor=t["bg-2"])
+    style.map("secondary.TButton",
+              background=[("disabled", t["bg-1"]), ("pressed", t["bg-3"]), ("active", t["bg-3"])],
+              foreground=[("disabled", t["ink-3"])],
+              bordercolor=[("disabled", t["line"]), ("active", t["line-strong"])])
+    style.map("secondary.Outline.TButton",
+              background=[("pressed", t["bg-3"]), ("active", t["bg-3"])],
+              foreground=[("disabled", t["ink-3"]), ("pressed", t["ink"]), ("active", t["ink"])],
+              bordercolor=[("disabled", t["line"]), ("active", t["steel"])])
+    # Legacy tk widgets (Text, Listbox, Canvas) read the option database.
+    for opt, val in (("*Text.background", t["bg-2"]), ("*Text.foreground", t["ink"]),
+                     ("*Text.insertBackground", t["ink"]), ("*Text.selectBackground", t["bg-3"]),
+                     ("*Listbox.background", t["bg-2"]), ("*Listbox.foreground", t["ink"]),
+                     ("*Canvas.background", t["bg-0"]), ("*Canvas.highlightThickness", 0),
+                     ("*Toplevel.background", t["bg-0"]), ("*Frame.background", t["bg-0"])):
+        root.option_add(opt, val)
 
 
 # Try setting DPI awareness for Windows so high DPI screens scale properly
@@ -379,12 +467,21 @@ def create_app_window(title: str = "",
         try:
             root = _ttkbootstrap_mod.Window(
                 title=title,
-                themename=LIGHT_THEME,
+                themename="darkly" if _dt.is_dark() else "cosmo",
                 size=(1400, 860),
             )
         except Exception as exc:
             bootstrap_error = str(exc)
             root = None
+        if root is not None:
+            try:
+                _apply_design_theme(root)
+            except Exception as exc:  # keep the stock theme; never lose the window
+                try:
+                    from .errors import note
+                    note(f"tasarim temasi uygulanamadi: {exc}", "baslangic")
+                except Exception:
+                    pass
 
     if root is None:
         if _TTKBOOTSTRAP_AVAILABLE:
