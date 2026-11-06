@@ -44,7 +44,7 @@ cctv_dual_view_simulator.py          giriş noktası
   database.py / config.py / models.py
   status_summary.py                  durum paneli: gösterge kutuları + önem sıralı alarmlar (Tk'siz)
   ui/main_window.py                  DualViewCCTVDesignApp - klasik arayüz
-    ui/components.py                 tasarım sistemi widget'ları: KpiTile, AlarmList, StatusChip, BarButton
+    ui/components.py                 tasarım sistemi widget'ları: KpiTile, AlarmList, StatusChip, BarButton, glass_under
     ui/canvas_drawer.py              yan kesit + kuş bakışı plan
     ui/view_3d_window.py             3B kamera görüşü
     ui/modern_window.py              EN 62676-4 optik tezgâhı (customtkinter)
@@ -713,6 +713,26 @@ Katman renkleri **tek tabloda**: `_LAYER_BANDS` (mod → başlık + `(lo, hi, RG
 lejant)` bantları, `_paint_bands`); haritanın sol üstündeki katman lejandı
 (`_draw_layer_legend`, kutusu yazının bbox'ından) aynı tabloyu okur — lejant
 haritanın kullanmadığı rengi anlatamaz. Refaktör beş katmanda bit-aynı.
+Renkler tokenlardan (`rgba(...)`): kapsama kalitesi **soğuk DORI rampası**
+(`dori-identify` … `dori-detect`), sıcak renk yalnız dikkat isteyen bantta
+(yedeksiz 1 kamera, 30 sn+ revizit / 6 sn+ tepki, yalnız-PTZ aralıklı).
+Tekil kamera DORI bindirmesi, çit ısı haritası ve tekil lejant da aynı
+tabloyu/rampayı okur (eskiden üç ayrı sabit RGBA listesi + emojili lejant
+vardı). `test_map_dori_layer_is_the_cold_ramp_and_warm_means_attention`.
+
+**Cam bindirmeler** (`components.glass_under(cv, tag, backdrop, store)`):
+katman lejandı, DORI lejandı, ölçek, çit bilgi kutusu, kamera etiketi ve 3B
+HUD + hedef etiketi. Tk'de alfa yok; kutu, tuvalin altındaki görüntünün
+(harita: `_render_map_canvas` sonunda tuval boyutlu `_backdrop`; 3B: render
+edilen kare) PIL kırpıntısından bulanıklaştırılıp `glass` tokenıyla
+boyanır, 4 px köşe + `glass-edge` kenar. PhotoImage'lar `_glass_photos`'ta,
+her render'da sıfırlanır. 3B'de sürükleme karesi (`fast`) bulanıklığı atlar.
+Ölçüldü: kare başına ~5 ms (yakın zumdaki 130–400 ms harita raster'ının
+tamamını zum boyutuna büyütmekten — önceden de vardı, görünür bölgeyi
+kırpıp büyütmek açık iş). 3B HUD satırları `components.stack_lines` ile
+ölçülen yüksekliğe göre dizilir (sabit ofsetler %150'de üst üste biniyordu);
+DORI rozet rengi motorun hex'i değil soğuk rampa (`_dori_badge`: motor
+Teşhis'i kırmızı veriyordu — en iyi seviye alarm gibi görünüyordu).
 `_create_stat_row` değeri başlığın bıraktığı genişlikte sarar (karma özet iki
 uçtan kırpılıyordu, Kural 8); çit bilgi kutusu da yazıdan boyutlanır. Termal
 PTZ'de karma "Algılama" alanı Johnson 1,3 px/m tabanıdır

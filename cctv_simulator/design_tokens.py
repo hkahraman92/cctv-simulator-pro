@@ -49,6 +49,14 @@ TOKENS: Dict[str, Dict[str, str]] = {
     },
 }
 
+# Glass overlay on the map / 3D canvas only (tokens.json "glass", "glass-edge"):
+# RGBA, alpha 0-255. Composited in PIL over a blurred crop of the map.
+GLASS = {
+    "dark": {"glass": (17, 26, 43, 199), "glass-edge": (137, 149, 169, 89)},
+    "light": {"glass": (255, 255, 255, 209), "glass-edge": (90, 102, 119, 77)},
+}
+GLASS_BLUR_PX = 5      # PIL GaussianBlur radius (tokens.json glass-blur 10 px)
+
 # Drawing-surface roles (plan, profile, charts) derived from the tokens so
 # canvas code names what it draws, not a colour.
 _CANVAS_ROLES = {
@@ -158,6 +166,10 @@ def rgba(name: str, alpha: int, theme: str | None = None) -> tuple:
     """Token as an (r, g, b, a) tuple for PIL overlays."""
     h = tok(name, theme).lstrip("#")
     return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), alpha)
+
+
+def glass_rgba(name: str = "glass", theme: str | None = None) -> tuple:
+    return GLASS[theme or _state["theme"]][name]
 
 
 def fonts_dir() -> Path:

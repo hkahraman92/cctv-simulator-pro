@@ -9,9 +9,9 @@ from __future__ import annotations
 import tkinter as tk
 from typing import Callable, List, Optional, Sequence
 
-from ..design_tokens import tok
+from ..design_tokens import GLASS_BLUR_PX, glass_rgba, tok
 from ..status_summary import SYMBOL, WORD, Alarm, Kpi
-from ..theme import FONT_DISPLAY, FONT_MONO, FONT_UI
+from ..theme import FONT_DISPLAY, FONT_MONO, FONT_UI, dpi_scale
 
 _STATE_FG = {"ok": "ok", "warn": "warn", "danger": "danger", "info": "info", "neutral": "ink"}
 _STATE_EDGE = {"ok": "ok", "warn": "warn", "danger": "danger", "info": "info", "neutral": "line-strong"}
@@ -156,3 +156,61 @@ class BarButton(tk.Label):
         self.bind("<Enter>", lambda _e: self.configure(bg=self._hover))
         self.bind("<Leave>", lambda _e: self.configure(bg=self._normal))
         self.bind("<Button-1>", lambda _e: command())
+
+
+def glass_under(cv, tag, backdrop, store: list, pad=(8, 5), blur: bool = True):
+    """Frosted panel behind the canvas items tagged ``tag``.
+
+    ``backdrop`` is a PIL image of what the canvas shows under the overlays,
+    in canvas pixels (the map raster, the 3D frame). The box is cut from it,
+    blurred (``glass-blur``), tinted with the ``glass`` token, given 4 px
+    corners and a 1 px ``glass-edge`` border, then placed under the tag. Tk
+    has no alpha, so this is the only way to get the effect on a canvas.
+    ``blur=False`` (drag frames) keeps the tint and skips the blur. The
+    PhotoImage is appended to ``store``: the caller keeps it alive and clears
+    it on redraw. Without a backdrop a flat ``bg-1`` box is drawn instead.
+    """
+    from PIL import Image, ImageDraw, ImageFilter, ImageTk
+
+    bb = cv.bbox(tag)
+    if not bb:
+        return None
+    x0, y0 = int(bb[0] - pad[0]), int(bb[1] - pad[1])
+    x1, y1 = int(bb[2] + pad[0]), int(bb[3] + pad[1])
+    if backdrop is None:
+        box = cv.create_rectangle(x0, y0, x1, y1, fill=tok("bg-1"), outline=tok("line"))
+        cv.tag_lower(box, tag)
+        return box
+    cx0, cy0 = max(0, x0), max(0, y0)
+    cx1, cy1 = min(backdrop.width, x1), min(backdrop.height, y1)
+    if cx1 - cx0 < 6 or cy1 - cy0 < 6:
+        return None
+    s = dpi_scale(cv)
+    base = backdrop.crop((cx0, cy0, cx1, cy1)).convert("RGBA")
+    frost = base.filter(ImageFilter.GaussianBlur(GLASS_BLUR_PX * s)) if blur else base
+    frost = Image.alpha_composite(frost, Image.new("RGBA", frost.size, glass_rgba("glass")))
+    bw, bh = frost.size
+    radius = max(2, int(round(4 * s)))
+    mask = Image.new("L", frost.size, 0)
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, bw - 1, bh - 1), radius=radius, fill=255)
+    out = base.copy()
+    out.paste(frost, (0, 0), mask)
+    edge = Image.new("RGBA", frost.size, (0, 0, 0, 0))
+    ImageDraw.Draw(edge).rounded_rectangle((0, 0, bw - 1, bh - 1), radius=radius,
+                                           outline=glass_rgba("glass-edge"), width=1)
+    out = Image.alpha_composite(out, edge)
+    photo = ImageTk.PhotoImage(out, master=cv)  # Kural 5
+    store.append(photo)
+    item = cv.create_image(cx0, cy0, image=photo, anchor="nw")
+    cv.tag_lower(item, tag)
+    return item
+
+
+def stack_lines(cv, x, y, lines, tag, gap: int = 2):
+    """Draw ``(text, colour, font)`` rows top-down from (x, y), each placed
+    under the previous one's measured bbox -- never a fixed pixel step, which
+    overprinted at >100 % DPI (Kural 8). Returns the bottom y."""
+    for text, colour, font in lines:
+        item = cv.create_text(x, y, text=text, anchor="nw", fill=colour, font=font, tags=tag)
+        y = cv.bbox(item)[3] + gap
+    return y

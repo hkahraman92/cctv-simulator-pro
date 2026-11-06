@@ -96,3 +96,25 @@ def test_bundled_fonts_ship_with_their_licenses():
         assert (base / rel).is_file(), rel
     for family in ("barlow", "barlowsemicondensed", "ibmplexmono"):
         assert (base / family / "OFL.txt").is_file()
+
+
+def test_glass_tokens_cover_both_themes():
+    for theme in dt.THEMES:
+        for name in ("glass", "glass-edge"):
+            rgba = dt.glass_rgba(name, theme)
+            assert len(rgba) == 4 and all(0 <= c <= 255 for c in rgba)
+
+
+def test_map_dori_layer_is_the_cold_ramp_and_warm_means_attention():
+    from cctv_simulator.ui import map_3d_window as m
+    theme = dt.get_theme()
+    dori = [band[2][:3] for band in m._LAYER_BANDS["dori"][1][:4]]
+    ramp = [dt.rgba(n, 0, theme)[:3] for n in ("dori-identify", "dori-recognize",
+                                                "dori-observe", "dori-detect")]
+    assert dori == ramp
+    warm = {dt.rgba("warn", 0, theme)[:3], dt.rgba("danger", 0, theme)[:3]}
+    # Good outcomes never use a warm colour; the worst band of each time layer does.
+    for key in ("revisit", "cue"):
+        bands = m._LAYER_BANDS[key][1]
+        assert bands[0][2][:3] not in warm and bands[-1][2][:3] in warm
+    assert m._LAYER_BANDS["overlap"][1][0][2][:3] in warm      # 1 camera = no redundancy

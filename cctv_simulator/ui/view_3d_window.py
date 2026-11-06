@@ -14,8 +14,10 @@ from typing import Dict, List, Tuple, Optional, Any
 
 from ..config import SENSOR_DIMS_MM, RESOLUTIONS
 from ..models import CameraConfig, PPMLevel
-from ..theme import (is_themed, COLORS, StyledButton, fit_and_center_window, set_window_icon,
+from ..theme import (FONT_MONO, FONT_UI, is_themed, COLORS, StyledButton, fit_and_center_window, set_window_icon,
                      flow_layout, wrap_label)
+from ..design_tokens import tok as _tok
+from .components import glass_under, stack_lines
 from ..perspective_3d import (
     Perspective3DEngine,
     Point3D,
@@ -31,6 +33,36 @@ try:
     _PIL_OK = True
 except Exception:  # pragma: no cover - PIL is a hard dep, this is belt-and-braces
     _PIL_OK = False
+
+
+_DORI_BADGE = (
+    ("Teşhis", "dori-identify"), ("Tanıma", "dori-recognize"), ("Gözlem", "dori-observe"),
+    ("Algılama", "dori-detect"), ("Algoritma", "dori-observe"), ("İzleme", "dori-monitor"),
+)
+
+
+def _dori_badge(dori_name: str) -> str:
+    for word, token in _DORI_BADGE:
+        if word in dori_name:
+            return _tok(token)
+    return _tok("steel")
+
+
+def _ink_on(bg_hex: str) -> str:
+    """ink or bg-0, whichever reads better on ``bg_hex`` (WCAG luminance)."""
+    def lum(h):
+        h = h.lstrip("#")
+        c = [int(h[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+        c = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in c]
+        return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+    lb = lum(bg_hex)
+    best = None
+    for cand in (_tok("ink"), _tok("bg-0"), "#FFFFFF", "#000000"):
+        lc = lum(cand)
+        ratio = (max(lb, lc) + 0.05) / (min(lb, lc) + 0.05)
+        if best is None or ratio > best[0]:
+            best = (ratio, cand)
+    return best[1]
 
 
 class Camera3DViewWindow:
@@ -206,8 +238,8 @@ class Camera3DViewWindow:
         control_bar.pack(side=tk.TOP, fill=tk.X)
 
         # Target Distance Control
-        cap_dist = ttk.Label(control_bar, text="Hedef Mesafe:", font=("Segoe UI", 9, "bold"))
-        self.lbl_dist_val = ttk.Label(control_bar, text=f"{self.target_dist_var.get():.1f} m", font=("Segoe UI", 9, "bold"), foreground=COLORS["accent"], width=8)
+        cap_dist = ttk.Label(control_bar, text="Hedef Mesafe:", font=(FONT_UI, 9, "bold"))
+        self.lbl_dist_val = ttk.Label(control_bar, text=f"{self.target_dist_var.get():.1f} m", font=(FONT_UI, 9, "bold"), foreground=COLORS["accent"], width=8)
 
         self.scale_dist = ttk.Scale(
             control_bar,
@@ -320,7 +352,7 @@ class Camera3DViewWindow:
         canvas_container = ttk.Frame(self.window)
         canvas_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 6))
 
-        self.canvas = tk.Canvas(canvas_container, bg="#1E272C", highlightthickness=0, borderwidth=1, relief="sunken")
+        self.canvas = tk.Canvas(canvas_container, bg=_tok("bg-0"), highlightthickness=0, borderwidth=1, relief="sunken")
         self.canvas.pack(fill=tk.BOTH, expand=True)
         # PERF: a resize emits a burst of <Configure>; debounce it.
         self.canvas.bind("<Configure>", lambda e: self.schedule_render(80))
@@ -336,7 +368,7 @@ class Camera3DViewWindow:
         self.lbl_hud_dori = tk.Label(
             bottom_bar,
             textvariable=self.hud_dori_var,
-            font=("Segoe UI", 10, "bold"),
+            font=(FONT_UI, 10, "bold"),
             fg="#FFFFFF",
             bg="#2780E3",
             padx=10,
@@ -348,7 +380,7 @@ class Camera3DViewWindow:
         self.lbl_hud_ppm = ttk.Label(
             bottom_bar,
             textvariable=self.hud_ppm_var,
-            font=("Segoe UI", 11, "bold"),
+            font=(FONT_UI, 11, "bold"),
             foreground=COLORS["accent"],
         )
         self.lbl_hud_ppm.pack(side=tk.LEFT, padx=(0, 20))
@@ -356,7 +388,7 @@ class Camera3DViewWindow:
         self.lbl_hud_optics = wrap_label(ttk.Label(
             bottom_bar,
             textvariable=self.hud_optics_var,
-            font=("Segoe UI", 9),
+            font=(FONT_UI, 9),
             foreground=COLORS["text_fg"],
         ))
         self.lbl_hud_optics.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -424,6 +456,9 @@ class Camera3DViewWindow:
             return
 
         self.canvas.delete("all")
+        self._glass_photos = []
+        self._backdrop = None
+        self._fast = fast
 
         # 1. Fetch current active camera from main app
         camera = self.app._get_active_camera()
@@ -476,12 +511,13 @@ class Camera3DViewWindow:
             )
             self._frame_photo = ImageTk.PhotoImage(frame, master=self.canvas)
             self.canvas.create_image(0, 0, anchor=tk.NW, image=self._frame_photo)
+            self._backdrop = frame
         else:
             self.canvas.create_rectangle(0, 0, w, h, fill=ground_bg, outline="")
 
         if 0 < horizon_y < h:
             self.canvas.create_line(0, horizon_y, w, horizon_y, fill="#B0BEC5", width=1, dash=(4, 4))
-            self.canvas.create_text(w - 54, max(horizon_y - 12, 14), text="UFUK", fill="#CFD8DC", font=("Segoe UI", 7, "bold"))
+            self.canvas.create_text(w - 54, max(horizon_y - 12, 14), text="UFUK", fill="#CFD8DC", font=(FONT_UI, 7, "bold"))
 
         # 5. Draw 3D Ground Perspective Grid & Distance Markers
         if self.show_grid_var.get():
@@ -502,7 +538,7 @@ class Camera3DViewWindow:
                         if 0 <= pm.u <= w and 0 <= pm.v <= h and abs(pm.v - last_label_v) > 13:
                             last_label_v = pm.v
                             self.canvas.create_text(pm.u + 14, pm.v, text=f"{line['distance']:.0f} m",
-                                                    fill=lbl_color, font=("Segoe UI", 7, "bold"))
+                                                    fill=lbl_color, font=(FONT_UI, 7, "bold"))
 
         # 6. Night Vision IR Illuminator Spotlight Cone
         if is_night and camera.ir_range_m > 0:
@@ -525,11 +561,12 @@ class Camera3DViewWindow:
                     p_ir.v + cone_h / 2 + 10,
                     text=f"IR Aydınlatma Sınırı ({ir_r:.0f}m)",
                     fill="#00E676",
-                    font=("Segoe UI", 8, "bold"),
+                    font=(FONT_UI, 8, "bold"),
                 )
 
         # 7. Calculate PPM, DRI and Target Telemetry
-        dori_name, badge_color, dori_desc = engine.get_dori_status(ppm, target_h_m=target_h)
+        dori_name, _engine_badge, dori_desc = engine.get_dori_status(ppm, target_h_m=target_h)
+        badge_color = _dori_badge(dori_name)
 
         target_px = ppm * target_h
         pct_h = (target_px / max(engine.res_h, 1)) * 100.0
@@ -542,10 +579,10 @@ class Camera3DViewWindow:
         # Update HUD Bottom Bar
         if vis_km < 20.0 and atm_tau < 0.30:
             self.hud_dori_var.set(f"⚠️ ATMOSFER · {dori_name.split(' (')[0]}")
-            badge_color = "#FF4D6D"
+            badge_color = _tok("danger")
         else:
             self.hud_dori_var.set(f"🎯 {dori_name.split(' (')[0]}")
-        self.lbl_hud_dori.configure(bg=badge_color)
+        self.lbl_hud_dori.configure(bg=badge_color, fg=_ink_on(badge_color))
 
         if engine.is_thermal:
             self.hud_ppm_var.set(f"{target_px:.1f} px  (%{pct_h:.2f})  |  {ppm:.2f} PPM")
@@ -566,11 +603,11 @@ class Camera3DViewWindow:
         p_head = engine.project_point(Point3D(lateral_offset, target_dist, target_h))
         if p_head.visible and p_head.depth > 0.05 and 0 <= p_head.u <= w:
             tag_y = max(p_head.v - 16, 12)
-            icon = "🚗" if self.target_type_var.get() == "vehicle" else ("🎯" if self.target_type_var.get() == "chart" else "🧍")
-            tag_txt = f"{icon} {target_dist:.0f} m · {target_px:.0f} px"
-            self.canvas.create_rectangle(p_head.u - 52, tag_y - 9, p_head.u + 52, tag_y + 9,
-                                         fill="#12151A", outline=badge_color)
-            self.canvas.create_text(p_head.u, tag_y, text=tag_txt, fill="#FFFFFF", font=("Segoe UI", 8, "bold"))
+            tag_txt = f"{target_dist:.0f} m · {target_px:.0f} px"
+            self.canvas.create_text(p_head.u, tag_y, text=tag_txt, fill=_tok("ink"),
+                                    font=(FONT_MONO, 8), tags="target_tag")
+            glass_under(self.canvas, "target_tag", self._backdrop, self._glass_photos,
+                        pad=(6, 2), blur=not self._fast)
 
         # 9. Optical Center Crosshair (Reticle)
         cx, cy = w / 2.0, h / 2.0
@@ -584,43 +621,39 @@ class Camera3DViewWindow:
         self._render_hud_overlay(w, h, camera, focal_mm, target_dist, ppm, target_px, pct_h, dori_name, badge_color, p_mode, engine.is_thermal)
 
     def _render_hud_overlay(self, w: int, h: int, camera: CameraConfig, focal_mm: float, dist_m: float, ppm: float, target_px: float, pct_h: float, dori_name: str, badge_color: str, p_mode: str, is_thermal: bool):
-        """Draws a semi-transparent HUD telemetry overlay in the top-left corner."""
-        box_w = 290
-        box_h = 115 if is_thermal else 95
-        margin = 12
-
-        self.canvas.create_rectangle(
-            margin, margin,
-            margin + box_w, margin + box_h,
-            fill="#1E272C",
-            outline=badge_color,
-            width=1.5,
-            stipple="gray75" if p_mode == "day" else "gray50",
-        )
-
-        if is_thermal:
-            mode_str = f"🔥 TERMAL ({p_mode.replace('thermal_', '').upper()})"
-            header_col = "#FFD600"
+        """Telemetry card in the top-left corner on a glass box. Rows are
+        stacked by their measured height (fixed offsets overprinted at
+        150 %); the value carries the DORI tier colour, the rest is ink."""
+        # Header follows the palette on screen (an ironbow frame from a visible
+        # camera used to be labelled "GÜNDÜZ OPTİK"); the rows follow the sensor.
+        if p_mode.startswith("thermal"):
+            mode_str = f"TERMAL · {p_mode.replace('thermal_', '').upper()}"
         elif p_mode == "ir":
-            mode_str = "🌙 GECE (IR)"
-            header_col = "#00E676"
+            mode_str = "GECE · IR"
         else:
-            mode_str = "☀️ GÜNDÜZ OPTİK"
-            header_col = "#90CAF9"
-
-        self.canvas.create_text(margin + 10, margin + 14, text=f"{camera.name} | {mode_str}", anchor=tk.W, fill=header_col, font=("Segoe UI", 8, "bold"))
-
+            mode_str = "GÜNDÜZ OPTİK"
+        caption = (FONT_UI, 8, "bold")
+        body = (FONT_UI, 8)
+        lines = [(f"{camera.name.upper()} · {mode_str}", _tok("ink-3"), caption)]
         if is_thermal:
-            self.canvas.create_text(margin + 10, margin + 36, text=f"{target_px:.1f} px  (%{pct_h:.2f} dikey)", anchor=tk.W, fill=badge_color, font=("Segoe UI", 15, "bold"))
-            algo_txt = "✅ Algoritma %1.5 Eşiği: UYUMLU" if pct_h >= 1.5 else "⚠️ Algoritma %1.5 Eşiği: YETERSİZ"
-            algo_col = "#00E676" if pct_h >= 1.5 else "#FF5252"
-            self.canvas.create_text(margin + 10, margin + 60, text=algo_txt, anchor=tk.W, fill=algo_col, font=("Segoe UI", 8, "bold"))
-            self.canvas.create_text(margin + 10, margin + 78, text=f"NATO DRI: {dori_name}", anchor=tk.W, fill="#FFFFFF", font=("Segoe UI", 8, "bold"))
-            self.canvas.create_text(margin + 10, margin + 96, text=f"Mesafe: {dist_m:.0f}m  |  Lens: {focal_mm:.0f}mm  |  PPM: {ppm:.2f}", anchor=tk.W, fill="#B0BEC5", font=("Segoe UI", 8))
+            ok = pct_h >= 1.5
+            lines += [
+                (f"{target_px:.1f} px  (%{pct_h:.2f} dikey)", badge_color, (FONT_MONO, 15)),
+                (("● Algoritma %1.5 eşiği: uyumlu" if ok else "▲ Algoritma %1.5 eşiği: yetersiz"),
+                 _tok("ok") if ok else _tok("warn"), body),
+                (f"NATO DRI: {dori_name}", _tok("ink"), (FONT_UI, 8, "bold")),
+                (f"Mesafe {dist_m:.0f} m · Lens {focal_mm:.0f} mm · {ppm:.2f} px/m", _tok("ink-2"), body),
+            ]
         else:
-            self.canvas.create_text(margin + 10, margin + 38, text=f"{ppm:.1f} PPM", anchor=tk.W, fill=badge_color, font=("Segoe UI", 16, "bold"))
-            self.canvas.create_text(margin + 10, margin + 62, text=f"EN 62676-4 DORI: {dori_name}", anchor=tk.W, fill="#FFFFFF", font=("Segoe UI", 8, "bold"))
-            self.canvas.create_text(margin + 10, margin + 80, text=f"Mesafe: {dist_m:.1f}m  |  Lens: {focal_mm:.1f}mm", anchor=tk.W, fill="#B0BEC5", font=("Segoe UI", 8))
+            lines += [
+                (f"{ppm:.1f} px/m", badge_color, (FONT_MONO, 16)),
+                (f"EN 62676-4 DORI: {dori_name}", _tok("ink"), (FONT_UI, 8, "bold")),
+                (f"Mesafe {dist_m:.1f} m · Lens {focal_mm:.1f} mm", _tok("ink-2"), body),
+            ]
+        margin = 22
+        stack_lines(self.canvas, margin, margin, lines, "hud")
+        glass_under(self.canvas, "hud", self._backdrop, self._glass_photos,
+                    pad=(10, 8), blur=not self._fast)
 
     def save_snapshot(self):
         """Exports the current 3D canvas viewport as a clean PNG image."""

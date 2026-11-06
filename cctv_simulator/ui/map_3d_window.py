@@ -53,7 +53,10 @@ from ..perimeter_planner import (
 )
 from ..terrain_loader import TerrainData, generate_procedural_terrain, load_geotiff_or_dem
 from ..i18n import t as _t
-from ..theme import COLORS, StyledButton, fit_and_center_window, flow_layout, wrap_label, make_scrollable
+from ..design_tokens import rgba as _rgba, tok as _tok
+from .components import glass_under
+from ..theme import (COLORS, FONT_MONO, FONT_UI, StyledButton, fit_and_center_window,
+                     flow_layout, wrap_label, make_scrollable)
 from ..viewshed_3d import (
     PPM_DETECT,
     PPM_IDENT,
@@ -116,30 +119,30 @@ _PATROL_SPAN_BY_LABEL = dict(_PATROL_SPANS)
 _INF = float("inf")
 _LAYER_BANDS = {
     "dori": ("BİRLEŞİK DORI", (
-        (ZONE_IDENT, ZONE_IDENT + 1, (0, 230, 118, 150), "Teşhis ≥ 250 px/m"),
-        (ZONE_RECOG, ZONE_RECOG + 1, (255, 179, 0, 130), "Tanıma ≥ 125 px/m"),
-        (ZONE_OBSERVE, ZONE_OBSERVE + 1, (255, 112, 67, 115), "Gözlem ≥ 62,5 px/m"),
-        (ZONE_DETECT, ZONE_DETECT + 1, (255, 77, 109, 100), "Algılama ≥ 25 px/m"),
-        (ZONE_OCCLUDED, ZONE_OCCLUDED + 1, (12, 14, 18, 200), "Kör nokta (arazi engeli)"))),
+        (ZONE_IDENT, ZONE_IDENT + 1, _rgba("dori-identify", 185), "Teşhis ≥ 250 px/m"),
+        (ZONE_RECOG, ZONE_RECOG + 1, _rgba("dori-recognize", 175), "Tanıma ≥ 125 px/m"),
+        (ZONE_OBSERVE, ZONE_OBSERVE + 1, _rgba("dori-observe", 165), "Gözlem ≥ 62,5 px/m"),
+        (ZONE_DETECT, ZONE_DETECT + 1, _rgba("dori-detect", 160), "Algılama ≥ 25 px/m"),
+        (ZONE_OCCLUDED, ZONE_OCCLUDED + 1, _rgba("bg-0", 200), "Kör nokta (arazi engeli)"))),
     "overlap": ("YEDEKLİLİK (fiziksel kamera)", (
-        (1, 2, (255, 214, 0, 110), "1 kamera (yedeksiz)"),
-        (2, 3, (0, 230, 118, 120), "2 kamera"),
-        (3, _INF, (0, 229, 255, 130), "≥ 3 kamera"))),
+        (1, 2, _rgba("warn", 115), "1 kamera (yedeksiz)"),
+        (2, 3, _rgba("dori-observe", 130), "2 kamera"),
+        (3, _INF, _rgba("dori-identify", 140), "≥ 3 kamera"))),
     "revisit": ("REVİZİT — en uzun izlenmeyen süre", (
-        (-_INF, 10, (0, 230, 118, 130), "< 10 sn"),
-        (10, 30, (255, 214, 0, 125), "10–30 sn"),
-        (30, 60, (255, 112, 67, 120), "30–60 sn"),
-        (60, _INF, (255, 77, 109, 120), "≥ 60 sn"))),
+        (-_INF, 10, _rgba("dori-identify", 140), "< 10 sn"),
+        (10, 30, _rgba("dori-observe", 130), "10–30 sn"),
+        (30, 60, _rgba("warn", 120), "30–60 sn"),
+        (60, _INF, _rgba("danger", 120), "≥ 60 sn"))),
     "cue": ("TEPKİ — alarm → teşhis süresi", (
-        (-_INF, 3, (0, 230, 118, 140), "< 3 sn"),
-        (3, 6, (255, 214, 0, 130), "3–6 sn"),
-        (6, 10, (255, 112, 67, 125), "6–10 sn"),
-        (10, _INF, (255, 77, 109, 125), "≥ 10 sn"))),
+        (-_INF, 3, _rgba("dori-identify", 140), "< 3 sn"),
+        (3, 6, _rgba("dori-observe", 130), "3–6 sn"),
+        (6, 10, _rgba("warn", 125), "6–10 sn"),
+        (10, _INF, _rgba("danger", 125), "≥ 10 sn"))),
     "fused": ("ALGILAMA: SABİT + PTZ", (
-        (2, 3, (0, 230, 118, 130), "Sürekli — sabit kamera"),
-        (1, 2, (255, 179, 0, 125), "Aralıklı — yalnız PTZ devriyesi"))),
+        (2, 3, _rgba("dori-identify", 140), "Sürekli — sabit kamera"),
+        (1, 2, _rgba("warn", 125), "Aralıklı — yalnız PTZ devriyesi"))),
 }
-_GLIMPSE_RGBA = (150, 150, 150, 110)
+_GLIMPSE_RGBA = _rgba("steel", 110)
 _GLIMPSE_LABEL = "Yalnız bakış (sayılmayacak kadar hızlı)"
 
 
@@ -151,18 +154,27 @@ def _paint_bands(ov, grid, bands, mask=None):
 _WATCH_SIDE_TO_LABEL = {v: k for k, v in _WATCH_SIDE_BY_LABEL.items()}
 
 
-# Color Tokens for CAD Topography
-BG_DARK = "#14171C"
-PANEL_DARK = "#1E2229"
-PANEL_BORDER = "#323842"
-TEXT_WHITE = "#ECEFF4"
-TEXT_MUTED = "#8B949E"
-ACCENT_CYAN = "#00E5FF"
-ACCENT_AMBER = "#FFB300"
-ACCENT_GREEN = "#00E676"
-ACCENT_RED = "#FF4D6D"
-ACCENT_PURPLE = "#CE93D8"
-
+# Colours from the design tokens (theme.py loads the preferred theme before
+# this module is imported). Names kept so the many call sites stay readable.
+BG_DARK = _tok("bg-0")
+PANEL_DARK = _tok("bg-1")
+FIELD_BG = _tok("bg-2")
+PANEL_BORDER = _tok("line")
+TEXT_WHITE = _tok("ink")
+TEXT_DIM = _tok("ink-2")
+TEXT_MUTED = _tok("ink-3")
+ACCENT_CYAN = _tok("accent")
+ACCENT_AMBER = _tok("warn")
+ACCENT_GREEN = _tok("ok")
+ACCENT_RED = _tok("danger")
+ACCENT_PURPLE = _tok("info")
+C_CAMERA = _tok("camera")
+C_SELECTED = _tok("selected")
+C_TARGET = _tok("target")        # fence line, hover, profile <-> map cursor
+C_PTZ = _tok("info")
+C_MARK_EDGE = _tok("bg-0")       # marker outline: reads on imagery and on the dark map
+C_GROUND = _tok("bg-3")
+C_GROUND_EDGE = _tok("line-strong")
 
 
 class _DownloadCancelled(Exception):
@@ -618,25 +630,25 @@ class TerrainViewshedWindow:
         tools = tk.Frame(map_header, bg=PANEL_DARK)
         tools.pack(fill=tk.X)
         tool_widgets = [
-            tk.Label(tools, text="🗺️ TOPOĞRAFYA & HD UYDU HARİTASI", font=("Segoe UI", 9, "bold"),
+            tk.Label(tools, text="🗺️ TOPOĞRAFYA & HD UYDU HARİTASI", font=(FONT_UI, 9, "bold"),
                      fg=TEXT_WHITE, bg=PANEL_DARK, padx=8, pady=4),
-            tk.Button(tools, text="➕ Yakınlaş", font=("Segoe UI", 8, "bold"), fg=ACCENT_CYAN, bg="#262D37",
+            tk.Button(tools, text="➕ Yakınlaş", font=(FONT_UI, 8, "bold"), fg=ACCENT_CYAN, bg=FIELD_BG,
                       relief="flat", padx=6, pady=2, command=self._zoom_in),
-            tk.Button(tools, text="➖ Uzaklaş", font=("Segoe UI", 8, "bold"), fg=ACCENT_CYAN, bg="#262D37",
+            tk.Button(tools, text="➖ Uzaklaş", font=(FONT_UI, 8, "bold"), fg=ACCENT_CYAN, bg=FIELD_BG,
                       relief="flat", padx=6, pady=2, command=self._zoom_out),
-            tk.Button(tools, text="🔍 Sıfırla (%100)", font=("Segoe UI", 8), fg=TEXT_WHITE, bg="#262D37",
+            tk.Button(tools, text="🔍 Sıfırla (%100)", font=(FONT_UI, 8), fg=TEXT_WHITE, bg=FIELD_BG,
                       relief="flat", padx=6, pady=2, command=self._reset_zoom),
-            tk.Label(tools, textvariable=self.lbl_zoom_readout_var, font=("Segoe UI", 8, "bold"),
+            tk.Label(tools, textvariable=self.lbl_zoom_readout_var, font=(FONT_UI, 8, "bold"),
                      fg=ACCENT_AMBER, bg=PANEL_DARK, padx=4),
             tk.Radiobutton(tools, text="📍 Yerleştir", variable=self.mouse_nav_tool_var, value="place",
-                           bg=PANEL_DARK, fg=TEXT_WHITE, selectcolor="#1E2229", activebackground=PANEL_DARK),
+                           bg=PANEL_DARK, fg=TEXT_WHITE, selectcolor=FIELD_BG, activebackground=PANEL_DARK),
             tk.Radiobutton(tools, text="✋ Kaydır (Pan)", variable=self.mouse_nav_tool_var, value="pan",
-                           bg=PANEL_DARK, fg=TEXT_WHITE, selectcolor="#1E2229", activebackground=PANEL_DARK),
+                           bg=PANEL_DARK, fg=TEXT_WHITE, selectcolor=FIELD_BG, activebackground=PANEL_DARK),
         ]
         flow_layout(tools, tool_widgets, padx=2, pady=1)
 
         # Telemetry (instructions / cursor read-out) on its own wrapping line.
-        wrap_label(tk.Label(map_header, textvariable=self.telemetry_var, font=("Segoe UI", 8),
+        wrap_label(tk.Label(map_header, textvariable=self.telemetry_var, font=(FONT_UI, 8),
                             fg=ACCENT_CYAN, bg=PANEL_DARK, anchor="w", justify="left"), pad=20).pack(
             fill=tk.X, padx=10, pady=(0, 3))
 
@@ -671,10 +683,10 @@ class TerrainViewshedWindow:
         prof_header.pack(fill=tk.X)
         self.lbl_bottom_title = wrap_label(tk.Label(
             prof_header, text="📐 OPTİK EKSEN ZEMİN & IŞIN KESİT PROFİLİ (ELEVATION PROFILE)",
-            font=("Segoe UI", 8, "bold"), fg=TEXT_MUTED, bg=PANEL_DARK, anchor="w", justify="left"), pad=20)
+            font=(FONT_UI, 8, "bold"), fg=TEXT_MUTED, bg=PANEL_DARK, anchor="w", justify="left"), pad=20)
         self.lbl_bottom_title.pack(fill=tk.X, padx=10, pady=2)
 
-        self.profile_canvas = tk.Canvas(profile_container, bg="#121519", highlightthickness=0, height=140)
+        self.profile_canvas = tk.Canvas(profile_container, bg=BG_DARK, highlightthickness=0, height=140)
         self.profile_canvas.pack(fill=tk.BOTH, expand=True)
         self.profile_canvas.bind("<Motion>", self._on_profile_hover)
         self.profile_canvas.bind("<Leave>", self._on_profile_leave)
@@ -697,7 +709,7 @@ class TerrainViewshedWindow:
 
         frame_cache = ttk.Frame(grp_layer)
         frame_cache.pack(fill=tk.X, pady=(2, 0))
-        self.lbl_tile_cache = ttk.Label(frame_cache, text="", font=("Segoe UI", 8), foreground=ACCENT_CYAN)
+        self.lbl_tile_cache = ttk.Label(frame_cache, text="", font=(FONT_UI, 8), foreground=ACCENT_CYAN)
         # The usage read-out grows with the cache; on one packed row it cut
         # the button's text. Wrap the button below it instead.
         flow_layout(frame_cache, [
@@ -711,7 +723,7 @@ class TerrainViewshedWindow:
         frame_op = ttk.Frame(grp_layer)
         frame_op.pack(fill=tk.X, pady=2)
         ttk.Label(frame_op, text="Uydu Opaklığı:").pack(side=tk.LEFT)
-        self.lbl_op_val = ttk.Label(frame_op, text=f"%{self.satellite_opacity_var.get():.0f}", font=("Segoe UI", 8, "bold"), foreground=ACCENT_CYAN)
+        self.lbl_op_val = ttk.Label(frame_op, text=f"%{self.satellite_opacity_var.get():.0f}", font=(FONT_UI, 8, "bold"), foreground=ACCENT_CYAN)
         self.lbl_op_val.pack(side=tk.RIGHT)
         scale_op = ttk.Scale(grp_layer, from_=0.0, to=100.0, variable=self.satellite_opacity_var, orient=tk.HORIZONTAL, command=self._on_opacity_slider_changed)
         scale_op.pack(fill=tk.X, pady=(0, 4))
@@ -752,7 +764,7 @@ class TerrainViewshedWindow:
         frame_mast = ttk.Frame(grp_cam)
         frame_mast.pack(fill=tk.X, pady=2)
         ttk.Label(frame_mast, text="Kule / Direk Boyu:").pack(side=tk.LEFT)
-        self.lbl_mast_val = ttk.Label(frame_mast, text=f"{self.mast_height_var.get():.1f} m", font=("Segoe UI", 9, "bold"), foreground=ACCENT_CYAN)
+        self.lbl_mast_val = ttk.Label(frame_mast, text=f"{self.mast_height_var.get():.1f} m", font=(FONT_UI, 9, "bold"), foreground=ACCENT_CYAN)
         self.lbl_mast_val.pack(side=tk.RIGHT)
         scale_mast = ttk.Scale(grp_cam, from_=1.0, to=50.0, variable=self.mast_height_var, orient=tk.HORIZONTAL, command=self._on_slider_changed)
         scale_mast.pack(fill=tk.X, pady=(0, 4))
@@ -760,7 +772,7 @@ class TerrainViewshedWindow:
         frame_pan = ttk.Frame(grp_cam)
         frame_pan.pack(fill=tk.X, pady=2)
         ttk.Label(frame_pan, text="Yön (Pan Açısı):").pack(side=tk.LEFT)
-        self.lbl_pan_val = ttk.Label(frame_pan, text=f"{self.pan_deg_var.get():.0f}°", font=("Segoe UI", 9, "bold"))
+        self.lbl_pan_val = ttk.Label(frame_pan, text=f"{self.pan_deg_var.get():.0f}°", font=(FONT_UI, 9, "bold"))
         self.lbl_pan_val.pack(side=tk.RIGHT)
         scale_pan = ttk.Scale(grp_cam, from_=0.0, to=360.0, variable=self.pan_deg_var, orient=tk.HORIZONTAL, command=self._on_slider_changed)
         scale_pan.pack(fill=tk.X, pady=(0, 4))
@@ -768,7 +780,7 @@ class TerrainViewshedWindow:
         frame_tilt = ttk.Frame(grp_cam)
         frame_tilt.pack(fill=tk.X, pady=2)
         ttk.Label(frame_tilt, text="Eğim (Tilt Açısı):").pack(side=tk.LEFT)
-        self.lbl_tilt_val = ttk.Label(frame_tilt, text=f"{self.tilt_deg_var.get():.1f}°", font=("Segoe UI", 9, "bold"))
+        self.lbl_tilt_val = ttk.Label(frame_tilt, text=f"{self.tilt_deg_var.get():.1f}°", font=(FONT_UI, 9, "bold"))
         self.lbl_tilt_val.pack(side=tk.RIGHT)
         scale_tilt = ttk.Scale(grp_cam, from_=-45.0, to=15.0, variable=self.tilt_deg_var, orient=tk.HORIZONTAL, command=self._on_slider_changed)
         scale_tilt.pack(fill=tk.X, pady=(0, 4))
@@ -776,7 +788,7 @@ class TerrainViewshedWindow:
         frame_range = ttk.Frame(grp_cam)
         frame_range.pack(fill=tk.X, pady=2)
         ttk.Label(frame_range, text="Analiz Menzili:").pack(side=tk.LEFT)
-        self.lbl_range_val = ttk.Label(frame_range, text=f"{self.max_range_var.get():.0f} m", font=("Segoe UI", 9, "bold"), foreground=ACCENT_AMBER)
+        self.lbl_range_val = ttk.Label(frame_range, text=f"{self.max_range_var.get():.0f} m", font=(FONT_UI, 9, "bold"), foreground=ACCENT_AMBER)
         self.lbl_range_val.pack(side=tk.RIGHT)
         self.slider_range = ttk.Scale(grp_cam, from_=50.0, to=1500.0, variable=self.max_range_var, orient=tk.HORIZONTAL, command=self._on_slider_changed)
         self.slider_range.pack(fill=tk.X, pady=(0, 4))
@@ -873,7 +885,7 @@ class TerrainViewshedWindow:
         frame_ov = ttk.Frame(grp_params)
         frame_ov.pack(fill=tk.X, pady=2)
         ttk.Label(frame_ov, text="Kör Nokta Bindirme (Overlap):").pack(side=tk.LEFT)
-        self.lbl_overlap_val = ttk.Label(frame_ov, text=f"%{self.overlap_pct_var.get():.0f}", font=("Segoe UI", 9, "bold"), foreground=ACCENT_GREEN)
+        self.lbl_overlap_val = ttk.Label(frame_ov, text=f"%{self.overlap_pct_var.get():.0f}", font=(FONT_UI, 9, "bold"), foreground=ACCENT_GREEN)
         self.lbl_overlap_val.pack(side=tk.RIGHT)
         scale_ov = ttk.Scale(grp_params, from_=5.0, to=30.0, variable=self.overlap_pct_var, orient=tk.HORIZONTAL, command=self._on_overlap_slider_changed)
         scale_ov.pack(fill=tk.X, pady=(0, 4))
@@ -881,7 +893,7 @@ class TerrainViewshedWindow:
         frame_ph = ttk.Frame(grp_params)
         frame_ph.pack(fill=tk.X, pady=2)
         ttk.Label(frame_ph, text="Çit Direk Yüksekliği:").pack(side=tk.LEFT)
-        self.lbl_perim_mast = ttk.Label(frame_ph, text=f"{self.mast_height_var.get():.1f} m", font=("Segoe UI", 9, "bold"), foreground=ACCENT_CYAN)
+        self.lbl_perim_mast = ttk.Label(frame_ph, text=f"{self.mast_height_var.get():.1f} m", font=(FONT_UI, 9, "bold"), foreground=ACCENT_CYAN)
         self.lbl_perim_mast.pack(side=tk.RIGHT)
         scale_ph = ttk.Scale(grp_params, from_=3.0, to=12.0, variable=self.mast_height_var, orient=tk.HORIZONTAL, command=self._on_slider_changed)
         scale_ph.pack(fill=tk.X, pady=(0, 4))
@@ -1095,7 +1107,7 @@ class TerrainViewshedWindow:
         # A wrapping result line (these results are a sentence, not a number;
         # a right-aligned stat row would cut them off in the narrow rail).
         self._ptz_stat_row = wrap_label(tk.Label(
-            grp, textvariable=self.ptz_stat_var, font=("Segoe UI", 8, "bold"), fg=ACCENT_CYAN,
+            grp, textvariable=self.ptz_stat_var, font=(FONT_UI, 8, "bold"), fg=ACCENT_CYAN,
             bg=PANEL_DARK, anchor="w", justify="left", padx=4, pady=3))
         self._ptz_stat_row.pack(fill=tk.X, pady=(6, 0))
         self._on_ptz_mode_changed()
@@ -1499,24 +1511,41 @@ class TerrainViewshedWindow:
             return
         mode = self.multi_overlay_var.get()
         title, bands = _LAYER_BANDS.get(mode, _LAYER_BANDS["dori"])
-        rows = [(title, TEXT_MUTED, None)] + [(txt, None, rgba) for _, _, rgba, txt in bands]
+        rows = [(txt, rgba) for _, _, rgba, txt in bands]
         if mode == "revisit" and getattr(self, "_legend_glimpse", False):
-            rows.append((_GLIMPSE_LABEL, None, _GLIMPSE_RGBA))
-        x, y = 18, 14
-        for i, (text, col, rgba) in enumerate(rows):
+            rows.append((_GLIMPSE_LABEL, _GLIMPSE_RGBA))
+        self._draw_band_legend(cv, title, rows, 18, 14, "nw", "layer_legend")
+
+    def _draw_band_legend(self, cv, title, rows, x, y, anchor, tag):
+        """Title + (swatch, text) rows on a glass box. ``anchor`` "nw" grows
+        down from (x, y), "sw" grows up from it. Swatches are the map's own
+        RGBA at full opacity, so the key cannot show a colour the map lacks."""
+        lines = [(title, None)] + list(rows)
+        order = lines if anchor == "nw" else list(reversed(lines))
+        text_anchor = "nw" if anchor == "nw" else "sw"
+        for text, rgba in order:
             if rgba is None:
-                item = cv.create_text(x, y, text=text, anchor="nw", font=("Segoe UI", 8, "bold"),
-                                      fill=col, tags="layer_legend")
+                item = cv.create_text(x, y, text=text.upper(), anchor=text_anchor,
+                                      font=(FONT_UI, 8, "bold"), fill=TEXT_MUTED, tags=tag)
             else:
-                hexcol = "#%02X%02X%02X" % rgba[:3]
-                sw = cv.create_text(x, y, text="■", anchor="nw", font=("Segoe UI", 9),
-                                    fill=hexcol, tags="layer_legend")
-                item = cv.create_text(cv.bbox(sw)[2] + 4, y, text=text, anchor="nw",
-                                      font=("Segoe UI", 8), fill=TEXT_WHITE, tags="layer_legend")
-            y = cv.bbox(item)[3] + 1
-        x0, y0, x1, y1 = cv.bbox("layer_legend")
-        box = cv.create_rectangle(x0 - 6, y0 - 4, x1 + 6, y1 + 4, fill="#16191E", outline=PANEL_BORDER)
-        cv.tag_lower(box, "layer_legend")
+                # Text first, swatch sized from its line height; the edge keeps
+                # a dark swatch (blind spot) visible on the dark glass.
+                item = cv.create_text(x, y, text=text, anchor=text_anchor,
+                                      font=(FONT_UI, 8), fill=TEXT_WHITE, tags=tag)
+                tx0, ty0, _tx1, ty1 = cv.bbox(item)
+                side = max(6, int((ty1 - ty0) * 0.62))
+                cy = (ty0 + ty1) / 2
+                cv.move(item, side + 6, 0)
+                cv.create_rectangle(tx0, cy - side / 2, tx0 + side, cy + side / 2,
+                                    fill="#%02X%02X%02X" % tuple(rgba[:3]),
+                                    outline=C_GROUND_EDGE, tags=tag)
+            bb = cv.bbox(item)
+            y = bb[3] + 1 if anchor == "nw" else bb[1] - 1
+        self._glass_under(cv, tag)
+
+    def _glass_under(self, cv, tag, pad=(8, 5)):
+        """Glass box behind ``tag`` over the map raster (components.glass_under)."""
+        glass_under(cv, tag, getattr(self, "_backdrop", None), self._glass_photos, pad=pad)
 
     # ── TILE CACHE ──
     def _refresh_tile_cache_label(self):
@@ -1656,7 +1685,7 @@ class TerrainViewshedWindow:
 
         bar = ttk.Frame(dlg, padding=(12, 8))
         bar.pack(side=tk.BOTTOM, fill=tk.X)
-        info_lbl = wrap_label(ttk.Label(dlg, text="", foreground=TEXT_MUTED, font=("Segoe UI", 8),
+        info_lbl = wrap_label(ttk.Label(dlg, text="", foreground=TEXT_MUTED, font=(FONT_UI, 8),
                                         padding=(12, 4)))
         info_lbl.pack(side=tk.BOTTOM, fill=tk.X)
 
@@ -1773,7 +1802,7 @@ class TerrainViewshedWindow:
         bottom_bar = tk.Frame(dlg, bg=PANEL_DARK, padx=14, pady=12)
         bottom_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
-        status_lbl = ttk.Label(bottom_bar, text="İndirmeye hazır.", font=("Segoe UI", 9, "bold"), foreground=ACCENT_CYAN)
+        status_lbl = ttk.Label(bottom_bar, text="İndirmeye hazır.", font=(FONT_UI, 9, "bold"), foreground=ACCENT_CYAN)
         status_lbl.pack(anchor="w", pady=(0, 6))
 
         progress_var = tk.DoubleVar(value=0.0)
@@ -1809,7 +1838,7 @@ class TerrainViewshedWindow:
         body_outer, frm = make_scrollable(dlg, padding=(16, 12, 16, 6))
         body_outer.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        ttk.Label(frm, text="🌐 Çevrimiçi HD Uydu & Sayısal Yükselti İndirici", font=("Segoe UI", 12, "bold"), foreground=TEXT_WHITE).pack(anchor="w", pady=(0, 4))
+        ttk.Label(frm, text="🌐 Çevrimiçi HD Uydu & Sayısal Yükselti İndirici", font=(FONT_UI, 12, "bold"), foreground=TEXT_WHITE).pack(anchor="w", pady=(0, 4))
         ttk.Label(frm, text="Esri World Imagery ve OpenStreetMap üzerinden yüksek çözünürlüklü gerçek uydu ortofotosunu ve 3D arazi modelini doğrudan indirin.", wraplength=570).pack(anchor="w", pady=(0, 10))
 
         # Location & Coordinates Box
@@ -1875,11 +1904,11 @@ class TerrainViewshedWindow:
         # The quality labels above are a request, not a promise: at 10 km the
         # server simply does not serve 0.5 m/px. Show what will actually arrive.
         quality_info_lbl = ttk.Label(grp_opt, text="", foreground=ACCENT_CYAN,
-                                     font=("Segoe UI", 9, "bold"), wraplength=540,
+                                     font=(FONT_UI, 9, "bold"), wraplength=540,
                                      justify="left")
         quality_info_lbl.pack(anchor="w", pady=(8, 0))
         attrib_lbl = ttk.Label(grp_opt, text="", foreground=TEXT_MUTED,
-                               font=("Segoe UI", 8), wraplength=540)
+                               font=(FONT_UI, 8), wraplength=540)
         attrib_lbl.pack(anchor="w", pady=(2, 0))
 
         def _refresh_quality_info(*_args):
@@ -1911,7 +1940,7 @@ class TerrainViewshedWindow:
         save_name_var = tk.StringVar(value=preset_var.get())
         ttk.Entry(row_name, textvariable=save_name_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
         existing_lbl = wrap_label(ttk.Label(grp_save, text="", foreground=ACCENT_AMBER,
-                                            font=("Segoe UI", 9)))
+                                            font=(FONT_UI, 9)))
         btn_open_saved = StyledButton(grp_save, text="📂 Kayıtlı Olanı İndirmeden Aç",
                                       bootstyle="secondary-outline")
         match_state = {"region": None}
@@ -2269,10 +2298,10 @@ class TerrainViewshedWindow:
             g = cov.ppm
             gh, gw = g.shape
             rgba = np.zeros((gh, gw, 4), np.uint8)
-            for lo, col in ((PPM_DETECT, (255, 77, 109)), (PPM_OBSERVE, (255, 179, 0)),
-                            (PPM_RECOG, (120, 220, 90)), (PPM_IDENT, (0, 230, 118))):
+            for lo, name in ((PPM_DETECT, "dori-detect"), (PPM_OBSERVE, "dori-observe"),
+                             (PPM_RECOG, "dori-recognize"), (PPM_IDENT, "dori-identify")):
                 m = g >= lo
-                rgba[m] = (*col, 150)
+                rgba[m] = _rgba(name, 150)
             img = Image.fromarray(np.flipud(rgba), "RGBA")   # grid row 0 = south
             x0, y0 = self.world_to_screen_px(cov.origin_x, cov.origin_y + gh * cov.cell_m)
             x1, y1 = self.world_to_screen_px(cov.origin_x + gw * cov.cell_m, cov.origin_y)
@@ -2568,11 +2597,11 @@ class TerrainViewshedWindow:
     def _create_stat_row(self, parent, label: str, var: tk.StringVar, color: str):
         row = ttk.Frame(parent)
         row.pack(fill=tk.X, pady=1)
-        cap = ttk.Label(row, text=label, font=("Segoe UI", 8))
+        cap = ttk.Label(row, text=label, font=(FONT_UI, 8))
         cap.pack(side=tk.LEFT, anchor="n")
         # Kural 8: a long value (e.g. the mixed fixed+PTZ summary) used to be
         # clipped at both ends; it now wraps in the space the caption leaves.
-        lbl_val = tk.Label(row, textvariable=var, font=("Segoe UI", 8, "bold"), fg=color, bg=PANEL_DARK,
+        lbl_val = tk.Label(row, textvariable=var, font=(FONT_UI, 8, "bold"), fg=color, bg=PANEL_DARK,
                            justify=tk.RIGHT, wraplength=200)
         lbl_val.pack(side=tk.RIGHT, anchor="ne")
 
@@ -2780,6 +2809,8 @@ class TerrainViewshedWindow:
     def _render_map_canvas(self):
         cv = self.map_canvas
         cv.delete("all")
+        self._glass_photos = []
+        self._backdrop = None
         w = cv.winfo_width()
         h = cv.winfo_height()
         if w < 50 or h < 50:
@@ -2851,11 +2882,7 @@ class TerrainViewshedWindow:
             if self.result.dori_grid.shape == (rows, cols):
                 dori = np.flipud(self.result.dori_grid)
                 dori_overlay = np.zeros((rows, cols, 4), dtype=np.uint8)
-                dori_overlay[dori == ZONE_IDENT] = [0, 230, 118, 140]
-                dori_overlay[dori == ZONE_RECOG] = [255, 179, 0, 125]
-                dori_overlay[dori == ZONE_OBSERVE] = [255, 112, 67, 110]
-                dori_overlay[dori == ZONE_DETECT] = [255, 77, 109, 95]
-                dori_overlay[dori == ZONE_OCCLUDED] = [12, 14, 18, 205]
+                _paint_bands(dori_overlay, dori, _LAYER_BANDS["dori"][1], mask=True)
 
                 dori_img = Image.fromarray(dori_overlay, mode="RGBA").resize((full_map_img.width, full_map_img.height), Image.Resampling.NEAREST)
                 full_map_img = Image.alpha_composite(full_map_img, dori_img)
@@ -2878,6 +2905,10 @@ class TerrainViewshedWindow:
             resized_terrain = full_map_img.resize((img_w, img_h), Image.Resampling.BILINEAR)
             self._map_photo = ImageTk.PhotoImage(resized_terrain, master=cv)  # Kural 5
             cv.create_image(img_x0, img_y0, image=self._map_photo, anchor="nw")
+            # Canvas-sized copy of what is under the overlays, for the glass boxes.
+            backdrop = Image.new("RGBA", (w, h), _rgba("bg-0", 255))
+            backdrop.paste(resized_terrain, (int(round(img_x0)), int(round(img_y0))))
+            self._backdrop = backdrop
             cv.create_rectangle(img_x0, img_y0, img_x1, img_y1, outline=PANEL_BORDER, width=2)
 
         # 4. DYNAMIC CAD SCALE BAR
@@ -2903,13 +2934,14 @@ class TerrainViewshedWindow:
         scale_x1 = scale_x2 - bar_px_len
         scale_y = h - 25
 
-        cv.create_rectangle(scale_x1 - 10, scale_y - 20, scale_x2 + 10, scale_y + 10, fill="#101317", outline=PANEL_BORDER)
-        cv.create_line(scale_x1, scale_y, scale_x2, scale_y, fill=TEXT_WHITE, width=3)
-        cv.create_line(scale_x1, scale_y - 5, scale_x1, scale_y + 5, fill=TEXT_WHITE, width=2)
-        cv.create_line(scale_x2, scale_y - 5, scale_x2, scale_y + 5, fill=TEXT_WHITE, width=2)
+        cv.create_line(scale_x1, scale_y, scale_x2, scale_y, fill=TEXT_WHITE, width=3, tags="scale")
+        cv.create_line(scale_x1, scale_y - 5, scale_x1, scale_y + 5, fill=TEXT_WHITE, width=2, tags="scale")
+        cv.create_line(scale_x2, scale_y - 5, scale_x2, scale_y + 5, fill=TEXT_WHITE, width=2, tags="scale")
 
         scale_text = f"{target_bar_m:,.0f} m" if target_bar_m < 1000 else f"{target_bar_m/1000.0:.1f} km"
-        cv.create_text((scale_x1 + scale_x2) / 2, scale_y - 10, text=f"Ölçek: {scale_text}", fill=ACCENT_CYAN, font=("Segoe UI", 8, "bold"))
+        cv.create_text((scale_x1 + scale_x2) / 2, scale_y - 8, text=scale_text, anchor="s",
+                       fill=TEXT_WHITE, font=(FONT_MONO, 8), tags="scale")
+        self._glass_under(cv, "scale", pad=(10, 5))
 
         # 5. PERIMETER MODE VECTOR OVERLAYS
         if self.planner_mode_var.get() == "perimeter":
@@ -2925,10 +2957,10 @@ class TerrainViewshedWindow:
 
                 for i in range(len(pts_px) - 1):
                     p1, p2 = pts_px[i], pts_px[i+1]
-                    cv.create_line(p1[0], p1[1], p2[0], p2[1], fill="#FFD600", width=3, dash=(8, 4))
+                    cv.create_line(p1[0], p1[1], p2[0], p2[1], fill=C_TARGET, width=3, dash=(8, 4))
 
                 for i, (px, py) in enumerate(pts_px[:-1] if self.fence_closed_var.get() else pts_px):
-                    cv.create_oval(px - 5, py - 5, px + 5, py + 5, fill="#FF6D00", outline="#FFFFFF", width=2)
+                    cv.create_oval(px - 5, py - 5, px + 5, py + 5, fill=C_TARGET, outline=C_MARK_EDGE, width=2)
 
             if self.perimeter_plan and self.perimeter_plan.placed_cameras:
                 _pcams = self.perimeter_plan.placed_cameras
@@ -2947,20 +2979,20 @@ class TerrainViewshedWindow:
                     hover_id = self._profile_hover.get("pole_id") if self._profile_hover else None
                     is_sel = (cam.pole_id == self.selected_pole_id)
                     is_hover = (cam.pole_id == hover_id)
-                    cone_color = ACCENT_CYAN if is_sel else ("#FFD600" if is_hover else "#00E676")
+                    cone_color = C_SELECTED if is_sel else (C_TARGET if is_hover else C_CAMERA)
                     cv.create_line(c_px, c_py, lx, ly, fill=cone_color, width=1, dash=(3, 3))
                     cv.create_line(c_px, c_py, rx, ry, fill=cone_color, width=1, dash=(3, 3))
                     cv.create_line(lx, ly, rx, ry, fill=cone_color, width=1)
 
-                    pole_bg = ACCENT_CYAN if is_sel else ("#FFD600" if is_hover else "#2979FF")
+                    pole_bg = C_SELECTED if is_sel else (C_TARGET if is_hover else C_CAMERA)
                     rad = 6 if (is_sel or is_hover) else 4
-                    cv.create_oval(c_px - rad, c_py - rad, c_px + rad, c_py + rad, fill=pole_bg, outline="#FFFFFF", width=1)
+                    cv.create_oval(c_px - rad, c_py - rad, c_px + rad, c_py + rad, fill=pole_bg, outline=C_MARK_EDGE, width=1)
                     # Pole number, thinned out so it stays readable on a long fence.
                     if is_sel or is_hover or (_pi % _plabel_step == 0) or _pi == len(_pcams) - 1:
                         big = is_sel or is_hover
                         cv.create_text(c_px, c_py - rad - 5, text=str(cam.pole_id), anchor="s",
-                                       fill="#FFFFFF" if big else "#9FB3C8",
-                                       font=("Segoe UI", 8 if big else 7, "bold" if big else "normal"))
+                                       fill=TEXT_WHITE if big else TEXT_DIM,
+                                       font=(FONT_UI, 8 if big else 7, "bold" if big else "normal"))
 
                 # Co-mounted PTZs: patrol sector drawn at the slew-to-cue reach
                 # (where the tele end still identifies), magenta ring on the pole.
@@ -2970,14 +3002,14 @@ class TerrainViewshedWindow:
                     r_px = abs(e_px - c_px)
                     box = (c_px - r_px, c_py - r_px, c_px + r_px, c_py + r_px)
                     if pc.patrol_span_deg >= 359.9:
-                        cv.create_oval(*box, outline="#E040FB", width=1, dash=(2, 3))
+                        cv.create_oval(*box, outline=C_PTZ, width=1, dash=(2, 3))
                     else:
                         # Tk arcs: degrees counter-clockwise from east; bearings
                         # are clockwise from north.
                         cv.create_arc(*box, start=90.0 - (pc.pan_deg + pc.patrol_span_deg / 2.0),
                                       extent=pc.patrol_span_deg, style=tk.ARC,
-                                      outline="#E040FB", width=1, dash=(2, 3))
-                    cv.create_oval(c_px - 8, c_py - 8, c_px + 8, c_py + 8, outline="#E040FB", width=2)
+                                      outline=C_PTZ, width=1, dash=(2, 3))
+                    cv.create_oval(c_px - 8, c_py - 8, c_px + 8, c_py + 8, outline=C_PTZ, width=2)
 
                 # Uncovered fence stretches, drawn thick red over the fence line.
                 for g in getattr(self.perimeter_plan, "gaps", []):
@@ -2985,7 +3017,7 @@ class TerrainViewshedWindow:
                     gx1, gy1 = self.world_to_screen_px(g.end_x, g.end_y)
                     cv.create_line(gx0, gy0, gx1, gy1, fill=ACCENT_RED, width=4)
                     cv.create_text((gx0 + gx1) / 2, (gy0 + gy1) / 2 - 8, text=f"boşluk {g.length_m:.0f}m",
-                                   anchor="s", fill=ACCENT_RED, font=("Segoe UI", 7, "bold"))
+                                   anchor="s", fill=ACCENT_RED, font=(FONT_UI, 7, "bold"))
 
                 cov = self.perimeter_plan.coverage_percentage
                 gap_n = len(getattr(self.perimeter_plan, "gaps", []))
@@ -2995,21 +3027,19 @@ class TerrainViewshedWindow:
                 lines = [
                     (f"ÇEVRE ÇİTİ · {p.camera_count} KAMERA AKTİF"
                      + (f" ({len(p.placed_cameras)} sabit + {p.ptz_count} PTZ)" if p.ptz_cameras else ""),
-                     ACCENT_CYAN),
-                    (f"• Toplam Çit: {p.total_fence_length_m:,.0f}m", TEXT_WHITE),
-                    (f"• Ortalama Direk Aralığı: {p.avg_spacing_m:.1f}m", ACCENT_GREEN),
-                    ((f"• Çit kapsaması %{cov:.1f} — kesintisiz" if gap_n == 0
-                      else f"• Çit kapsaması %{cov:.1f} — {gap_n} boşluk"),
+                     TEXT_MUTED),
+                    (f"Toplam çit: {p.total_fence_length_m:,.0f} m", TEXT_WHITE),
+                    (f"Ortalama direk aralığı: {p.avg_spacing_m:.1f} m", TEXT_WHITE),
+                    ((f"● Çit kapsaması %{cov:.1f} — kesintisiz" if gap_n == 0
+                      else f"■ Çit kapsaması %{cov:.1f} — {gap_n} boşluk"),
                      ACCENT_GREEN if gap_n == 0 else ACCENT_RED),
                 ]
                 leg_x, y = 30, h - 14
                 for i, (text, col) in reversed(list(enumerate(lines))):
-                    font = ("Segoe UI", 8, "bold") if i == 0 else ("Segoe UI", 8)
+                    font = (FONT_UI, 8, "bold") if i == 0 else (FONT_UI, 8)
                     item = cv.create_text(leg_x, y, text=text, anchor="sw", font=font, fill=col, tags="fence_info")
                     y = cv.bbox(item)[1] - 2
-                x0, y0, x1, y1 = cv.bbox("fence_info")
-                box = cv.create_rectangle(x0 - 6, y0 - 4, x1 + 6, y1 + 4, fill="#16191E", outline=PANEL_BORDER)
-                cv.tag_lower(box, "fence_info")
+                self._glass_under(cv, "fence_info")
 
         else:
             # 6. SINGLE CAMERA VECTOR OVERLAYS
@@ -3029,29 +3059,18 @@ class TerrainViewshedWindow:
 
             ray_c_x, ray_c_y = self.world_to_screen_px(cx + reach_m * math.sin(pan_rad),
                                                        cy + reach_m * math.cos(pan_rad))
-            cv.create_line(c_px, c_py, ray_c_x, ray_c_y, fill=ACCENT_AMBER, width=2)
+            cv.create_line(c_px, c_py, ray_c_x, ray_c_y, fill=C_SELECTED, width=1)
 
-            cv.create_oval(c_px - 8, c_py - 8, c_px + 8, c_py + 8, fill=ACCENT_CYAN, outline="#FFFFFF", width=2)
-            cv.create_text(c_px, c_py - 16, text=f"📹 Kamera ({reach_m:.0f}m Optik Menzil)", fill=ACCENT_CYAN, font=("Segoe UI", 9, "bold"))
+            cv.create_oval(c_px - 8, c_py - 8, c_px + 8, c_py + 8, fill=ACCENT_CYAN, outline=C_MARK_EDGE, width=2)
+            cv.create_text(c_px, c_py - 16, text=f"Kamera · {reach_m:.0f} m optik menzil", tags="cam_label",
+                           fill=TEXT_WHITE, font=(FONT_UI, 9, "bold"))
+            self._glass_under(cv, "cam_label", pad=(6, 2))
 
-            # One column, box sized from the drawn text's bbox: a fixed-width
-            # two-column grid overlapped at >100 % DPI scaling (Kural 8).
-            badges = [
-                ("DORI & GÖRÜŞ LEJANDI", TEXT_MUTED),
-                ("🟢 Teşhis (>=250 px/m)", ACCENT_GREEN),
-                ("🟡 Tanıma (>=125 px/m)", ACCENT_AMBER),
-                ("🟠 Gözlem (>=62,5 px/m)", "#FF7043"),
-                ("🔴 Algılama (>=25 px/m)", ACCENT_RED),
-                ("⬛ Kör Nokta (Tepe Arkası)", "#8B949E"),
-            ]
-            leg_x, y = 30, h - 20
-            for i, (text, col) in reversed(list(enumerate(badges))):
-                font = ("Segoe UI", 8, "bold") if i == 0 else ("Segoe UI", 8)
-                item = cv.create_text(leg_x, y, text=text, anchor="sw", font=font, fill=col, tags="legend")
-                y = cv.bbox(item)[1] - 2
-            x0, y0, x1, y1 = cv.bbox("legend")
-            box = cv.create_rectangle(x0 - 6, y0 - 4, x1 + 6, y1 + 4, fill="#16191E", outline=PANEL_BORDER)
-            cv.tag_lower(box, "legend")
+            # One column, box sized from the drawn text (Kural 8); rows and
+            # colours from _LAYER_BANDS, the table the overlay is painted from.
+            if self.show_dori_var.get():
+                rows = [(txt, rgba) for _, _, rgba, txt in _LAYER_BANDS["dori"][1]]
+                self._draw_band_legend(cv, "DORI & görüş", rows, 30, h - 20, "sw", "legend")
 
         self._draw_layer_legend(cv)
 
@@ -3093,7 +3112,7 @@ class TerrainViewshedWindow:
                 pts.append((to_x(cum_d), to_y(cam.ground_z_m)))
             pts.append((to_x(total_len), to_y(min_z)))
 
-            cv.create_polygon(pts, fill="#2A313C", outline="#4C566A", width=2)
+            cv.create_polygon(pts, fill=C_GROUND, outline=C_GROUND_EDGE, width=2)
 
             # Label every pole when there is room; thin out when the fence is
             # crowded, but always keep the selected/hovered ones legible.
@@ -3110,17 +3129,17 @@ class TerrainViewshedWindow:
                 ty = to_y(cam.total_z_m)
                 is_sel = (cam.pole_id == self.selected_pole_id)
                 is_hover = (cam.pole_id == hover_pole_id)
-                col = ACCENT_CYAN if is_sel else ("#FFD600" if is_hover else "#2979FF")
+                col = C_SELECTED if is_sel else (C_TARGET if is_hover else C_CAMERA)
                 cv.create_line(px, by, px, ty, fill=col, width=3 if (is_sel or is_hover) else 2)
-                cv.create_oval(px - 3, ty - 3, px + 3, ty + 3, fill=col, outline="#FFFFFF")
+                cv.create_oval(px - 3, ty - 3, px + 3, ty + 3, fill=col, outline=C_MARK_EDGE)
                 if is_sel or is_hover or (i % label_step == 0) or i == len(cams) - 1:
                     cv.create_text(
                         px, ty - 9, text=f"#{cam.pole_id}", anchor="s",
                         fill=col if (is_sel or is_hover) else TEXT_MUTED,
-                        font=("Segoe UI", 7, "bold" if (is_sel or is_hover) else "normal"),
+                        font=(FONT_UI, 7, "bold" if (is_sel or is_hover) else "normal"),
                     )
 
-            cv.create_text(pad_l + 6, pad_t - 10, text=f"ÇEVRE ÇİTİ · {len(cams)} DİREK · #=direk no · fareyle gez → haritada göster", anchor="w", fill=ACCENT_CYAN, font=("Segoe UI", 8, "bold"))
+            cv.create_text(pad_l + 6, pad_t - 10, text=f"ÇEVRE ÇİTİ · {len(cams)} DİREK · #=direk no · fareyle gez → haritada göster", anchor="w", fill=ACCENT_CYAN, font=(FONT_UI, 8, "bold"))
 
             self._profile_plot = {
                 "mode": "perimeter", "pad_l": pad_l, "pad_t": pad_t,
@@ -3150,23 +3169,23 @@ class TerrainViewshedWindow:
             for d_tick in np.linspace(0, max_d, 6):
                 tx = to_x(d_tick)
                 cv.create_line(tx, pad_t + plot_h, tx, pad_t + plot_h + 4, fill=PANEL_BORDER)
-                cv.create_text(tx, pad_t + plot_h + 12, text=f"{d_tick:.0f}m", fill=TEXT_MUTED, font=("Segoe UI", 7))
+                cv.create_text(tx, pad_t + plot_h + 12, text=f"{d_tick:.0f}m", fill=TEXT_MUTED, font=(FONT_UI, 7))
 
             for z_tick in np.linspace(min_z, max_z, 4):
                 ty = to_y(z_tick)
                 cv.create_line(pad_l - 4, ty, pad_l, ty, fill=PANEL_BORDER)
-                cv.create_text(pad_l - 8, ty, text=f"{z_tick:.0f}m", fill=TEXT_MUTED, font=("Segoe UI", 7), anchor="e")
+                cv.create_text(pad_l - 8, ty, text=f"{z_tick:.0f}m", fill=TEXT_MUTED, font=(FONT_UI, 7), anchor="e")
 
             pts_terrain = [(pad_l, to_y(min_z))]
             for d, el in zip(dists, elevs):
                 pts_terrain.append((to_x(d), to_y(el)))
             pts_terrain.append((to_x(max_d), to_y(min_z)))
-            cv.create_polygon(pts_terrain, fill="#2A313C", outline="#4C566A", width=2)
+            cv.create_polygon(pts_terrain, fill=C_GROUND, outline=C_GROUND_EDGE, width=2)
 
             cam_base_y = to_y(self.result.cam_ground_z_m)
             cam_top_y = to_y(self.result.cam_total_z_m)
             cv.create_line(pad_l, cam_base_y, pad_l, cam_top_y, fill=ACCENT_CYAN, width=4)
-            cv.create_oval(pad_l - 4, cam_top_y - 4, pad_l + 4, cam_top_y + 4, fill=ACCENT_CYAN, outline="#FFFFFF")
+            cv.create_oval(pad_l - 4, cam_top_y - 4, pad_l + 4, cam_top_y + 4, fill=ACCENT_CYAN, outline=C_MARK_EDGE)
 
             pts_ray = [(to_x(d), to_y(rz)) for d, rz in zip(dists, rays)]
             for i in range(len(pts_ray) - 1):
@@ -3237,12 +3256,12 @@ class TerrainViewshedWindow:
             return
 
         def _boxed_text(canvas, x, y, text, anchor):
-            item = canvas.create_text(x, y, text=text, anchor=anchor, fill="#FFD600",
-                                      font=("Segoe UI", 8, "bold"), tags="phover")
+            item = canvas.create_text(x, y, text=text, anchor=anchor, fill=C_TARGET,
+                                      font=(FONT_UI, 8, "bold"), tags="phover")
             bx = canvas.bbox(item)
             if bx:
                 canvas.create_rectangle(bx[0] - 3, bx[1] - 2, bx[2] + 3, bx[3] + 2,
-                                        fill="#12151A", outline="#FFD600", width=1, tags="phover")
+                                        fill=BG_DARK, outline=C_TARGET, width=1, tags="phover")
                 canvas.tag_raise(item)
 
         cv = self.profile_canvas
@@ -3251,7 +3270,7 @@ class TerrainViewshedWindow:
             top = pp["pad_t"]
             bot = pp["pad_t"] + pp["plot_h"]
             sx = max(pp["pad_l"], min(hv["sx"], pp["pad_l"] + pp["plot_w"]))
-            cv.create_line(sx, top, sx, bot, fill="#FFD600", width=1, dash=(3, 2), tags="phover")
+            cv.create_line(sx, top, sx, bot, fill=C_TARGET, width=1, dash=(3, 2), tags="phover")
             near_right = sx > pp["pad_l"] + pp["plot_w"] * 0.55
             _boxed_text(cv, sx + (-6 if near_right else 6), bot - 6, hv["label"],
                         "se" if near_right else "sw")
@@ -3262,9 +3281,9 @@ class TerrainViewshedWindow:
         try:
             mc.delete("phover")
             mx, my = self.world_to_screen_px(hv["wx"], hv["wy"])
-            mc.create_line(mx - 10, my, mx + 10, my, fill="#FFD600", width=2, tags="phover")
-            mc.create_line(mx, my - 10, mx, my + 10, fill="#FFD600", width=2, tags="phover")
-            mc.create_oval(mx - 6, my - 6, mx + 6, my + 6, outline="#FFD600", width=2, tags="phover")
+            mc.create_line(mx - 10, my, mx + 10, my, fill=C_TARGET, width=2, tags="phover")
+            mc.create_line(mx, my - 10, mx, my + 10, fill=C_TARGET, width=2, tags="phover")
+            mc.create_oval(mx - 6, my - 6, mx + 6, my + 6, outline=C_TARGET, width=2, tags="phover")
             lx, ly, anc = mx + 13, my + 16, "w"
             if mx > mc.winfo_width() * 0.6:
                 lx, anc = mx - 13, "e"

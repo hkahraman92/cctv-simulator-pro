@@ -1,3 +1,28 @@
+## -29. Arayüz yeniden tasarımı, adım 4: cam bindirmeler + soğuk DORI rampası — ✅ (2026-11-06)
+
+- Harita: katman lejandı, DORI lejandı, ölçek çubuğu, çit bilgi kutusu ve
+  kamera etiketi buzlu cam kutuda (PIL: altındaki harita bulanık + `glass`
+  tonu, 4 px köşe). Ortak yardımcı `components.glass_under`.
+- Harita renkleri tokenlara: 51 sabit hex → 0. DORI katmanı, tekil kamera
+  bindirmesi ve çit ısı haritası soğuk rampa; sıcak renk yalnız dikkat
+  isteyen bantlarda (yedeksiz, uzun revizit/tepki, yalnız-PTZ). Tekil
+  lejant emojili sabit liste yerine bindirmenin kendi tablosundan; koyu
+  "kör nokta" rengi kenarlı kutuyla lejantta görünür.
+- 3B görünüm: HUD ve hedef etiketi cam kutuda; HUD satırları ölçülen
+  yükseklikle (sabit ofsetler %150'de üst üste biniyordu); DORI rozeti soğuk
+  rampa (motor Teşhis'i kırmızı veriyordu); alt rozet yazı rengi zemine
+  göre seçilir; termal palet seçilince başlık artık "GÜNDÜZ OPTİK" demiyor.
+
+Doğrulama: harita tekil + çevre çiti (DORI, yedeklilik, ısı haritası)
+ve 3B (gündüz, IR, ironbow) programla sürülüp ekran görüntüsüyle
+incelendi; cam ~5 ms/kare; 2 yeni test. ruff + tam pytest yeşil.
+
+Kalan: yakın zumda harita karesi 130–400 ms (raster'ın tamamı zum boyutuna
+büyütülüyor — görünür bölgeyi kırp, sonra büyüt); `scene_render` kare
+içi renkleri (DORI zemin bantları, zoom insetti sarı çerçeve) ve 3B palet
+ızgara tonları hâlâ sabit; 5. adım (emoji → simge seti); varsayılan DORI
+seviye renkleri kararı.
+
 ## -28. Arayüz yeniden tasarımı, adım 3: komuta çubuğu + durum paneli — ✅ (2026-11-06)
 
 Rehberin ana ekran planı klasik pencereye uygulandı.
