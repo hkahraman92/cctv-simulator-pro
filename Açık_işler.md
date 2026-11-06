@@ -1,3 +1,24 @@
+## -31. Görüş alanı kare kare görünüyordu → pürüzsüz çizim + ince ızgara + hızlı harita — ✅ (2026-11-06)
+
+İstek: viewshed çok pikselli / kare kare, daha güzel görüntü.
+
+- `raster_smooth.py`: DORI, birleşik katmanlar, ısı haritası, canlı tarama
+  ve bina katmanı en yakın komşu yerine yumuşatılmış sınırlarla çiziliyor
+  (alan aynı, basamak gidiyor). Tekil yelpaze optik koniye kırpılıyor.
+- İndiricide "Analiz ızgarası": 200 / 400 (varsayılan) / 600 hücre —
+  1 km'de 5 / 2,5 / 1,7 m.
+- Hız (aynı işin yan ürünü): taban harita önbellekte, yalnız görünen kısım
+  örnekleniyor. Fotoğraf+bina 130–180 → 40 ms; 8× zum 414 → 28 ms.
+- Hibrit de düzeldi (önceki tur): fotoğraf × kabartma.
+
+Doğrulama: gerçek veri (Kızılay, Esri + Terrarium + OSM) ve tepelik arazide
+önce/sonra ekran görüntüleri; 6 yeni test; ruff + tam pytest yeşil.
+
+Bilinen: prosedürel önayarlar hâlâ 200×10 m (indirmede seçim var);
+yumuşatma görüntüdür, 10 m hücrede yelpaze kenarındaki tek hücrelik
+girinti-çıkıntı kalır (koninin dışındaki hücreyi doldurmak kör noktayı
+küçültürdü, yapılmadı) — gerçek çözüm ince ızgara.
+
 ## -30. PTZ görsel tarama + bina / ağaç yüzey modeli — ✅ (2026-11-06)
 
 İstek: PTZ 360° dönen kamerayı görsel tarama olarak, yükseltiyi dikkate
@@ -18,8 +39,7 @@ alarak göster; bina, ağaç vb. 3B bilgiyi indirip analize kat.
 Kalan / bilinen: OSM yüksekliklerinin %62'si varsayılan (Kızılay) — gerçek
 yüzey için yerel LiDAR/nDSM GeoTIFF yükleme yok; ağaç kaydı OSM'de seyrek
 (küresel kanopi yüksekliği haritaları çok büyük, eklenmedi); proje dosyası
-engelleri yalnız kayıtlı bölge üzerinden taşır; yakın zumda harita karesi
-yavaş (raster tamamı büyütülüyor); 5. adım (emoji → simge seti) bekliyor.
+engelleri yalnız kayıtlı bölge üzerinden taşır; 5. adım (emoji → simge seti) bekliyor.
 
 ## -29. Arayüz yeniden tasarımı, adım 4: cam bindirmeler + soğuk DORI rampası — ✅ (2026-11-06)
 

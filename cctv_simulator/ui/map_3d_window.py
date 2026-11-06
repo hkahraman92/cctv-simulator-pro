@@ -58,6 +58,7 @@ from ..design_tokens import rgba as _rgba, tok as _tok
 from .components import glass_under, stack_lines
 from ..ptz_animation import SweepPlayback, sight_profile
 from .. import surface_obstacles as _obs
+from ..raster_smooth import clip_to_wedge, smooth_overlay
 from ..theme import (COLORS, FONT_MONO, FONT_UI, StyledButton, fit_and_center_window,
                      flow_layout, wrap_label, make_scrollable)
 from ..viewshed_3d import (
@@ -1387,15 +1388,23 @@ class TerrainViewshedWindow:
         t = self.terrain
         if not t.has_obstacles or t.obstacle_grid is None:
             return img
+        photo = self.user_satellite_img is not None and self.map_layer_mode_var.get() != "elevation"
+        # The layer depends only on the surface, the mode and the image size:
+        # cache it -- smoothing it on every slider-driven redraw cost ~100 ms.
+        key = (id(t), id(t.obstacle_grid), photo, img.size, _tok("building"))
+        cached = getattr(self, "_obs_layer_cache", None)
+        if cached is not None and cached[0] == key:
+            return Image.alpha_composite(img.convert("RGBA"), cached[1])
         h = np.flipud(t.obstacle_grid)
         k = np.flipud(t.obstacle_kind) if t.obstacle_kind is not None else (h > 0).astype(np.uint8)
         ov = np.zeros(h.shape + (4,), np.uint8)
         bld = (k == _obs.KIND_BUILDING) & (h > 0)
         veg = (k == _obs.KIND_VEGETATION) & (h > 0)
-        photo = self.user_satellite_img is not None and self.map_layer_mode_var.get() != "elevation"
         ov[bld] = _rgba("building", 0)
         if photo:
-            ov[..., 3][bld] = np.clip(40 + h[bld] * 1.5, 40, 90).astype(np.uint8)
+            # constant alpha per kind: a handful of colours, so the layer can
+            # be drawn smoothed (raster_smooth) instead of in cell squares
+            ov[bld] = _rgba("building", 70)
             ov[veg] = _rgba("vegetation", 70)
             # footprint edge: a cell whose 4-neighbour is not the same kind
             edge = np.zeros_like(bld)
@@ -1403,9 +1412,11 @@ class TerrainViewshedWindow:
                 edge |= bld & ~np.roll(bld, shift, axis=axis)
             ov[edge] = _rgba("building", 150)
         else:
-            ov[..., 3][bld] = np.clip(110 + h[bld] * 4.0, 110, 225).astype(np.uint8)
+            # taller = more opaque, in 10 m steps (few classes -> smoothable)
+            ov[..., 3][bld] = np.clip(110 + (h[bld] // 10.0) * 30.0, 110, 230).astype(np.uint8)
             ov[veg] = _rgba("vegetation", 150)
-        layer = Image.fromarray(ov, "RGBA").resize(img.size, Image.Resampling.NEAREST)
+        layer = smooth_overlay(ov, img.size)
+        self._obs_layer_cache = (key, layer)
         return Image.alpha_composite(img.convert("RGBA"), layer)
 
     # ── animated PTZ sweep (ptz_animation) ──
@@ -1512,7 +1523,9 @@ class TerrainViewshedWindow:
             if cb > ca and rb > ra:
                 sub = np.ascontiguousarray(arr[ra:rb, ca:cb])
                 size = (max(1, int(round((cb - ca) * pcx))), max(1, int(round((rb - ra) * pcy))))
-                img = Image.fromarray(sub, "RGBA").resize(size, Image.Resampling.NEAREST)
+                # Smoothed, NOT clipped to the cone: the fading trail and the
+                # "seen" memory lie outside the current view by design.
+                img = smooth_overlay(sub, size, supersample=4, max_side=900)
                 self._anim_photo = ImageTk.PhotoImage(img, master=cv)   # Kural 5
                 item = cv.create_image(sx0 + ca * pcx, sy0 + ra * pcy, image=self._anim_photo,
                                        anchor="nw", tags="ptz_anim")
@@ -2245,6 +2258,16 @@ class TerrainViewshedWindow:
         ttk.Radiobutton(row_qual, text="🔍 Ultra HD (hedef ~0.5 m/px — en net)", variable=qual_var, value="ultra_hd").pack(anchor="w", pady=1)
         ttk.Radiobutton(row_qual, text="⚡ Hızlı (Standart — hedef ~2 m/px)", variable=qual_var, value="standard").pack(anchor="w", pady=1)
 
+        # Analysis grid: the DEM source is ~30 m, so a finer grid adds no
+        # relief -- it sharpens buildings, trees and shadow edges. Cost grows
+        # with the cell count (400 = 4x the work of 200).
+        row_grid = ttk.Frame(grp_opt)
+        row_grid.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(row_grid, text="Analiz ızgarası:").pack(side=tk.LEFT)
+        grid_var = tk.StringVar(value="400")
+        for val, lbl in (("200", "Standart"), ("400", "İnce"), ("600", "Çok ince")):
+            ttk.Radiobutton(row_grid, text=lbl, variable=grid_var, value=val).pack(side=tk.LEFT, padx=4)
+
         row_src = ttk.Frame(grp_opt)
         row_src.pack(fill=tk.X, pady=2)
         ttk.Label(row_src, text="Harita / Uydu Kaynağı:").pack(anchor="w", pady=(0, 2))
@@ -2271,12 +2294,15 @@ class TerrainViewshedWindow:
                 quality_info_lbl.configure(text="")
                 return
             src_now = src_var.get()
+            cells = int(grid_var.get())
             quality_info_lbl.configure(
                 text="Gerçekleşecek çözünürlük: "
-                     + describe_quality(w_now, qual_var.get(), lat_now, src_now))
+                     + describe_quality(w_now, qual_var.get(), lat_now, src_now)
+                     + f"\nAnaliz hücresi {w_now / cells:.1f} m ({cells}×{cells}); yükselti kaynağı ~30 m, "
+                       "ince ızgara bina / ağaç ve gölge sınırlarını keskinleştirir.")
             attrib_lbl.configure(text=TILE_SERVERS.get(src_now, {}).get("attribution", ""))
 
-        for _var in (dim_var, qual_var, src_var, lat_var):
+        for _var in (dim_var, qual_var, src_var, lat_var, grid_var):
             _var.trace_add("write", _refresh_quality_info)
         _refresh_quality_info()
 
@@ -2355,6 +2381,7 @@ class TerrainViewshedWindow:
                 w_m = float(dim_var.get())
                 source = src_var.get()
                 quality = qual_var.get()
+                grid_cells = int(grid_var.get())
                 want_save = bool(save_var.get())
                 save_name = save_name_var.get().strip() or preset_var.get()
             except ValueError:
@@ -2396,6 +2423,7 @@ class TerrainViewshedWindow:
                         center_lon=clon,
                         width_m=w_m,
                         height_m=w_m,
+                        grid_size=grid_cells,
                         progress_callback=_on_dem_progress,
                     )
                     # Keep the finished area on disk (worker thread: encoding
@@ -2661,7 +2689,7 @@ class TerrainViewshedWindow:
             if pw < 2 or ph < 2 or pw > 4000 or ph > 4000:
                 return
             self._coverage_photo = ImageTk.PhotoImage(
-                img.resize((pw, ph), Image.Resampling.NEAREST), master=cv)
+                smooth_overlay(np.asarray(img), (pw, ph)), master=cv)
             cv.create_image(x0, y0, image=self._coverage_photo, anchor="nw")
         except Exception:
             pass
@@ -3171,17 +3199,18 @@ class TerrainViewshedWindow:
         self._render_profile_canvas()
 
     # ── MAP CANVAS RENDERING WITH TRUE ORIENTATION & HD RESOLUTION ──
-    def _render_map_canvas(self):
-        cv = self.map_canvas
-        cv.delete("all")
-        self._glass_photos = []
-        self._backdrop = None
-        self._sync_obstacle_state()
-        w = cv.winfo_width()
-        h = cv.winfo_height()
-        if w < 50 or h < 50:
-            return
-
+    def _base_map_image(self):
+        """Hillshade + photo / elevation colours + buildings for the whole
+        terrain, north up. Depends only on the terrain, the layer mode, the
+        opacity and the photo, so it is cached: rebuilding it (photo x
+        relief, blends, building layer) on every slider-driven redraw was
+        ~100 ms of a ~130 ms frame."""
+        key = (id(self.terrain), id(self.terrain.z_grid), self.terrain.cell_size_m,
+               self.map_layer_mode_var.get(), round(self.satellite_opacity_var.get(), 2),
+               id(self.user_satellite_img), _tok("bg-0"))
+        cached = getattr(self, "_base_map_cache", None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
         rows, cols = self.terrain.rows, self.terrain.cols
         z_grid = self.terrain.z_grid            # surface: hillshade shows buildings too
         # Colour ramp from the bare ground: with buildings in it, one 76 m tower
@@ -3259,6 +3288,22 @@ class TerrainViewshedWindow:
         # Buildings / trees: hillshade above already relieves them (z_grid is
         # the surface); a tint says which is which.
         full_map_img = self._composite_obstacles(full_map_img)
+        self._base_map_cache = (key, full_map_img)
+        return full_map_img
+
+    def _render_map_canvas(self):
+        cv = self.map_canvas
+        cv.delete("all")
+        self._glass_photos = []
+        self._backdrop = None
+        self._sync_obstacle_state()
+        w = cv.winfo_width()
+        h = cv.winfo_height()
+        if w < 50 or h < 50:
+            return
+
+        rows, cols = self.terrain.rows, self.terrain.cols
+        full_map_img = self._base_map_image()
 
         # While the live sweep plays, its own frame replaces the static fan.
         if (self._anim is None and self.planner_mode_var.get() == "single"
@@ -3268,15 +3313,24 @@ class TerrainViewshedWindow:
                 dori_overlay = np.zeros((rows, cols, 4), dtype=np.uint8)
                 _paint_bands(dori_overlay, dori, _LAYER_BANDS["dori"][1], mask=True)
 
-                dori_img = Image.fromarray(dori_overlay, mode="RGBA").resize((full_map_img.width, full_map_img.height), Image.Resampling.NEAREST)
+                # Smoothed for display (raster_smooth): cell squares -> clean edges.
+                dori_img = smooth_overlay(dori_overlay, (full_map_img.width, full_map_img.height))
+                # ...and cut to the optical cone, so the fan's sides are the
+                # FOV lines, not the cells they cross.
+                t_ = self.terrain
+                sx_ = full_map_img.width / t_.width_m
+                sy_ = full_map_img.height / t_.height_m
+                apex = ((self.cam_x_var.get() - t_.origin_x) * sx_,
+                        (t_.height_m - (self.cam_y_var.get() - t_.origin_y)) * sy_)
+                dori_img = clip_to_wedge(dori_img, apex, (sx_, sy_), self.pan_deg_var.get(),
+                                         self.result.hfov_deg, self.result.max_range_m + t_.cell_size_m)
                 full_map_img = Image.alpha_composite(full_map_img, dori_img)
 
         # 2b. Multi-camera unified viewshed / PTZ revisit overlay
         _mc_arr = self._draw_multi_overlay_arr(rows, cols)
         self._layer_drawn = _mc_arr is not None
         if _mc_arr is not None:
-            _mc_img = Image.fromarray(_mc_arr, mode="RGBA").resize(
-                (full_map_img.width, full_map_img.height), Image.Resampling.NEAREST)
+            _mc_img = smooth_overlay(_mc_arr, (full_map_img.width, full_map_img.height))
             full_map_img = Image.alpha_composite(full_map_img, _mc_img)
 
         # 3. Exact Metric Screen Placement for Terrain Raster
@@ -3285,13 +3339,23 @@ class TerrainViewshedWindow:
         img_w = int(round(img_x1 - img_x0))
         img_h = int(round(img_y1 - img_y0))
 
-        if img_w > 10 and img_h > 10:
-            resized_terrain = full_map_img.resize((img_w, img_h), Image.Resampling.BILINEAR)
+        # Only the part of the map that is on screen is resampled: zoomed in,
+        # resizing the whole raster to zoom size (8x: ~7000 px square) and
+        # letting Tk clip it cost 130-400 ms per frame.
+        vx0, vy0 = max(img_x0, 0.0), max(img_y0, 0.0)
+        vx1, vy1 = min(img_x1, float(w)), min(img_y1, float(h))
+        if img_w > 10 and img_h > 10 and vx1 - vx0 >= 1 and vy1 - vy0 >= 1:
+            kx = full_map_img.width / (img_x1 - img_x0)
+            ky = full_map_img.height / (img_y1 - img_y0)
+            box = ((vx0 - img_x0) * kx, (vy0 - img_y0) * ky, (vx1 - img_x0) * kx, (vy1 - img_y0) * ky)
+            ox, oy = int(round(vx0)), int(round(vy0))
+            size = (max(int(round(vx1)) - ox, 1), max(int(round(vy1)) - oy, 1))
+            resized_terrain = full_map_img.resize(size, Image.Resampling.BILINEAR, box=box)
             self._map_photo = ImageTk.PhotoImage(resized_terrain, master=cv)  # Kural 5
-            cv.create_image(img_x0, img_y0, image=self._map_photo, anchor="nw", tags="map_raster")
+            cv.create_image(ox, oy, image=self._map_photo, anchor="nw", tags="map_raster")
             # Canvas-sized copy of what is under the overlays, for the glass boxes.
             backdrop = Image.new("RGBA", (w, h), _rgba("bg-0", 255))
-            backdrop.paste(resized_terrain, (int(round(img_x0)), int(round(img_y0))))
+            backdrop.paste(resized_terrain, (ox, oy))
             self._backdrop = backdrop
             cv.create_rectangle(img_x0, img_y0, img_x1, img_y1, outline=PANEL_BORDER, width=2)
 

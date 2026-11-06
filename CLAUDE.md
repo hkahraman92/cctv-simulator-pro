@@ -29,6 +29,7 @@ cctv_dual_view_simulator.py          giriş noktası
   region_library.py                  kayıtlı bölgeler: DEM + ortofoto diskte, çevrimdışı aç
   surface_obstacles.py               OSM bina/ağaç → yüzey modeli (DEM + engel), Overpass
   ptz_animation.py                   PTZ görsel tarama: anlık bakış + iz + gölge, kesit
+  raster_smooth.py                   sınıf bindirmelerini yalnız görüntüde yumuşatır, FOV kamasına kırpar
   compliance.py                      Gemini/Ollama + kural tabanlı şartname analizi
   compliance_optics.py               şartname DORI/menzil isteri → optik motorla doğrula
   compliance_standards.py            EN 62676-4 madde/DORI bilgi tabanı + belirsizlik tarama
@@ -430,6 +431,9 @@ sayısıyla ağırlıklı, DORI metrikleri yalnız parse edilenler üzerinden). 
   küçük bina, duvar gölgesi yalnız yüzeyle, direk bina üstünde de zeminde,
   ayna sunucuya düşme + önbellek, yüksek sesle hata, alan sınırı, kayıtlı
   bölge çıplak DEM + engel roundtrip, rapor yüzey satırı.
+- `test_raster_smooth.py` — yumuşatma alanı ve rengi korur, merdiven çizgiye
+  döner, iki sınıf arasında boşluk yok, rampa/boş durum, kırpılan içerik yerine
+  oturur, FOV kaması.
 - `test_ptz_animation.py` — dönüş/sektör pan modeli, koni dışında ışık yok,
   tepe arkası gölge, bir turda görülen = direğin görebildiği, iz söner,
   kare < 30 ms, kesit profili.
@@ -783,9 +787,25 @@ HUD + hedef etiketi. Tk'de alfa yok; kutu, tuvalin altındaki görüntünün
 edilen kare) PIL kırpıntısından bulanıklaştırılıp `glass` tokenıyla
 boyanır, 4 px köşe + `glass-edge` kenar. PhotoImage'lar `_glass_photos`'ta,
 her render'da sıfırlanır. 3B'de sürükleme karesi (`fast`) bulanıklığı atlar.
-Ölçüldü: kare başına ~5 ms (yakın zumdaki 130–400 ms harita raster'ının
-tamamını zum boyutuna büyütmekten — önceden de vardı, görünür bölgeyi
-kırpıp büyütmek açık iş). 3B HUD satırları `components.stack_lines` ile
+Ölçüldü: kare başına ~5 ms.
+
+**Harita çizimi: pürüzsüz + hızlı.** Analiz hücre ızgarasıdır; en yakın
+komşu büyütme her hücreyi kare blok yapıyordu (DORI yelpazesi merdiven).
+`raster_smooth.smooth_overlay`: bindirmedeki her renk bir sınıf, sınıf
+göstergeleri bilinear süper-örneklenir, 0,5 eşdeğer çizgisi sınır olur
+(alan en yakın komşuyla aynı, basamak ≤2 px), arka plana geçişte kenar
+yumuşar; >12 renk (sürekli rampa) → en yakın komşu, hiçbir şey uydurulmaz;
+yalnız dolu hücrelerin kutusu işlenir. Tekil DORI ayrıca `clip_to_wedge` ile
+optik koniye kırpılır. Canlı tarama kırpılMAZ (iz ve hafıza koninin
+dışında). Bina katmanı kat başına sabit/10 m basamaklı alfa (az sınıf →
+yumuşatılabilir). Hız: `_base_map_image` (kabartma + fotoğraf/rampa + bina)
+arazi/mod/opaklık/fotoğraf anahtarıyla önbellekli; raster yalnız ekranda
+görünen kutusu `resize(box=)` ile örneklenir (8× zumda ~7000 px kare
+üretip Tk'ye kırptırıyordu). Ölçüldü: Kızılay fotoğraf+bina 130–180 → 40 ms,
+tepelik arazi 8× zum 414 → 28 ms. Sayılar (alan, %) asla bu görüntüden
+gelmez. İndirici "Analiz ızgarası" 200 / **400** (vars.) / 600 hücre: DEM
+~30 m, ince ızgara rölyef eklemez; bina/ağaç ve gölge sınırlarını
+keskinleştirir (400 = 200'ün ~4× işi; viewshed 4 → 11 ms). 3B HUD satırları `components.stack_lines` ile
 ölçülen yüksekliğe göre dizilir (sabit ofsetler %150'de üst üste biniyordu);
 DORI rozet rengi motorun hex'i değil soğuk rampa (`_dori_badge`: motor
 Teşhis'i kırmızı veriyordu — en iyi seviye alarm gibi görünüyordu).
