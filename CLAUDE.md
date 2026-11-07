@@ -64,13 +64,27 @@ desktop/                             yeni arayüz: Tauri 2 (Rust) + React/TS/Tai
 ```
 
 **Yeni masaüstü kabuğu.** `desktop/` Python çekirdeği (`python -m
-cctv_simulator.service`) alt süreç olarak başlatır, satır başına bir JSON-RPC
-nesnesi taşır. Ekran fizik türetmez; her sayı bir API yönteminden gelir.
-Yeni bir ekran için önce `service/methods.py`'ye yöntem + `tests/test_service.py`'ye
-motorla birebir eşlik testi, sonra `desktop/src/core/api.ts`'ye tip. stdout
-yalnız protokol kanalı (sunucu `sys.stdout`'u stderr'e çevirir). Taşınmamış
-modül "taşınmadı" der, uydurma veri göstermez. Klasik Tk arayüzü değişmeden
-çalışır.
+cctv_simulator.service`, yayında `cctv-core.exe`) alt süreç olarak başlatır,
+satır başına bir JSON-RPC nesnesi taşır (API v1, 54 yöntem; liste ve
+sözleşme `docs/masaustu-mimari.md`). Ekran fizik türetmez; her sayı bir API
+yönteminden gelir. Yeni özellik için: önce `service/*_methods.py`'ye yöntem +
+`tests/test_service_*.py`'ye motorla birebir eşlik testi, sonra
+`desktop/src/core/*Api.ts`'ye tip. Klasik Tk arayüzü değişmeden çalışır;
+iki arayüzün paylaştığı mantık Tk'siz modüllerde (`map_render`,
+`optics_bench`, `focal_optimizer.apply_layout/band_area`,
+`compliance.call_gemini/evaluate_template`, `database.save_library_model`).
+- **Motor modülleri tkinter almaz** (`test_every_engine_module_imports_without_tk`):
+  çekirdek Tk'siz paketlenir; üst düzey `import tkinter` paketli çekirdeği o
+  yöntemde düşürür (compliance.py ve exporters.py düşürüyordu).
+- stdout yalnız protokol kanalı (sunucu `sys.stdout`'u stderr'e çevirir,
+  stderr'i UTF-8'e zorlar).
+- Yayın: `desktop\packaging\build_release.bat` → `cctv-core.exe` + duman
+  testi (`smoke_core.py`, paketli çekirdekte 14 ağır yol) → NSIS kurulum.
+  Kurulum yolu çok derinse (NSIS MAX_PATH'i aşan dosyaları sessizce atlar)
+  kabuk çekirdeği başlatmadan açık hata verir.
+- `tauri dev` her zaman kaynak ağacındaki Python'u koşturur; geliştirme
+  derlemesinde kütüphane / şifre dosyaları depo kökündedir — uygulamada
+  kaydetme denemesi yaparken buna dikkat (testler geçici dizine yönlendirir).
 
 ## Kurallar
 

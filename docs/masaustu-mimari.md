@@ -23,14 +23,16 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
 - **API v1** (`cctv_simulator/service/__init__.py: API_VERSION`). Yöntem
   eklemek / isteğe bağlı alan eklemek küçük sürüm; yeniden adlandırma ya da
   silme büyük sürüm. `system.describe` güncel listeyi verir.
-- Yöntemler (45; modül başına):
+- Yöntemler (54; modül başına):
   - `methods.py`: `system.info|ping|describe`, `catalog.get`,
     `library.list|get|camera`, `optics.calculate`, `project.load|save`
+  - `library_methods.py`: `library.fields|record|auth|save|delete|set_password`
+    (her yazım yönetici şifresini denetler)
   - `terrain_methods.py`: `terrain.catalog|procedural|geotiff|download|image`,
     `regions.list|open|save|delete`, `surface.osm|raster`, `viewshed.single`,
     `perimeter.plan|coverage|minimize_poles`, `focal.sweep`
-  - `ptz_methods.py`: `ptz.sweep|cue`, `perimeter.mixed`
-  - `bench_methods.py`: `optics.bench`, `iq.measure`, `scene.render`
+  - `ptz_methods.py`: `ptz.sweep|cue|tour`, `perimeter.mixed`
+  - `bench_methods.py`: `optics.project|bench`, `plan.image`, `iq.measure`, `scene.render`
   - `spec_methods.py`: `spec.read_file|engines|analyze|override|templates|
     template_save|template_run|template_delete|statement`, `training.export`
   - `report_methods.py`: `report.optics|engineering|open`
@@ -105,11 +107,19 @@ konsol alt sistemi, onedir → `src-tauri\core\`) → tip denetimi + testler →
 
 - İmza: sertifika gelince `bundle.windows.signCommand` (+ `cctv-core.exe`'yi de
   imzala; Norton imzasız PyInstaller önyükleyicisini engelleyebilir).
-- Otomatik güncelleme (Tauri updater, imzalı sürüm gerektirir).
-- Kamera veritabanı düzenleme ekranı (klasikte yönetici parolalı).
-- CAD'de vaziyet planı resmi + sürükle-bırak kamera yerleşimi.
-- Proje dosyasına arazi / çit durumu (şema `project_io` ile birlikte).
-- İngilizce arayüz (`i18n` anahtarlarıyla).
+- Otomatik güncelleme (Tauri updater, imzalı sürüm + yayın sunucusu gerektirir).
+- İngilizce arayüz (yeni kabuk yalnız Türkçe).
+- Yönetici şifresini karma (hash) olarak saklamak — klasikle birlikte;
+  şimdi düz metin `admin_settings.json` (her iki arayüz aynı dosyayı okur).
+
+## Proje dosyası
+
+Klasik şemanın aynısı (`project_io`): kameralar, `plan_path`, `plan_width_m`,
+`target_point`, `ppm_levels` (özel seviye varsa) ve `terrain` bloğu. Arazi
+bloğunun GUI-only anahtarları (`fence_points`, `line_mode`, `mixed_ptz`,
+…) `terrain_extra` olarak aynen korunur; klasik harita penceresi ve yeni
+kabuk aynı dosyayı açar. Arazi sayfası hiç açılmadan kaydedilen proje
+dosyadaki bloğu korur; proje açılınca arazi + çit geri kurulur.
 
 ## Kurulum yolu sınırı
 
