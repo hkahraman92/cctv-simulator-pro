@@ -29,6 +29,7 @@ cctv_dual_view_simulator.py          giriş noktası
   region_library.py                  kayıtlı bölgeler: DEM + ortofoto diskte, çevrimdışı aç
   surface_obstacles.py               OSM bina/ağaç → yüzey modeli (DEM + engel), Overpass
   ptz_animation.py                   PTZ görsel tarama: anlık bakış + iz + gölge, kesit
+  focal_optimizer.py                 varifokal/PTZ: tüm odak taraması, zarf, sabit+PTZ dizilim optimizasyonu
   raster_smooth.py                   sınıf bindirmelerini yalnız görüntüde yumuşatır, FOV kamasına kırpar
   compliance.py                      Gemini/Ollama + kural tabanlı şartname analizi
   compliance_optics.py               şartname DORI/menzil isteri → optik motorla doğrula
@@ -431,6 +432,11 @@ sayısıyla ağırlıklı, DORI metrikleri yalnız parse edilenler üzerinden). 
   küçük bina, duvar gölgesi yalnız yüzeyle, direk bina üstünde de zeminde,
   ayna sunucuya düşme + önbellek, yüksek sesle hata, alan sınırı, kayıtlı
   bölge çıplak DEM + engel roundtrip, rapor yüzey satırı.
+- `test_focal_optimizer.py` — odak adımları log, optimum iki uçtan kötü
+  değil, alanlar `view_mask` ile birebir, açık arazide teşhis için tele kazanır,
+  yön araması tepenin açık tarafını bulur, zarf her tekil bakışı kapsar (PTZ
+  zarfı sabitinkini), dizilim başlangıçtan kötü olamaz ve kötü başlangıcı
+  düzeltir, PTZ talep üzerine birleşime eklenir, çit bandı.
 - `test_raster_smooth.py` — yumuşatma alanı ve rengi korur, merdiven çizgiye
   döner, iki sınıf arasında boşluk yok, rampa/boş durum, kırpılan içerik yerine
   oturur, FOV kaması.
@@ -510,6 +516,36 @@ yok); raster görünür tuvale kırpılıp büyütülür, `map_raster`'ın hemen
 konur; okuma kutusu camda. Kesit şeridi her 3 karede o anki pan'ı izler
 (`sight_profile`: zemin + bina/ağaç + görülen/engel arkası). Kamera/arazi
 ayarı değişince (`_anim_key`) oynatma durur. Ölçüldü: kare çizimi 6–12 ms.
+
+**Varifokal / PTZ: tüm odak uzunlukları (`focal_optimizer.py`).** Viewshed bir
+varifokali yalnız iki uçta (`min`/`max`) değerlendiriyordu; belirli bir DORI
+seviyesindeki alan çoğu zaman aradaki bir odakta en büyüktür. Hepsi direk
+raster'ı üstünde: `view_layers` (odak, eğim) başına bir kez, her yön yalnız koni
+karşılaştırması (Kural 1 — motorla aynı yapı taşları).
+- `sweep_focals`: log adımlı odaklar (`focal_steps`) × `auto_tilts` (hedef
+  seviyenin bittiği mesafeye göre üç aday: kadraj üstü orada / merkez %55'te /
+  üst ufkun hemen altı) × isteğe bağlı yön araması → odak başına DORI alan
+  eğrisi + en iyi + iki uç. Amaç `"area"` (hedef seviyede alan) veya
+  `"balanced"` (her seviye 1 puan). Alanlar `view_mask` ile birebir aynı (test).
+- `envelope`: hücre başına tüm odak/eğim (PTZ'de tüm yönler) içinde en iyi
+  DORI. Sabit varifokal için **eşzamanlı değil** — arayüz bunu yazar.
+- `optimize_layout`: sabit direklerin (odak, eğim[, yön]) seçimi, ROI'deki
+  (çit ±40 m bandı, `fence_roi`) **birleşik** kapsama üzerinde açgözlü
+  koordinat taraması; seviye başına kapsama sayaçları (`cnt`) ile her aday
+  yalnız kendi kutusunda puanlanır (adaylar kendi izine kırpılır — tüm
+  pencereyi saklamak direk başına yüzlerce MB ediyordu). Her direğin mevcut
+  ayarı aday 0'dır → sonuç başlangıç planından kötü olamaz. PTZ'ler talep
+  üzerine erişim (zarf), sürekli kapsamaya sayılmaz.
+- Arayüz: tekil sekmede "Varifokal" grubu (tarama + eğri grafiği + "Optimumu
+  Uygula" → `_focal_override` → `calculate_3d_viewshed(focal_mm_override=)`,
+  lens radyosu sıfırlar; "Zarfı Göster" → `envelope` katmanı). Çit sekmesinde
+  "Odak optimizasyonu — sabit + PTZ": "Sonucu Plana Uygula" eski ve yeni planı
+  **otoriter** `calculate_multi_camera_viewshed` ile aynı bantta puanlar.
+  Dikkat: plan direk menzilini çit hedefinde (ör. 40 px/m) keser; bir DORI
+  seviyesini puanlarken o seviyenin kendi menzili verilmeli (`full_reach`),
+  yoksa motor ve optimizasyon farklı soruyu yanıtlar (8,6 vs 15,4 ha görüldü).
+  Ölçüldü (124 direk, 2×2 km tepelik, 10 m): optimizasyon 2,7 sn, doğrulama
+  1,3 sn; bantta Algılama 15,40 → 20,71 ha (motor) / 15,42 → 20,72 (tahmin).
 
 **Sürekli PTZ taraması (`ptz_schedule.py`).** `SectorPatrol` (a→b→a, hız,
 uçlarda bekleme) ve `Rotation360`; `evaluate_sweep(...)` → `SweepResult`.

@@ -59,7 +59,7 @@ from .components import glass_under, stack_lines
 from ..ptz_animation import SweepPlayback, sight_profile
 from .. import surface_obstacles as _obs
 from ..raster_smooth import clip_to_wedge, smooth_overlay
-from ..theme import (COLORS, FONT_MONO, FONT_UI, StyledButton, fit_and_center_window,
+from ..theme import (COLORS, FONT_MONO, FONT_UI, StyledButton, dpi_scale, fit_and_center_window,
                      flow_layout, wrap_label, make_scrollable)
 from ..viewshed_3d import (
     PPM_DETECT,
@@ -110,6 +110,11 @@ _CUE_LEVELS: List[Tuple[str, float]] = [
     ("Gözlem (Observation, 62,5 px/m)", 62.5),
 ]
 _CUE_PPM_BY_LABEL = {lbl: ppm for lbl, ppm in _CUE_LEVELS}
+# Varifocal optimisation (focal_optimizer): target DORI level + objective.
+_FOCAL_LEVELS = {"Algılama (25 px/m)": ZONE_DETECT, "Gözlem (62,5 px/m)": ZONE_OBSERVE,
+                 "Tanıma (125 px/m)": ZONE_RECOG, "Teşhis (250 px/m)": ZONE_IDENT}
+_FOCAL_OBJECTIVES = {"Hedef seviyede en geniş alan": "area",
+                     "Dengeli: tüm DORI seviyeleri": "balanced"}
 # Mixed perimeter (fixed + PTZ on every Nth pole).
 _PTZ_NONE = "— PTZ yok —"
 _PATROL_SPANS = [("360° sürekli dönüş", 360.0),
@@ -142,6 +147,11 @@ _LAYER_BANDS = {
         (3, 6, _rgba("dori-observe", 130), "3–6 sn"),
         (6, 10, _rgba("warn", 125), "6–10 sn"),
         (10, _INF, _rgba("danger", 125), "≥ 10 sn"))),
+    "envelope": ("ZARF — tüm odaklarda en iyi DORI (eşzamanlı değil)", (
+        (ZONE_IDENT, ZONE_IDENT + 1, _rgba("dori-identify", 185), "Teşhis ≥ 250 px/m"),
+        (ZONE_RECOG, ZONE_RECOG + 1, _rgba("dori-recognize", 175), "Tanıma ≥ 125 px/m"),
+        (ZONE_OBSERVE, ZONE_OBSERVE + 1, _rgba("dori-observe", 165), "Gözlem ≥ 62,5 px/m"),
+        (ZONE_DETECT, ZONE_DETECT + 1, _rgba("dori-detect", 160), "Algılama ≥ 25 px/m"))),
     "fused": ("ALGILAMA: SABİT + PTZ", (
         (2, 3, _rgba("dori-identify", 140), "Sürekli — sabit kamera"),
         (1, 2, _rgba("warn", 125), "Aralıklı — yalnız PTZ devriyesi"))),
@@ -267,6 +277,21 @@ class TerrainViewshedWindow:
         self._anim = None
         self._anim_job = None
         self._anim_frame_no = 0
+        # Varifocal sweep / envelope / perimeter layout optimisation
+        self._focal_override = None      # mm; None = lens_mode end
+        self._focal_report = None
+        self._envelope_grid = None
+        self._envelope_is_ptz = False
+        self._layout_result = None
+        self._layout_plan = None
+        self.focal_level_var = tk.StringVar(value="Tanıma (125 px/m)")
+        self.focal_obj_var = tk.StringVar(value="Hedef seviyede en geniş alan")
+        self.focal_pan_search_var = tk.BooleanVar(value=False)
+        self.focal_stat_var = tk.StringVar(
+            value="Geniş ve dar uç arasındaki her odak, otomatik eğim adaylarıyla değerlendirilir.")
+        self.layout_level_var = tk.StringVar(value="Algılama (25 px/m)")
+        self.layout_obj_var = tk.StringVar(value="Hedef seviyede en geniş alan")
+        self.layout_stat_var = tk.StringVar(value="-")
         self._anim_frame = None
         self._anim_params = None
         self._anim_glass = []
@@ -849,6 +874,8 @@ class TerrainViewshedWindow:
         self._create_stat_row(grp_stats, "Net Görüş Oranı:", self.stat_coverage_var, ACCENT_AMBER)
         self._create_stat_row(grp_stats, "Max Görüş Menzili:", self.stat_max_reach_var, TEXT_WHITE)
 
+        self._build_focal_panel(parent)
+
         # PTZ tour panel — built now, shown/hidden by camera type
         self._build_ptz_panel(parent)
 
@@ -1188,6 +1215,7 @@ class TerrainViewshedWindow:
     def _build_combined_panel(self, parent):
         grp = ttk.LabelFrame(parent, text="🎯 Birleşik Viewshed (tüm çit kameraları, otoriter motor)", padding=6)
         grp.pack(fill=tk.X, pady=(6, 0))
+        self._build_layout_opt_panel(parent)
         StyledButton(grp, text="🎯 Çit Kameralarını Birleştir",
                      command=self._run_multi_viewshed, bootstyle="success").pack(fill=tk.X, pady=(0, 4))
         self._create_stat_row(grp, "Birleşik kapsama:", self.mc_stat_var, ACCENT_GREEN)
@@ -1200,7 +1228,8 @@ class TerrainViewshedWindow:
             *[ttk.Radiobutton(lay, text=lbl, value=val, variable=self.multi_overlay_var,
                               command=self._on_overlay_changed)
               for val, lbl in (("dori", "DORI"), ("overlap", "Örtüşme"), ("revisit", "Revizit"),
-                               ("cue", "Tepki süresi"), ("fused", "Sabit+PTZ"))],
+                               ("cue", "Tepki süresi"), ("fused", "Sabit+PTZ"),
+                               ("envelope", "Zarf"))],
         ], padx=2, pady=1)
 
     # ── multi-camera unified viewshed ──
@@ -1307,6 +1336,331 @@ class TerrainViewshedWindow:
         self.show_multi_var.set(True)
         self.multi_overlay_var.set("revisit")
         self._render_map_canvas()
+
+    # ── varifocal: whole focal range (focal_optimizer) ──
+    def _build_focal_panel(self, parent):
+        grp = ttk.LabelFrame(parent, text="🔭 Varifokal — tüm odak uzunluklarını tara", padding=6)
+        grp.pack(fill=tk.X, pady=(0, 6))
+        row = ttk.Frame(grp)
+        row.pack(fill=tk.X, pady=(0, 2))
+        flow_layout(row, [
+            (ttk.Label(row, text="Hedef:"),
+             ttk.Combobox(row, textvariable=self.focal_level_var, values=list(_FOCAL_LEVELS),
+                          state="readonly", width=20)),
+            (ttk.Label(row, text="Amaç:"),
+             ttk.Combobox(row, textvariable=self.focal_obj_var, values=list(_FOCAL_OBJECTIVES),
+                          state="readonly", width=24)),
+        ], padx=2, pady=1)
+        ttk.Checkbutton(grp, text="Yönü de ara (±45°)", variable=self.focal_pan_search_var).pack(anchor="w")
+        StyledButton(grp, text="Tüm Odakları Tara", command=self._run_focal_sweep,
+                     bootstyle="secondary-outline").pack(fill=tk.X, pady=(4, 2))
+        self.focal_chart = tk.Canvas(grp, height=int(130 * dpi_scale(grp)), bg=PANEL_DARK,
+                                     highlightthickness=0)
+        self.focal_chart.pack(fill=tk.X, pady=(2, 2))
+        self.focal_chart.bind("<Configure>", lambda e: self._draw_focal_chart())
+        wrap_label(ttk.Label(grp, textvariable=self.focal_stat_var, font=(FONT_UI, 8),
+                             foreground=TEXT_DIM, justify="left")).pack(fill=tk.X)
+        btns = ttk.Frame(grp)
+        btns.pack(fill=tk.X, pady=(4, 0))
+        flow_layout(btns, [
+            StyledButton(btns, text="Optimumu Uygula", command=self._apply_focal_optimum,
+                         bootstyle="primary"),
+            StyledButton(btns, text="Zarfı Göster", command=self._show_focal_envelope,
+                         bootstyle="secondary-outline"),
+            StyledButton(btns, text="Uç Odaklara Dön", command=self._reset_focal_override,
+                         bootstyle="secondary-outline"),
+        ], padx=2, pady=1, expand=True)
+
+    def _focal_target(self):
+        from ..focal_optimizer import LEVELS
+        level = _FOCAL_LEVELS.get(self.focal_level_var.get(), LEVELS[2])
+        objective = _FOCAL_OBJECTIVES.get(self.focal_obj_var.get(), "area")
+        return level, objective
+
+    def _current_is_ptz(self) -> bool:
+        from ..database import is_ptz_camera
+        model = self.camera_library.get(self.cam_model_var.get(), {}) if hasattr(self, "cam_model_var") else {}
+        return bool(is_ptz_camera(model) or is_ptz_camera(
+            {"model_name": self.current_camera.model_name,
+             "camera_type": getattr(self.current_camera, "camera_type", "")}))
+
+    def _run_focal_sweep(self):
+        from ..focal_optimizer import sweep_focals
+        level, objective = self._focal_target()
+        c = self._ptz_context()
+        pan = self.pan_deg_var.get()
+        search = 45.0 if self.focal_pan_search_var.get() else 0.0
+
+        def compute():
+            return sweep_focals(c["terrain"], c["x"], c["y"], c["mast"], c["camera"], pan_deg=pan,
+                                pan_search_deg=search, level=level, objective=objective,
+                                n_focals=14, max_range_m=c["max_range"], visibility_km=c["vis_km"],
+                                weather=c["weather"])
+
+        def done(rep):
+            from ..focal_optimizer import LEVEL_NAME
+            self._focal_report = rep
+            b, wd, te = rep.best, rep.wide, rep.tele
+            name = LEVEL_NAME[level]
+            ha = 1e4
+            gain_w = b.areas_m2[level] - wd.areas_m2[level]
+            gain_t = b.areas_m2[level] - te.areas_m2[level]
+            pan_txt = f" · yön {b.pan_deg:.0f}°" if search else ""
+            self.focal_stat_var.set(
+                f"● En iyi: {b.focal_mm:.1f} mm · eğim {b.tilt_deg:.1f}°{pan_txt} → {name} "
+                f"{b.areas_m2[level] / ha:.2f} ha (geniş uç {wd.focal_mm:g} mm: {wd.areas_m2[level] / ha:.2f} ha, "
+                f"dar uç {te.focal_mm:g} mm: {te.areas_m2[level] / ha:.2f} ha; kazanç +{max(gain_w, gain_t, 0) / ha:.2f} ha)."
+                + (" Değerlendirme: aynı motor yapı taşları; uygulayınca harita otoriter motorla yeniden hesaplar."))
+            self._draw_focal_chart()
+
+        self._run_in_background("Odak taraması", compute, done, stat_var=self.focal_stat_var)
+
+    def _draw_focal_chart(self):
+        """Area at each DORI level vs focal (log x). Target level bold, the
+        optimum marked, the lens ends labelled."""
+        from ..focal_optimizer import LEVEL_NAME, LEVELS
+        cv = getattr(self, "focal_chart", None)
+        rep = getattr(self, "_focal_report", None)
+        if cv is None:
+            return
+        cv.delete("all")
+        w, h = cv.winfo_width(), cv.winfo_height()
+        if w < 80 or h < 60:
+            return
+        if rep is None:
+            cv.create_text(w / 2, h / 2, text="Tarama sonucu burada: odak → alan eğrisi",
+                           fill=TEXT_MUTED, font=(FONT_UI, 8))
+            return
+        pad_l, pad_r, pad_t, pad_b = 34, 8, 8, 18
+        fs = [c.focal_mm for c in rep.curve]
+        f0, f1 = math.log(fs[0]), math.log(max(fs[-1], fs[0] * 1.0001))
+        ymax = max(max(c.areas_m2[lv] for lv in LEVELS) for c in rep.curve) / 1e4 or 1.0
+
+        def X(f):
+            return pad_l + (math.log(f) - f0) / max(f1 - f0, 1e-9) * (w - pad_l - pad_r)
+
+        def Y(a_m2):
+            return pad_t + (1.0 - (a_m2 / 1e4) / ymax) * (h - pad_t - pad_b)
+
+        cv.create_line(pad_l, h - pad_b, w - pad_r, h - pad_b, fill=PANEL_BORDER)
+        cv.create_line(pad_l, pad_t, pad_l, h - pad_b, fill=PANEL_BORDER)
+        cv.create_text(pad_l - 3, pad_t, text=f"{ymax:.1f}", anchor="ne", fill=TEXT_MUTED, font=(FONT_MONO, 7))
+        cv.create_text(pad_l - 3, h - pad_b, text="0 ha", anchor="e", fill=TEXT_MUTED, font=(FONT_MONO, 7))
+        for f in (fs[0], fs[-1]):
+            cv.create_text(X(f), h - pad_b + 2, text=f"{f:g} mm", anchor="n", fill=TEXT_MUTED, font=(FONT_MONO, 7))
+        tokens = {LEVELS[0]: "dori-detect", LEVELS[1]: "dori-observe",
+                  LEVELS[2]: "dori-recognize", LEVELS[3]: "dori-identify"}
+        for lv in LEVELS:
+            pts = [(X(c.focal_mm), Y(c.areas_m2[lv])) for c in rep.curve]
+            if len(pts) > 1:
+                cv.create_line(*[v for p in pts for v in p], fill=_tok(tokens[lv]),
+                               width=3 if lv == rep.level else 1)
+        bx = X(rep.best.focal_mm)
+        cv.create_line(bx, pad_t, bx, h - pad_b, fill=C_SELECTED, dash=(3, 2))
+        cv.create_oval(bx - 4, Y(rep.best.areas_m2[rep.level]) - 4, bx + 4,
+                       Y(rep.best.areas_m2[rep.level]) + 4, outline=C_SELECTED, width=2)
+        cv.create_text(bx + 4, pad_t, text=f"{rep.best.focal_mm:.1f} mm", anchor="nw",
+                       fill=TEXT_WHITE, font=(FONT_MONO, 7))
+        y = pad_t
+        for lv in reversed(LEVELS):
+            item = cv.create_text(w - pad_r, y, text=LEVEL_NAME[lv], anchor="ne", fill=_tok(tokens[lv]),
+                                  font=(FONT_UI, 7, "bold" if lv == rep.level else "normal"))
+            y = cv.bbox(item)[3]
+
+    def _apply_focal_optimum(self):
+        rep = getattr(self, "_focal_report", None)
+        if rep is None:
+            self.focal_stat_var.set("Önce “Tüm Odakları Tara”.")
+            return
+        self._focal_override = rep.best.focal_mm
+        self.tilt_deg_var.set(rep.best.tilt_deg)
+        if rep.best.pan_deg is not None:
+            self.pan_deg_var.set(round(rep.best.pan_deg, 1))
+        self.recalculate_viewshed()
+
+    def _reset_focal_override(self):
+        self._focal_override = None
+        self.recalculate_viewshed()
+
+    def _show_focal_envelope(self):
+        from ..focal_optimizer import envelope
+        level, _objective = self._focal_target()
+        c = self._ptz_context()
+        ptz = self._current_is_ptz()
+        pan = None if ptz else self.pan_deg_var.get()
+
+        def compute():
+            return envelope(c["terrain"], c["x"], c["y"], c["mast"], c["camera"], pan_deg=pan,
+                            level=level, n_focals=12, max_range_m=c["max_range"],
+                            visibility_km=c["vis_km"], weather=c["weather"])
+
+        def done(env):
+            self._envelope_grid = env.astype(np.int32)
+            self._envelope_is_ptz = ptz
+            cell_a = c["terrain"].cell_size_m ** 2
+            self.focal_stat_var.set(
+                ("PTZ zarfı: her yön / eğim / odakta ulaşılabilecek en iyi DORI — talep üzerine, "
+                 "aynı anda değil. " if ptz else
+                 "Sabit varifokal zarfı: bu yönde, kurulumda seçilebilecek herhangi bir odakla ulaşılabilecek "
+                 "en iyi DORI — tek bir odak bunun tamamını AYNI ANDA vermez. ")
+                + f"Algılama+ {float((env >= 2).sum()) * cell_a / 1e4:.2f} ha · "
+                  f"Teşhis {float((env >= 5).sum()) * cell_a / 1e4:.2f} ha.")
+            self.show_multi_var.set(True)
+            self.multi_overlay_var.set("envelope")
+            self._render_map_canvas()
+
+        self._run_in_background("Odak zarfı", compute, done, stat_var=self.focal_stat_var)
+
+    # ── perimeter: fixed + PTZ layout optimisation ──
+    def _build_layout_opt_panel(self, parent):
+        grp = ttk.LabelFrame(parent, text="⚙ Odak optimizasyonu — sabit + PTZ (tüm odaklar)", padding=6)
+        grp.pack(fill=tk.X, pady=(6, 0))
+        row = ttk.Frame(grp)
+        row.pack(fill=tk.X)
+        flow_layout(row, [
+            (ttk.Label(row, text="Hedef:"),
+             ttk.Combobox(row, textvariable=self.layout_level_var, values=list(_FOCAL_LEVELS),
+                          state="readonly", width=20)),
+            (ttk.Label(row, text="Amaç:"),
+             ttk.Combobox(row, textvariable=self.layout_obj_var, values=list(_FOCAL_OBJECTIVES),
+                          state="readonly", width=24)),
+        ], padx=2, pady=1)
+        wrap_label(ttk.Label(grp, foreground=TEXT_MUTED, font=(FONT_UI, 8), justify="left", text=(
+            "Her sabit direğin odağı ve eğimi, çitin ±40 m bandındaki BİRLEŞİK kapsamayı en çok "
+            "artıracak şekilde seçilir (açgözlü, başlangıç planından kötü olamaz). PTZ'ler talep "
+            "üzerine erişim olarak eklenir."))).pack(fill=tk.X, pady=(2, 2))
+        bar = ttk.Frame(grp)
+        bar.pack(fill=tk.X)
+        flow_layout(bar, [
+            StyledButton(bar, text="Çiti Optimize Et", command=self._run_layout_optimize,
+                         bootstyle="secondary-outline"),
+            StyledButton(bar, text="Sonucu Plana Uygula", command=self._apply_layout_result,
+                         bootstyle="secondary-outline"),
+        ], padx=2, pady=1, expand=True)
+        self._create_stat_row(grp, "Sonuç:", self.layout_stat_var, TEXT_WHITE)
+
+    def _layout_mounts(self):
+        from ..focal_optimizer import Mount
+        plan = self.perimeter_plan
+        cam = self.current_camera
+        mounts = [Mount(c.x_m, c.y_m, c.mast_height_m, cam, pan_deg=c.pan_deg, tilt_deg=c.tilt_deg,
+                        focal_mm=c.focal_mm, label=f"Direk {c.pole_id}") for c in plan.placed_cameras]
+        ptz_cam = self._mixed_ptz_camera() if plan.ptz_cameras else None
+        if ptz_cam is not None:
+            mounts += [Mount(p.x_m, p.y_m, p.mast_height_m, ptz_cam, pan_deg=p.pan_deg, tilt_deg=p.tilt_deg,
+                             ptz=True, label=f"PTZ {p.pole_id}") for p in plan.ptz_cameras]
+        return mounts
+
+    def _run_layout_optimize(self):
+        from ..focal_optimizer import fence_roi, optimize_layout
+        plan = self.perimeter_plan
+        if not plan or not plan.placed_cameras:
+            messagebox.showinfo("Odak optimizasyonu", "Önce çiti çizip “Otomatik Diz” ile kameraları yerleştirin.",
+                                parent=self.window)
+            return
+        level = _FOCAL_LEVELS.get(self.layout_level_var.get(), 2)
+        objective = _FOCAL_OBJECTIVES.get(self.layout_obj_var.get(), "area")
+        mounts = self._layout_mounts()
+        terrain = self.terrain
+        roi = fence_roi(terrain, plan.fence_points, self.fence_closed_var.get())
+        weather = self.weather_var.get()
+        vis = WEATHER_PRESETS.get(weather, 40.0)
+        n = len(mounts)
+
+        def compute():
+            return optimize_layout(terrain, mounts, roi=roi, level=level, objective=objective,
+                                   n_focals=8, visibility_km=vis, weather=weather)
+
+        def done(res):
+            from ..focal_optimizer import LEVEL_NAME
+            self._layout_result = res
+            self._layout_plan = plan
+            ha = 1e4
+            moved = sum(1 for c in res.choices if c.changed)
+            txt = (f"{LEVEL_NAME[level]} (bant içi, sürekli): {res.before_m2[level] / ha:.2f} → "
+                   f"{res.after_m2[level] / ha:.2f} ha / {res.roi_area_m2 / ha:.2f} ha · {moved}/"
+                   f"{len([c for c in res.choices if not c.ptz])} direk değişti")
+            if any(c.ptz for c in res.choices):
+                txt += (f" · PTZ talep üzerine Teşhis {res.ptz_on_demand_m2[5] / ha:.2f} ha · birleşik "
+                        f"{LEVEL_NAME[level]} {res.combined_m2[level] / ha:.2f} ha")
+            self.layout_stat_var.set(txt + " — “Sonucu Plana Uygula” otoriter motorla doğrular.")
+
+        self.layout_stat_var.set(f"{n} kamera için tüm odaklar taranıyor…")
+        self._run_in_background("Odak optimizasyonu", compute, done, stat_var=self.layout_stat_var)
+
+    def _apply_layout_result(self):
+        """Apply the optimised settings and re-score BOTH plans with the
+        authoritative multi-camera engine on the same fence band, so the
+        reported gain is the engine's, not the optimiser's estimate."""
+        from dataclasses import replace as _replace
+
+        from ..calculations import camera_optics
+        from ..focal_optimizer import LEVEL_NAME, fence_roi
+        from ..perimeter_ptz import plan_placements
+        from ..viewshed_3d import calculate_multi_camera_viewshed
+        res = getattr(self, "_layout_result", None)
+        plan = self.perimeter_plan
+        if res is None or plan is None or getattr(self, "_layout_plan", None) is not plan:
+            self.layout_stat_var.set("Önce “Çiti Optimize Et” (plan değiştiyse yeniden).")
+            return
+        target_ppm = _PERIMETER_PPM_BY_LABEL.get(self.target_ppm_var.get(), 25.0)
+        cam_model = self.current_camera
+        new_cams = []
+        for cam, ch in zip(plan.placed_cameras, [c for c in res.choices if not c.ptz]):
+            if not ch.changed:
+                new_cams.append(cam)
+                continue
+            slant = camera_optics(cam_model, ch.focal_mm).distance_for_ppm(target_ppm)
+            new_cams.append(_replace(
+                cam, focal_mm=round(ch.focal_mm, 2), tilt_deg=round(ch.tilt_deg, 1),
+                pan_deg=round(ch.pan_deg % 360.0, 1), hfov_deg=round(ch.hfov_deg, 1),
+                vfov_deg=round(ch.vfov_deg, 1),
+                effective_range_m=round(math.sqrt(max(slant ** 2 - cam.mast_height_m ** 2, 1.0)), 1)))
+        old_plan = _replace(plan, placed_cameras=list(plan.placed_cameras))
+        new_plan = _replace(plan, placed_cameras=new_cams)
+        terrain, level = self.terrain, res.level
+        roi = fence_roi(terrain, plan.fence_points, self.fence_closed_var.get())
+        weather = self.weather_var.get()
+        vis = WEATHER_PRESETS.get(weather, 40.0)
+
+        from ..focal_optimizer import LEVEL_PPM, MAX_RANGE_CAP_M
+
+        def full_reach(pl):
+            # The plan caps each pole at its fence-target range (e.g. 40 px/m);
+            # scoring a DORI level needs that level's own reach, or the engine
+            # and the optimiser answer different questions.
+            f = pl.focal_mm_override or cam_model.focal_min_mm
+            slant = camera_optics(cam_model, f).distance_for_ppm(LEVEL_PPM[level])
+            return _replace(pl, max_range_m=min(max(pl.max_range_m, slant), MAX_RANGE_CAP_M))
+
+        def compute():
+            def band(p):
+                mv = calculate_multi_camera_viewshed(
+                    terrain, [full_reach(pl) for pl in plan_placements(p, cam_model)],
+                    visibility_km=vis, weather=weather)
+                inside = roi if roi is not None else np.ones(mv.dori_grid.shape, bool)
+                return mv, float(((mv.dori_grid >= level) & inside).sum()) * terrain.cell_size_m ** 2
+            return band(old_plan), band(new_plan)
+
+        def done(out):
+            (_mv0, a0), (mv1, a1) = out
+            if self.perimeter_plan is not plan:
+                return
+            plan.placed_cameras[:] = new_cams
+            self._layout_result = None
+            self._coverage_grid = None
+            self._multi_vs = mv1
+            self.mc_stat_var.set(f"%{mv1.coverage_pct:.1f} ({len(new_cams)} kamera)")
+            self.show_multi_var.set(True)
+            self.multi_overlay_var.set("dori")
+            self.layout_stat_var.set(
+                f"● Uygulandı. Otoriter motor, çit bandında {LEVEL_NAME[level]}: "
+                f"{a0 / 1e4:.2f} → {a1 / 1e4:.2f} ha (+{(a1 - a0) / 1e4:.2f} ha; "
+                f"optimizasyon tahmini {res.before_m2[level] / 1e4:.2f} → {res.after_m2[level] / 1e4:.2f} ha).")
+            self._render_map_canvas()
+            self._render_profile_canvas()
+
+        self._run_in_background("Otoriter doğrulama", compute, done, stat_var=self.layout_stat_var)
 
     # ── buildings / trees surface model (surface_obstacles) ──
     def _sync_obstacle_state(self):
@@ -1827,6 +2181,14 @@ class TerrainViewshedWindow:
             return None
         mode = self.multi_overlay_var.get()
         ov = np.zeros((rows, cols, 4), dtype=np.uint8)
+        if mode == "envelope":
+            g = self._envelope_grid
+            if self._layout_result is not None and self.planner_mode_var.get() == "perimeter":
+                g = np.maximum(self._layout_result.fixed_zone, self._layout_result.ptz_zone).astype(np.int32)
+            if g is None or g.shape != (rows, cols):
+                return None
+            _paint_bands(ov, g, _LAYER_BANDS["envelope"][1], mask=True)
+            return np.flipud(ov)
         if mode == "revisit":
             glimpse = None
             if self._ptz_layer == "mixed" and self._mixed is not None:
@@ -2622,6 +2984,7 @@ class TerrainViewshedWindow:
             messagebox.showerror("Hata", "Lütfen geçerli bir sayısal metraj girin.")
 
     def _on_lens_mode_toggled(self):
+        self._focal_override = None          # an explicit lens end replaces a swept focal
         self._sync_active_camera()
         self.schedule_recalculate()
 
@@ -3178,6 +3541,7 @@ class TerrainViewshedWindow:
             ray_step_m=3.5,
             visibility_km=WEATHER_PRESETS.get(weather, 40.0),
             weather=weather,
+            focal_mm_override=self._focal_override,
         )
 
         r = self.result
@@ -3193,7 +3557,8 @@ class TerrainViewshedWindow:
 
         self.stat_occ_area_var.set(f"{r.occluded_area_m2:,.0f} m²")
         self.stat_coverage_var.set(f"% {r.coverage_pct:.1f}")
-        self.stat_max_reach_var.set(f"{r.max_los_reach_m:.1f} m (Optik Sınır: {r.optical_limit_m:.0f}m)")
+        self.stat_max_reach_var.set(f"{r.max_los_reach_m:.1f} m (Optik Sınır: {r.optical_limit_m:.0f}m)"
+                                    + (f" · odak {self._focal_override:.1f} mm" if self._focal_override else ""))
 
         self._render_map_canvas()
         self._render_profile_canvas()

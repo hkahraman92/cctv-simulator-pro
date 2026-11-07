@@ -1,3 +1,21 @@
+## -32. Varifokal: tüm odak uzunluklarıyla tarama + sabit + PTZ dizilim optimizasyonu — ✅ (2026-11-06)
+
+İstek: viewshed kapsamayı tüm focal length'lere göre tarasın; PTZ + sabit
+kamerayla maksimum kapsama üretecek akıllı yapı.
+
+- `focal_optimizer.py`: tek kamera tüm odak taraması (otomatik eğim, isteğe
+  bağlı yön), zarf (tüm odak / PTZ'de tüm yön), çoklu direk açgözlü
+  optimizasyon (birleşik kapsama, başlangıçtan kötü olamaz, PTZ talep üzerine).
+- Arayüz: tekil sekmede odak→alan eğrisi, optimumu uygula, zarf katmanı;
+  çit sekmesinde "Çiti Optimize Et" + otoriter motorla önce/sonra doğrulama.
+- Ölçüm (124 direk, tepelik 2×2 km): Algılama bant içi 15,40 → 20,71 ha
+  (otoriter motor), bant 21,28 ha; süre 2,7 + 1,3 sn.
+
+Kalan: direk sayısı/aralığı optimizasyonu yok (yalnız mevcut direklerin
+ayarı); PTZ devriye parametreleri (yön aralığı, hız) optimize edilmiyor —
+zarf yalnız erişimi gösterir; 10 m prosedürel ızgarada yüksek seviyeler
+(Tanıma/Teşhis) 100 m²'lik basamaklarla ölçülür — ince ızgara önerilir.
+
 ## -31. Görüş alanı kare kare görünüyordu → pürüzsüz çizim + ince ızgara + hızlı harita — ✅ (2026-11-06)
 
 İstek: viewshed çok pikselli / kare kare, daha güzel görüntü.
