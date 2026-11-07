@@ -517,16 +517,52 @@ def is_themed() -> bool:
     return _TTKBOOTSTRAP_AVAILABLE
 
 
-def StyledButton(parent, bootstyle: str = "", **kwargs):
+_ICON_TOKEN = {"primary": "accent", "success": "ok", "info": "info", "warning": "warn",
+               "danger": "danger", "secondary": "steel"}
+
+
+def _icon_colour(bootstyle: str) -> str:
+    """Icon colour that matches the button's text: on-accent on a solid
+    green button, the style colour on an outline one, ink on solid secondary."""
+    style = (bootstyle or "").lower()
+    word = next((w for w in _ICON_TOKEN if w in style), "secondary")
+    if "outline" in style or "link" in style:
+        return _dt.tok(_ICON_TOKEN[word])
+    if word in ("primary", "success"):
+        return _dt.tok("on-accent")
+    return _dt.tok("ink")
+
+
+def StyledButton(parent, bootstyle: str = "", icon: str = "", **kwargs):
     """Themed button, with a permanent fallback.
 
     A single ttkbootstrap failure used to propagate out of whichever window was
     being built and destroy it. Now the first failure switches the whole
     process to plain ttk and the button is still returned.
+
+    ``icon`` = a Lucide name (ui/icons.py) drawn left of the text in the
+    button's text colour. Any emoji still at the start of ``text`` is
+    stripped (icons replace emoji, design system).
     """
+    img = None
+    if "text" in kwargs and isinstance(kwargs["text"], str):
+        from .ui.icons import split_emoji
+        auto, clean = split_emoji(kwargs["text"])
+        kwargs["text"] = clean
+        icon = icon or (auto or "")
+    if icon:
+        from .ui.icons import icon_image
+        img = icon_image(icon, parent, color=_icon_colour(bootstyle))
+        if img is not None:
+            kwargs.setdefault("image", img)
+            kwargs.setdefault("compound", "left")
+    btn = None
     if _TTKBOOTSTRAP_AVAILABLE and bootstyle:
         try:
-            return _ttkbootstrap_mod.Button(parent, bootstyle=bootstyle, **kwargs)
+            btn = _ttkbootstrap_mod.Button(parent, bootstyle=bootstyle, **kwargs)
         except Exception as exc:
             disable_ttkbootstrap(f"StyledButton: {exc}")
-    return _ttk.Button(parent, **kwargs)
+    if btn is None:
+        btn = _ttk.Button(parent, **kwargs)
+    btn._cctv_icon = img                 # keep the PhotoImage alive with the button
+    return btn

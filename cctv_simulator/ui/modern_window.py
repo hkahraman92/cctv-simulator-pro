@@ -769,7 +769,7 @@ class _WorkbenchBody:
                          self.request_render, self.font_ui, self.font_mono)
         add(self.f_k, pad=(0, 4))
         self.btn_measure = ctk.CTkButton(
-            rail, text="📷  Eğik kenar fotoğrafı → k ölç", command=self._measure_edge,
+            rail, text="Eğik kenar fotoğrafı → k ölç", command=self._measure_edge,
             fg_color=FIELD, hover_color=PANEL_HI, text_color=TEXT,
             font=(self.font_ui, 11), height=30, corner_radius=2,
         )

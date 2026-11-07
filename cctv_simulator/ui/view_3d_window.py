@@ -71,7 +71,7 @@ class Camera3DViewWindow:
     def __init__(self, parent_app: Any):
         self.app = parent_app
         self.window = tk.Toplevel(self.app.root)
-        self.window.title("👁️ 3D Kamera Bakış Açısı ve Canlı DORI Simülatörü (Camera Eye View)")
+        self.window.title("3D Kamera Bakış Açısı ve Canlı DORI Simülatörü (Camera Eye View)")
 
         fit_and_center_window(self.window, default_w=1280, default_h=780, min_w=900, min_h=580, maximize=False)
         set_window_icon(self.window)
@@ -265,16 +265,17 @@ class Camera3DViewWindow:
 
         # Target Type Combobox
         cap_target = ttk.Label(control_bar, text="Hedef:")
-        combo_target = ttk.Combobox(
+        # The combo shows labels; target_type_var keeps the internal code.
+        # Bound to the same variable, the box displayed "human" (the code).
+        self.combo_target = combo_target = ttk.Combobox(
             control_bar,
-            textvariable=self.target_type_var,
-            values=["🧍 İnsan Mankeni (1.8m)", "🚗 Araç & TR Plaka (1.5m)", "🎯 EN 62676-4 Test Panosu"],
+            values=["İnsan Mankeni (1.8m)", "Araç & TR Plaka (1.5m)", "EN 62676-4 Test Panosu"],
             state="readonly",
             width=22,
         )
         combo_target.current(0)
         # BUGFIX: .current(0) on a textvariable-bound Combobox writes the
-        # DISPLAY label ("🧍 İnsan Mankeni (1.8m)") into target_type_var,
+        # DISPLAY label ("İnsan Mankeni (1.8m)") into target_type_var,
         # clobbering the internal code ("human") __init__ set. Only
         # _on_target_type_selected() (fired by <<ComboboxSelected>>, i.e.
         # only once the user actually touches the combo) normalizes it back
@@ -300,13 +301,12 @@ class Camera3DViewWindow:
         cap_palette = ttk.Label(control_bar, text="Palet:")
         self.combo_palette = ttk.Combobox(
             control_bar,
-            textvariable=self.palette_mode_var,
             values=[
                 "Optik (Gündüz)",
-                "🌙 Gece (IR Aydınlatma)",
-                "🔥 Termal: White Hot",
-                "⚫ Termal: Black Hot",
-                "🌈 Termal: Ironbow (Isı)",
+                "Gece (IR Aydınlatma)",
+                "Termal: White Hot",
+                "Termal: Black Hot",
+                "Termal: Ironbow (Isı)",
             ],
             state="readonly",
             width=18,
@@ -331,7 +331,7 @@ class Camera3DViewWindow:
         chk_grid = ttk.Checkbutton(control_bar, text="Izgara", variable=self.show_grid_var, command=self.render_3d_view)
 
         # Action Buttons
-        btn_snapshot = StyledButton(control_bar, text="📸 Snapshot (PNG)", command=self.save_snapshot, bootstyle="info-outline")
+        btn_snapshot = StyledButton(control_bar, icon="camera", text="Snapshot (PNG)", command=self.save_snapshot, bootstyle="info-outline")
 
         # BUGFIX: these used to be one packed row; below ~1250 px the Lens,
         # Palet and Hava combos, both checkboxes and the Snapshot button got
@@ -399,7 +399,7 @@ class Camera3DViewWindow:
         self.schedule_render(fast=True)
 
     def _on_target_type_selected(self, event=None):
-        val = self.target_type_var.get()
+        val = self.combo_target.get()
         if "İnsan" in val:
             self.target_type_var.set("human")
         elif "Araç" in val:
@@ -573,20 +573,20 @@ class Camera3DViewWindow:
 
         atm_txt = ""
         if vis_km < 20.0:
-            flag = " ⚠️" if atm_tau < 0.5 else ""
+            flag = " ▲" if atm_tau < 0.5 else ""
             atm_txt = f" | Hava: {weather} · iletim %{atm_tau * 100:.0f}{flag}"
 
         # Update HUD Bottom Bar
         if vis_km < 20.0 and atm_tau < 0.30:
-            self.hud_dori_var.set(f"⚠️ ATMOSFER · {dori_name.split(' (')[0]}")
+            self.hud_dori_var.set(f"▲ ATMOSFER · {dori_name.split(' (')[0]}")
             badge_color = _tok("danger")
         else:
-            self.hud_dori_var.set(f"🎯 {dori_name.split(' (')[0]}")
+            self.hud_dori_var.set(f"{dori_name.split(' (')[0]}")
         self.lbl_hud_dori.configure(bg=badge_color, fg=_ink_on(badge_color))
 
         if engine.is_thermal:
             self.hud_ppm_var.set(f"{target_px:.1f} px  (%{pct_h:.2f})  |  {ppm:.2f} PPM")
-            algo_status = "✅ Algoritma %1.5 Eşiği OK" if pct_h >= 1.5 else "⚠️ Algoritma %1.5 Eşiği Altında"
+            algo_status = "● Algoritma %1.5 Eşiği OK" if pct_h >= 1.5 else "▲ Algoritma %1.5 Eşiği Altında"
             self.hud_optics_var.set(
                 f"{algo_status}  •  {camera.name} | Lens: {focal_mm:.1f}mm | "
                 f"HFOV: {engine.hfov_deg:.1f}° | Hedef: {target_dist:.1f}m ({lateral_offset:+.1f}m){atm_txt} | {dori_desc}"

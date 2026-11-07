@@ -68,7 +68,7 @@ def _run_viewshed(project, terrain, default_mode: str):
             focal_mm_override=(float(pl["focal_mm"]) if pl.get("focal_mm") else None),
         ))
     for warn in placement_bounds_warnings(terrain, placements):
-        print(f"  ⚠ {warn}", file=sys.stderr)
+        print(f"  ▲ {warn}", file=sys.stderr)
     models = {p.camera.name for p in placements}
     rep_cam = placements[0].camera
     if len(models) > 1:

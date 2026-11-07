@@ -633,7 +633,7 @@ class DualViewCCTVDesignApp:
         row += 1
         self.entry_eff_px = self._add_entry(self.tab_camera, row, "Etkin piksel oranı k (cctv_iq):", "1.0")
         row += 1
-        StyledButton(self.tab_camera, text="📷 Eğik kenar → k ölç",
+        StyledButton(self.tab_camera, icon="camera", text="Eğik kenar → k ölç",
                      command=self._measure_edge_k, bootstyle="secondary-outline").grid(
             row=row, column=0, columnspan=2, sticky=tk.EW, pady=(0, 4))
         row += 1
@@ -659,11 +659,11 @@ class DualViewCCTVDesignApp:
             row=row, column=0, columnspan=2, sticky=tk.EW, pady=(4, 2)
         )
         row += 1
-        StyledButton(self.tab_camera, text="👁️ 3D Kamera Bakış Açısı", command=self.open_3d_view, bootstyle="primary-outline").grid(
+        StyledButton(self.tab_camera, icon="eye", text="3D Kamera Bakış Açısı", command=self.open_3d_view, bootstyle="primary-outline").grid(
             row=row, column=0, columnspan=2, sticky=tk.EW, pady=(2, 0)
         )
         row += 1
-        StyledButton(self.tab_camera, text="◈ Optik Tezgâhı (EN 62676-4)", command=self.open_optics_workbench, bootstyle="secondary-outline").grid(
+        StyledButton(self.tab_camera, icon="sliders-horizontal", text="Optik Tezgâhı (EN 62676-4)", command=self.open_optics_workbench, bootstyle="secondary-outline").grid(
             row=row, column=0, columnspan=2, sticky=tk.EW, pady=(2, 0)
         )
 
@@ -687,7 +687,7 @@ class DualViewCCTVDesignApp:
             widget.bind("<FocusOut>", lambda event: self.calculate())
 
     def _build_project_tab(self):
-        StyledButton(self.tab_project, text="👁️ 3D Kamera Bakış Açısı", command=self.open_3d_view, bootstyle="primary").pack(
+        StyledButton(self.tab_project, icon="eye", text="3D Kamera Bakış Açısı", command=self.open_3d_view, bootstyle="primary").pack(
             fill=tk.X, pady=(0, 8)
         )
         StyledButton(self.tab_project, text="Projeyi Kaydet", command=self.save_project, bootstyle="primary").pack(fill=tk.X, pady=(0, 6))
@@ -792,7 +792,7 @@ class DualViewCCTVDesignApp:
             fill=tk.X
         )
 
-        setup_frame = ttk.LabelFrame(self.tab_assistant, text=" 🎯 En İyi Kurulum (Odak + Tilt) ", padding=8)
+        setup_frame = ttk.LabelFrame(self.tab_assistant, text=" En İyi Kurulum (Odak + Tilt) ", padding=8)
         setup_frame.pack(fill=tk.X, pady=(0, 8))
         ttk.Label(
             setup_frame,
@@ -880,7 +880,7 @@ class DualViewCCTVDesignApp:
         )
         ttk.Label(self.tab_export, text=spec_note, wraplength=260, foreground=_tok("warn")).pack(fill=tk.X, pady=(6, 0))
 
-        lang_frame = ttk.LabelFrame(self.tab_export, text="🌐 " + _t("Dil / Language"), padding=6)
+        lang_frame = ttk.LabelFrame(self.tab_export, text=_t("Dil / Language"), padding=6)
         lang_frame.pack(fill=tk.X, pady=(12, 0))
         cur = get_language()
         self._lang_var = tk.StringVar(value=LANGUAGE_NAMES.get(cur, cur))
@@ -1041,7 +1041,7 @@ class DualViewCCTVDesignApp:
 
         ttk.Label(
             dialog,
-            text="🔒 Kamera Veritabanı Yönetici Erişimi",
+            text="Kamera Veritabanı Yönetici Erişimi",
             font=(FONT_UI, 10, "bold"),
             foreground=COLORS["accent"],
         ).pack(anchor=tk.W, padx=16, pady=(16, 4))
@@ -1428,7 +1428,7 @@ class DualViewCCTVDesignApp:
             mode = mode_label(result.mode)
             cam = result.camera
             if result.dead_zone_m < 0.01:
-                lines.append(f"{mode}: Ölü bölge yok ✓")
+                lines.append(f"{mode}: Ölü bölge yok ●")
                 continue
             lines.append(f"── {mode} ({result.focal_mm:g} mm) ──")
             lines.append(f"Ölü bölge mesafesi: {result.dead_zone_m:.1f} m")
@@ -1438,15 +1438,15 @@ class DualViewCCTVDesignApp:
             lines.append(f"Alt ışın açısı: {result.bottom_ray_deg:.1f}°")
             if result.dead_zone_covered_by:
                 cams = ", ".join(result.dead_zone_covered_by)
-                lines.append(f"✓ Kaplayan kamera(lar): {cams}")
+                lines.append(f"● Kaplayan kamera(lar): {cams}")
             elif len(self.cameras) > 1:
-                lines.append("✗ Bu ölü bölgeyi kapatan kamera yok!")
+                lines.append("■ Bu ölü bölgeyi kapatan kamera yok!")
             if result.dead_zone_m > 3:
                 ideal_tilt = math.degrees(math.atan(result.vertical_drop_m / 3.0))
                 vfov_half = result.vfov_deg / 2
                 suggested_tilt = max(ideal_tilt - vfov_half, 5.0)
                 lines.append(
-                    f"💡 ≤3 m ölü bölge için tilt ≈ {suggested_tilt:.0f}° "
+                    f"≤3 m ölü bölge için tilt ≈ {suggested_tilt:.0f}° "
                     f"veya yükseklik ≤ {cam.target_height_m + 3.0 * math.tan(math.radians(result.bottom_ray_deg)):.1f} m"
                 )
         self.dead_zone_var.set("\n".join(lines))
@@ -1722,7 +1722,7 @@ class DualViewCCTVDesignApp:
             )
         else:
             text = (
-                f"⚠ Lens yetersiz — gereken odak {focal_required:.1f} mm, "
+                f"▲ Lens yetersiz — gereken odak {focal_required:.1f} mm, "
                 f"kameranın aralığı {camera.focal_min_mm:g}-{camera.focal_max_mm:g} mm. "
                 f"En yakın ayar: {focal_used:.1f} mm / tilt {tilt:.1f}° "
                 f"({distance:.1f} m'de yalnız {ppm:.0f} px/m sağlanır, hedef {level.ppm:g} px/m)."

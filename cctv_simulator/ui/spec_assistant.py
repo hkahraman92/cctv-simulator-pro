@@ -133,9 +133,9 @@ class SpecAssistantWindow:
                          bootstyle="secondary-outline"),
             StyledButton(export_bar, text="Matrix Excel (.xlsx) Kaydet", command=self.export_compliance_excel,
                          bootstyle="secondary-outline"),
-            StyledButton(export_bar, text="📄 EN 62676-4 Uygunluk Beyanı", command=self.export_compliance_statement,
+            StyledButton(export_bar, icon="file-text", text="EN 62676-4 Uygunluk Beyanı", command=self.export_compliance_statement,
                          bootstyle="secondary-outline"),
-            StyledButton(export_bar, text="🧠 Eğitim Verisi Dışa Aktar (.jsonl)", command=self.export_training_data,
+            StyledButton(export_bar, icon="brain", text="Eğitim Verisi Dışa Aktar (.jsonl)", command=self.export_training_data,
                          bootstyle="secondary-outline"),
         ], padx=2, pady=2, expand=True)
 
@@ -516,7 +516,7 @@ class SpecAssistantWindow:
             prefix = f"[{clause}] " if clause and clause != "—" else ""
             suffix = f"  ·({kind})" if kind else ""
             if row.get("user_status"):
-                suffix += f"  ✎ {row.get('user_note', 'elle geçersiz kılındı')}"
+                suffix += f"  {row.get('user_note', 'elle geçersiz kılındı')}"
             status_disp = eff_status + (f" ·%{conf * 100:.0f}" if isinstance(conf, (int, float)) else "")
             iid = self.compliance_tree.insert(
                 "",

@@ -82,7 +82,7 @@ class CameraDatabaseWindow:
 
         ttk.Label(
             dialog,
-            text="🔑 Yönetici Şifresi Değiştirme",
+            text="Yönetici Şifresi Değiştirme",
             font=("Segoe UI", 10, "bold"),
             foreground=COLORS["accent"],
         ).pack(anchor=tk.W, padx=16, pady=(16, 6))
@@ -181,7 +181,7 @@ class CameraDatabaseWindow:
         flow_layout(top_btns, [
             StyledButton(top_btns, text="Aktif Kameradan Yeni Kayıt Aç", command=self._new_from_active,
                          bootstyle="info-outline"),
-            StyledButton(top_btns, text="🔑 Şifre Değiştir", command=self._change_admin_password,
+            StyledButton(top_btns, icon="key-round", text="Şifre Değiştir", command=self._change_admin_password,
                          bootstyle="secondary-outline"),
         ], justify="right")
         wrap_label(ttk.Label(right, textvariable=self.status_var, foreground="#263238")).pack(
@@ -255,7 +255,7 @@ class CameraDatabaseWindow:
         entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
         btn = StyledButton(
             container,
-            text="Çoklu Seç (✓)",
+            text="Çoklu Seç (●)",
             command=lambda: self._open_multi_select_dialog(key, label, entry, options),
             bootstyle="info-outline",
         )

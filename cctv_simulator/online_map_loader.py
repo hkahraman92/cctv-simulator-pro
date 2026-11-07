@@ -62,7 +62,7 @@ PRESET_LOCATIONS: Dict[str, Tuple[float, float, str]] = {
 
 TILE_SERVERS: Dict[str, Dict] = {
     "esri": {
-        "name": "🛰️ Esri World Imagery (Yüksek Çözünürlüklü Gerçek Uydu)",
+        "name": "Esri World Imagery (Yüksek Çözünürlüklü Gerçek Uydu)",
         # NOTE the axis order: this endpoint is /tile/{z}/{y}/{x}, not {z}/{x}/{y}.
         "url": "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         "ext": "jpg",
@@ -71,7 +71,7 @@ TILE_SERVERS: Dict[str, Dict] = {
         "attribution": "Kaynak: Esri, Maxar, Earthstar Geographics, GIS User Community",
     },
     "osm": {
-        "name": "🗺️ OpenStreetMap (Cadde, Bina ve Tesis Planı)",
+        "name": "OpenStreetMap (Cadde, Bina ve Tesis Planı)",
         "url": "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
         "ext": "png",
         # OSM tile usage policy: at most 2 concurrent connections.
@@ -80,7 +80,7 @@ TILE_SERVERS: Dict[str, Dict] = {
         "attribution": "© OpenStreetMap katkıda bulunanları",
     },
     "opentopo": {
-        "name": "⛰️ OpenTopoMap (Topoğrafik Kabartma ve Eşyükselti)",
+        "name": "OpenTopoMap (Topoğrafik Kabartma ve Eşyükselti)",
         "url": "https://tile.opentopomap.org/{z}/{x}/{y}.png",
         "ext": "png",
         "max_workers": 2,
@@ -589,7 +589,7 @@ def _representative_terrain(center_lat: float, center_lon: float,
     return TerrainData(
         z_grid=(base + relief).astype(np.float32),
         cell_size_m=float(width_m) / float(grid_size),
-        name="⚠️ TEMSİLİ ARAZİ - ölçüm değildir",
+        name="▲ TEMSİLİ ARAZİ - ölçüm değildir",
         lat_center=center_lat,
         lon_center=center_lon,
         is_measured=False,
