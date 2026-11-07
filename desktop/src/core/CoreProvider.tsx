@@ -2,9 +2,11 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { api, type Api } from "./api";
 import { RpcClient, type CoreState } from "./rpc";
 import { defaultTransport } from "./tauriTransport";
+import { terrainApi, type TerrainApi } from "./terrainApi";
 
 interface CoreCtx {
   api: Api;
+  terrain: TerrainApi;
   rpc: RpcClient;
   state: CoreState;
   logs: string[];
@@ -28,7 +30,8 @@ export function CoreProvider({ children }: { children: ReactNode }) {
     };
   }, [rpc]);
 
-  const value = useMemo(() => ({ api: api(rpc), rpc, state, logs }), [rpc, state, logs]);
+  const apis = useMemo(() => ({ api: api(rpc), terrain: terrainApi(rpc) }), [rpc]);
+  const value = useMemo(() => ({ ...apis, rpc, state, logs }), [apis, rpc, state, logs]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 

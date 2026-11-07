@@ -59,7 +59,8 @@ from .components import glass_under, stack_lines
 from .icons import icon_image
 from ..ptz_animation import SweepPlayback, sight_profile
 from .. import surface_obstacles as _obs
-from ..raster_smooth import clip_to_wedge, smooth_overlay
+from .. import map_render as _map_render
+from ..raster_smooth import smooth_overlay
 from ..theme import (COLORS, FONT_MONO, FONT_UI, StyledButton, dpi_scale, fit_and_center_window,
                      flow_layout, wrap_label, make_scrollable)
 from ..viewshed_3d import (
@@ -123,49 +124,13 @@ _PATROL_SPANS = [("360° sürekli dönüş", 360.0),
                  ("İzlenen tarafa 90° sektör", 90.0)]
 _PATROL_SPAN_BY_LABEL = dict(_PATROL_SPANS)
 
-# Multi-camera / PTZ map layers: (lo, hi, RGBA, legend text) bands, lo <= v < hi.
-# The overlay painter and the on-map legend both read these, so the legend
-# can never describe colours the map does not use.
-_INF = float("inf")
-_LAYER_BANDS = {
-    "dori": ("BİRLEŞİK DORI", (
-        (ZONE_IDENT, ZONE_IDENT + 1, _rgba("dori-identify", 185), "Teşhis ≥ 250 px/m"),
-        (ZONE_RECOG, ZONE_RECOG + 1, _rgba("dori-recognize", 175), "Tanıma ≥ 125 px/m"),
-        (ZONE_OBSERVE, ZONE_OBSERVE + 1, _rgba("dori-observe", 165), "Gözlem ≥ 62,5 px/m"),
-        (ZONE_DETECT, ZONE_DETECT + 1, _rgba("dori-detect", 160), "Algılama ≥ 25 px/m"),
-        (ZONE_OCCLUDED, ZONE_OCCLUDED + 1, _rgba("bg-0", 200), "Kör nokta (arazi engeli)"))),
-    "overlap": ("YEDEKLİLİK (fiziksel kamera)", (
-        (1, 2, _rgba("warn", 115), "1 kamera (yedeksiz)"),
-        (2, 3, _rgba("dori-observe", 130), "2 kamera"),
-        (3, _INF, _rgba("dori-identify", 140), "≥ 3 kamera"))),
-    "revisit": ("REVİZİT — en uzun izlenmeyen süre", (
-        (-_INF, 10, _rgba("dori-identify", 140), "< 10 sn"),
-        (10, 30, _rgba("dori-observe", 130), "10–30 sn"),
-        (30, 60, _rgba("warn", 120), "30–60 sn"),
-        (60, _INF, _rgba("danger", 120), "≥ 60 sn"))),
-    "cue": ("TEPKİ — alarm → teşhis süresi", (
-        (-_INF, 3, _rgba("dori-identify", 140), "< 3 sn"),
-        (3, 6, _rgba("dori-observe", 130), "3–6 sn"),
-        (6, 10, _rgba("warn", 125), "6–10 sn"),
-        (10, _INF, _rgba("danger", 125), "≥ 10 sn"))),
-    "envelope": ("ZARF — tüm odaklarda en iyi DORI (eşzamanlı değil)", (
-        (ZONE_IDENT, ZONE_IDENT + 1, _rgba("dori-identify", 185), "Teşhis ≥ 250 px/m"),
-        (ZONE_RECOG, ZONE_RECOG + 1, _rgba("dori-recognize", 175), "Tanıma ≥ 125 px/m"),
-        (ZONE_OBSERVE, ZONE_OBSERVE + 1, _rgba("dori-observe", 165), "Gözlem ≥ 62,5 px/m"),
-        (ZONE_DETECT, ZONE_DETECT + 1, _rgba("dori-detect", 160), "Algılama ≥ 25 px/m"))),
-    "fused": ("ALGILAMA: SABİT + PTZ", (
-        (2, 3, _rgba("dori-identify", 140), "Sürekli — sabit kamera"),
-        (1, 2, _rgba("warn", 125), "Aralıklı — yalnız PTZ devriyesi"))),
-}
+# Layer colour bands live in map_render (shared with the core service).
+_LAYER_BANDS = _map_render.LAYER_BANDS
 _GLIMPSE_RGBA = _rgba("steel", 110)
 _GLIMPSE_LABEL = "Yalnız bakış (sayılmayacak kadar hızlı)"
 
 
-def _paint_bands(ov, grid, bands, mask=None):
-    """Paint ``lo <= grid < hi`` cells (finite only) in each band's RGBA, in order."""
-    ok = np.isfinite(grid) if mask is None else mask
-    for lo, hi, rgba, _ in bands:
-        ov[ok & (grid >= lo) & (grid < hi)] = rgba
+_paint_bands = _map_render.paint_bands
 _WATCH_SIDE_TO_LABEL = {v: k for k, v in _WATCH_SIDE_BY_LABEL.items()}
 
 
@@ -1658,10 +1623,7 @@ class TerrainViewshedWindow:
         reported gain is the engine's, not the optimiser's estimate."""
         from dataclasses import replace as _replace
 
-        from ..calculations import camera_optics
-        from ..focal_optimizer import LEVEL_NAME, fence_roi
-        from ..perimeter_ptz import plan_placements
-        from ..viewshed_3d import calculate_multi_camera_viewshed
+        from ..focal_optimizer import LEVEL_NAME, apply_layout, band_area, fence_roi
         res = getattr(self, "_layout_result", None)
         plan = self.perimeter_plan
         if res is None or plan is None or getattr(self, "_layout_plan", None) is not plan:
@@ -1669,48 +1631,27 @@ class TerrainViewshedWindow:
             return
         target_ppm = _PERIMETER_PPM_BY_LABEL.get(self.target_ppm_var.get(), 25.0)
         cam_model = self.current_camera
-        new_cams = []
-        for cam, ch in zip(plan.placed_cameras, [c for c in res.choices if not c.ptz]):
-            if not ch.changed:
-                new_cams.append(cam)
-                continue
-            slant = camera_optics(cam_model, ch.focal_mm).distance_for_ppm(target_ppm)
-            new_cams.append(_replace(
-                cam, focal_mm=round(ch.focal_mm, 2), tilt_deg=round(ch.tilt_deg, 1),
-                pan_deg=round(ch.pan_deg % 360.0, 1), hfov_deg=round(ch.hfov_deg, 1),
-                vfov_deg=round(ch.vfov_deg, 1),
-                effective_range_m=round(math.sqrt(max(slant ** 2 - cam.mast_height_m ** 2, 1.0)), 1)))
-        old_plan = _replace(plan, placed_cameras=list(plan.placed_cameras))
-        new_plan = _replace(plan, placed_cameras=new_cams)
         terrain, level = self.terrain, res.level
         roi = fence_roi(terrain, plan.fence_points, self.fence_closed_var.get())
         weather = self.weather_var.get()
         vis = WEATHER_PRESETS.get(weather, 40.0)
-
-        from ..focal_optimizer import LEVEL_PPM, MAX_RANGE_CAP_M
-
-        def full_reach(pl):
-            # The plan caps each pole at its fence-target range (e.g. 40 px/m);
-            # scoring a DORI level needs that level's own reach, or the engine
-            # and the optimiser answer different questions.
-            f = pl.focal_mm_override or cam_model.focal_min_mm
-            slant = camera_optics(cam_model, f).distance_for_ppm(LEVEL_PPM[level])
-            return _replace(pl, max_range_m=min(max(pl.max_range_m, slant), MAX_RANGE_CAP_M))
+        old_plan = _replace(plan, placed_cameras=list(plan.placed_cameras))
+        new_plan = apply_layout(plan, res, cam_model, target_ppm, terrain=terrain,
+                                visibility_km=vis, weather=weather)
+        new_cams = new_plan.placed_cameras
 
         def compute():
-            def band(p):
-                mv = calculate_multi_camera_viewshed(
-                    terrain, [full_reach(pl) for pl in plan_placements(p, cam_model)],
-                    visibility_km=vis, weather=weather)
-                inside = roi if roi is not None else np.ones(mv.dori_grid.shape, bool)
-                return mv, float(((mv.dori_grid >= level) & inside).sum()) * terrain.cell_size_m ** 2
-            return band(old_plan), band(new_plan)
+            return (band_area(terrain, old_plan, cam_model, roi, level, visibility_km=vis, weather=weather),
+                    band_area(terrain, new_plan, cam_model, roi, level, visibility_km=vis, weather=weather))
 
         def done(out):
             (_mv0, a0), (mv1, a1) = out
             if self.perimeter_plan is not plan:
                 return
             plan.placed_cameras[:] = new_cams
+            # the fence-line gaps describe the applied lenses now, not the planner's
+            plan.gaps[:] = new_plan.gaps
+            plan.coverage_percentage = new_plan.coverage_percentage
             self._layout_result = None
             self._coverage_grid = None
             self._multi_vs = mv1
@@ -1866,27 +1807,7 @@ class TerrainViewshedWindow:
         cached = getattr(self, "_obs_layer_cache", None)
         if cached is not None and cached[0] == key:
             return Image.alpha_composite(img.convert("RGBA"), cached[1])
-        h = np.flipud(t.obstacle_grid)
-        k = np.flipud(t.obstacle_kind) if t.obstacle_kind is not None else (h > 0).astype(np.uint8)
-        ov = np.zeros(h.shape + (4,), np.uint8)
-        bld = ((k == _obs.KIND_BUILDING) | (k == _obs.KIND_SURFACE)) & (h > 0)
-        veg = (k == _obs.KIND_VEGETATION) & (h > 0)
-        ov[bld] = _rgba("building", 0)
-        if photo:
-            # constant alpha per kind: a handful of colours, so the layer can
-            # be drawn smoothed (raster_smooth) instead of in cell squares
-            ov[bld] = _rgba("building", 70)
-            ov[veg] = _rgba("vegetation", 70)
-            # footprint edge: a cell whose 4-neighbour is not the same kind
-            edge = np.zeros_like(bld)
-            for axis, shift in ((0, 1), (0, -1), (1, 1), (1, -1)):
-                edge |= bld & ~np.roll(bld, shift, axis=axis)
-            ov[edge] = _rgba("building", 150)
-        else:
-            # taller = more opaque, in 10 m steps (few classes -> smoothable)
-            ov[..., 3][bld] = np.clip(110 + (h[bld] // 10.0) * 30.0, 110, 230).astype(np.uint8)
-            ov[veg] = _rgba("vegetation", 150)
-        layer = smooth_overlay(ov, img.size)
+        layer = _map_render.obstacle_layer(t, img.size, photo)
         self._obs_layer_cache = (key, layer)
         return Image.alpha_composite(img.convert("RGBA"), layer)
 
@@ -3693,78 +3614,9 @@ class TerrainViewshedWindow:
         cached = getattr(self, "_base_map_cache", None)
         if cached is not None and cached[0] == key:
             return cached[1]
-        rows, cols = self.terrain.rows, self.terrain.cols
-        z_grid = self.terrain.z_grid            # surface: hillshade shows buildings too
-        # Colour ramp from the bare ground: with buildings in it, one 76 m tower
-        # stretched the ramp and the whole ground relief went one flat green.
-        z_col = self.terrain.ground_z_grid if self.terrain.has_obstacles else z_grid
-        z_min, z_max = float(np.nanmin(z_col)), float(np.nanmax(z_col))
-        z_range = max(z_max - z_min, 1.0)
-        norm_z = np.clip((z_col - z_min) / z_range, 0.0, 1.0)
-
-        # 1. Base Hillshade Matrix
-        dz_dx, dz_dy = np.gradient(z_grid)
-        slope = np.hypot(dz_dx, dz_dy)
-        aspect = np.arctan2(-dz_dy, -dz_dx)
-        sun_azimuth = np.radians(315.0)
-        sun_altitude = np.radians(45.0)
-        shaded = np.sin(sun_altitude) + np.cos(sun_altitude) * slope * 0.08 * np.cos(sun_azimuth - aspect)
-        shaded = np.clip(shaded, 0.45, 1.35)
-
-        layer_mode = self.map_layer_mode_var.get()
-        sat_opacity = self.satellite_opacity_var.get() / 100.0
-
-        # Build / Fetch Satellite Texture at Full High-Resolution
-        if self.user_satellite_img is not None:
-            base_w = self.user_satellite_img.width
-            base_h = self.user_satellite_img.height
-
-            # Generate North-Up Elevation Hillshade Texture
-            r_elev = np.clip((norm_z * 240 + 20) * shaded, 0, 255).astype(np.uint8)
-            g_elev = np.clip(((1.0 - np.abs(norm_z - 0.4) * 1.5) * 180 + 35) * shaded, 0, 255).astype(np.uint8)
-            b_elev = np.clip((norm_z * 160 + 25) * shaded, 0, 255).astype(np.uint8)
-            elev_arr = np.dstack((r_elev, g_elev, b_elev))
-            elev_img = Image.fromarray(np.flipud(elev_arr), mode="RGB").resize((base_w, base_h), Image.Resampling.BILINEAR).convert("RGBA")
-
-            if layer_mode == "satellite":
-                full_map_img = self.user_satellite_img.copy()
-            elif layer_mode == "elevation":
-                full_map_img = elev_img
-            else:
-                # Hybrid = the photo carrying the relief: multiplied by the
-                # (surface) hillshade, so ridges and building blocks read in
-                # the photo itself; the slider then blends in the elevation
-                # colours. It used to be a plain photo/ramp blend that at 80 %
-                # looked identical to "Uydu".
-                sat_rgba = self.user_satellite_img.convert("RGBA")
-                shade = Image.fromarray(np.flipud(np.clip(shaded, 0.55, 1.3)).astype(np.float32), mode="F")
-                shade = np.asarray(shade.resize((base_w, base_h), Image.Resampling.BILINEAR))
-                arr = np.asarray(sat_rgba, dtype=np.float32)
-                arr[..., :3] = np.clip(arr[..., :3] * shade[..., None], 0, 255)
-                relief = Image.fromarray(arr.astype(np.uint8), mode="RGBA")
-                full_map_img = Image.blend(relief, elev_img, 1.0 - sat_opacity)
-
-        else:
-            # Procedural Photorealistic Satellite Orthophoto Generator (Render at sharp 800x800)
-            base_w, base_h = max(cols * 4, 800), max(rows * 4, 800)
-            r_sat = np.clip((norm_z * 180 + 70) * shaded, 0, 255).astype(np.uint8)
-            g_sat = np.clip(((1.0 - norm_z) * 130 + 65) * shaded, 0, 255).astype(np.uint8)
-            b_sat = np.clip((norm_z * 100 + 45) * shaded, 0, 255).astype(np.uint8)
-            sat_arr = np.dstack((r_sat, g_sat, b_sat))
-
-            r_elev = np.clip((norm_z * 240 + 20) * shaded, 0, 255).astype(np.uint8)
-            g_elev = np.clip(((1.0 - np.abs(norm_z - 0.4) * 1.5) * 180 + 35) * shaded, 0, 255).astype(np.uint8)
-            b_elev = np.clip((norm_z * 160 + 25) * shaded, 0, 255).astype(np.uint8)
-            elev_arr = np.dstack((r_elev, g_elev, b_elev))
-
-            if layer_mode == "satellite":
-                comp = sat_arr
-            elif layer_mode == "elevation":
-                comp = elev_arr
-            else:
-                comp = np.clip(sat_arr * sat_opacity + elev_arr * (1.0 - sat_opacity), 0, 255).astype(np.uint8)
-
-            full_map_img = Image.fromarray(np.flipud(comp), mode="RGB").resize((base_w, base_h), Image.Resampling.BILINEAR).convert("RGBA")
+        full_map_img = _map_render.relief_image(
+            self.terrain, self.map_layer_mode_var.get(), self.user_satellite_img,
+            self.satellite_opacity_var.get() / 100.0)
 
         # 2. Composite DORI Overlay on full terrain grid (North-Up)
         # Buildings / trees: hillshade above already relieves them (z_grid is
@@ -3791,21 +3643,13 @@ class TerrainViewshedWindow:
         if (self._anim is None and self.planner_mode_var.get() == "single"
                 and self.show_dori_var.get() and self.result is not None):
             if self.result.dori_grid.shape == (rows, cols):
-                dori = np.flipud(self.result.dori_grid)
-                dori_overlay = np.zeros((rows, cols, 4), dtype=np.uint8)
-                _paint_bands(dori_overlay, dori, _LAYER_BANDS["dori"][1], mask=True)
-
-                # Smoothed for display (raster_smooth): cell squares -> clean edges.
-                dori_img = smooth_overlay(dori_overlay, (full_map_img.width, full_map_img.height))
-                # ...and cut to the optical cone, so the fan's sides are the
-                # FOV lines, not the cells they cross.
-                t_ = self.terrain
-                sx_ = full_map_img.width / t_.width_m
-                sy_ = full_map_img.height / t_.height_m
-                apex = ((self.cam_x_var.get() - t_.origin_x) * sx_,
-                        (t_.height_m - (self.cam_y_var.get() - t_.origin_y)) * sy_)
-                dori_img = clip_to_wedge(dori_img, apex, (sx_, sy_), self.pan_deg_var.get(),
-                                         self.result.hfov_deg, self.result.max_range_m + t_.cell_size_m)
+                # Smoothed for display (raster_smooth) and cut to the optical
+                # cone, so the fan's sides are the FOV lines, not the cells.
+                dori_img = _map_render.single_view_overlay(
+                    self.terrain, self.result.dori_grid, (full_map_img.width, full_map_img.height),
+                    cam_x_m=self.cam_x_var.get(), cam_y_m=self.cam_y_var.get(),
+                    pan_deg=self.pan_deg_var.get(), hfov_deg=self.result.hfov_deg,
+                    max_range_m=self.result.max_range_m)
                 full_map_img = Image.alpha_composite(full_map_img, dori_img)
 
         # 2b. Multi-camera unified viewshed / PTZ revisit overlay

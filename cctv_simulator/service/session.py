@@ -1,0 +1,73 @@
+"""Per-process state the shell refers to by id: loaded terrains, last results.
+
+Grids stay in the core; the shell only gets summaries and pictures. A terrain
+carries both its bare-earth and its surface version (buildings / trees) so the
+"obstacles block the view" switch is a lookup, not a recomputation.
+"""
+from __future__ import annotations
+
+import itertools
+import threading
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
+
+from .protocol import APP_ERROR, RpcError
+
+_MAX_TERRAINS = 4          # each holds full grids + an orthophoto; keep memory bounded
+
+
+@dataclass
+class TerrainEntry:
+    id: str
+    bare: Any                          # TerrainData, bare earth
+    photo: Any = None                  # PIL image (north-up) or None
+    surface: Any = None                # TerrainData with obstacles, or None
+    obstacle_layer: Any = None
+    label: str = ""
+    source: str = ""                   # procedural | region | geotiff | online
+    region_id: str = ""
+    attribution: str = ""
+    extra: Dict[str, Any] = field(default_factory=dict)
+    # last analysis results, for overlays / exports / follow-up calls
+    results: Dict[str, Any] = field(default_factory=dict)
+
+    def terrain(self, use_obstacles: bool = True):
+        return self.surface if (use_obstacles and self.surface is not None) else self.bare
+
+
+class Session:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._ids = itertools.count(1)
+        self._terrains: Dict[str, TerrainEntry] = {}
+
+    def add(self, entry_kwargs: Dict[str, Any]) -> TerrainEntry:
+        with self._lock:
+            tid = f"t{next(self._ids)}"
+            entry = TerrainEntry(id=tid, **entry_kwargs)
+            self._terrains[tid] = entry
+            while len(self._terrains) > _MAX_TERRAINS:          # drop the oldest
+                self._terrains.pop(next(iter(self._terrains)))
+            return entry
+
+    def get(self, tid: Any) -> TerrainEntry:
+        with self._lock:
+            entry = self._terrains.get(tid) if isinstance(tid, str) else None
+        if entry is None:
+            raise RpcError(APP_ERROR, "Arazi oturumda yok (süresi dolmuş olabilir); yeniden yükleyin.",
+                           {"terrain_id": tid})
+        return entry
+
+    def drop(self, tid: str) -> None:
+        with self._lock:
+            self._terrains.pop(tid, None)
+
+
+SESSION = Session()
+
+
+def reset() -> Optional[Session]:
+    """Tests: a fresh session."""
+    global SESSION
+    SESSION = Session()
+    return SESSION

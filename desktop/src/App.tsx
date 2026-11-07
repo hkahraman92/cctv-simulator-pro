@@ -5,6 +5,7 @@ import {
 import { CoreProvider, useCore } from "./core/CoreProvider";
 import Workspace from "./pages/Workspace";
 import Library from "./pages/Library";
+import Terrain from "./pages/Terrain";
 import NotMigrated from "./pages/NotMigrated";
 
 type Page = "workspace" | "optics" | "view3d" | "terrain" | "library" | "spec" | "reports";
@@ -78,7 +79,8 @@ function Shell() {
         <main className="min-w-0 flex-1 overflow-auto">
           {page === "workspace" && <Workspace onStatus={setStatus} />}
           {page === "library" && <Library />}
-          {page !== "workspace" && page !== "library" && <NotMigrated title={current.label} />}
+          {page === "terrain" && <Terrain />}
+          {!["workspace", "library", "terrain"].includes(page) && <NotMigrated title={current.label} />}
         </main>
       </div>
 

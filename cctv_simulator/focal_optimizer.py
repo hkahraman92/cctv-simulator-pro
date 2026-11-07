@@ -423,3 +423,55 @@ def mounts_from_plan(plan, camera: CameraConfig, ptz_camera: Optional[CameraConf
                          tilt_deg=p.tilt_deg, ptz=True, label=f"PTZ {p.pole_id}")
                    for p in getattr(plan, "ptz_cameras", [])]
     return mounts
+
+
+def apply_layout(plan, layout: LayoutResult, camera: CameraConfig, target_ppm: float, *,
+                 terrain: Optional[TerrainData] = None, visibility_km: float = 40.0, weather: str = ""):
+    """The plan with ``layout``'s per-pole focal / tilt / pan applied (a new
+    PerimeterPlanResult). The fence-line gap analysis is re-run for the new
+    settings -- left as it was, it kept describing the planner's lenses."""
+    from dataclasses import replace
+
+    from . import atmosphere as _atm
+    from .perimeter_planner import _analyse_fence_coverage
+
+    new_cams = []
+    for cam, ch in zip(plan.placed_cameras, [c for c in layout.choices if not c.ptz]):
+        if not ch.changed:
+            new_cams.append(cam)
+            continue
+        slant = camera_optics(camera, ch.focal_mm).distance_for_ppm(target_ppm)
+        new_cams.append(replace(
+            cam, focal_mm=round(ch.focal_mm, 2), tilt_deg=round(ch.tilt_deg, 1),
+            pan_deg=round(ch.pan_deg % 360.0, 1), hfov_deg=round(ch.hfov_deg, 1),
+            vfov_deg=round(ch.vfov_deg, 1),
+            effective_range_m=round(math.sqrt(max(slant ** 2 - cam.mast_height_m ** 2, 1.0)), 1)))
+    gaps, cov = _analyse_fence_coverage(
+        list(plan.fence_points), new_cams, visibility_km, weather,
+        _atm.band_for_camera(camera.sensor_name, camera.model_name), terrain=terrain)
+    return replace(plan, placed_cameras=new_cams, gaps=gaps, coverage_percentage=round(cov, 1))
+
+
+def band_area(terrain: TerrainData, plan, camera: CameraConfig, roi: Optional[np.ndarray], level: int, *,
+              visibility_km: float = 40.0, weather: str = ""):
+    """(MultiViewshedResult, m2 at >= ``level`` inside ``roi``) for a plan's
+    fixed poles through the AUTHORITATIVE multi-camera engine.
+
+    The plan caps each pole at its fence-target range (e.g. 40 px/m); scoring
+    a DORI level needs that level's own reach, or the engine and the
+    optimiser answer different questions (8.6 vs 15.4 ha was seen)."""
+    from dataclasses import replace
+
+    from .perimeter_ptz import plan_placements
+    from .viewshed_3d import calculate_multi_camera_viewshed
+
+    def full_reach(pl):
+        f = pl.focal_mm_override or camera.focal_min_mm
+        slant = camera_optics(camera, f).distance_for_ppm(LEVEL_PPM[level])
+        return replace(pl, max_range_m=min(max(pl.max_range_m, slant), MAX_RANGE_CAP_M))
+
+    mv = calculate_multi_camera_viewshed(terrain, [full_reach(pl) for pl in plan_placements(plan, camera)],
+                                         visibility_km=visibility_km, weather=weather)
+    inside = roi if roi is not None else np.ones(mv.dori_grid.shape, bool)
+    return mv, float(((mv.dori_grid >= level) & inside).sum()) * terrain.cell_size_m ** 2
+

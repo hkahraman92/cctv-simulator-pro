@@ -1,9 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Main window: events from the core + the two core commands only",
+  "description": "Main window: core events + core commands, native open/save dialogs only (paths go to the core)",
   "windows": ["main"],
   "permissions": [
-    "core:default"
+    "core:default",
+    "dialog:allow-open",
+    "dialog:allow-save"
   ]
 }

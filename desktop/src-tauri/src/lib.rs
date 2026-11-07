@@ -161,6 +161,7 @@ fn core_restart(app: AppHandle, core: State<'_, Core>) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(Core::default())
         .setup(|app| {
             let handle = app.handle().clone();
