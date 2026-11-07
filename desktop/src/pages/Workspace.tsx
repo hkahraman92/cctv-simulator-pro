@@ -1,25 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Camera, Plus, Trash2 } from "lucide-react";
-import { DEFAULT_CAMERA, DORI, type CameraConfig, type ModelSummary, type OpticResult } from "../core/api";
+import { DORI, type ModelSummary } from "../core/api";
+import { useProject } from "../core/project";
 import { useCoalesced, useCore } from "../core/CoreProvider";
 import { Button, Panel, Slider, Tile, fmt } from "../components/ui";
-
-interface Site {
-  camera: CameraConfig;
-  focal: number;
-}
-
-const newSite = (n: number): Site => ({
-  camera: { ...DEFAULT_CAMERA, name: `Kamera ${n}` },
-  focal: DEFAULT_CAMERA.focal_min_mm,
-});
+import PlanView, { atGeomLimit } from "../components/PlanView";
 
 export default function Workspace({ onStatus }: { onStatus: (s: string) => void }) {
   const { api, state } = useCore();
-  const [sites, setSites] = useState<Site[]>([newSite(1)]);
-  const [sel, setSel] = useState(0);
+  const { sites, selected: sel, site, select: setSel, add, remove, update, replaceCamera } = useProject();
   const [models, setModels] = useState<ModelSummary[]>([]);
-  const site = sites[Math.min(sel, sites.length - 1)];
 
   useEffect(() => {
     if (state !== "ready") return;
@@ -34,19 +24,9 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
     if (res.ms !== undefined) onStatus(`Hesap ${fmt(res.ms, 0)} ms`);
   }, [res.ms, onStatus]);
 
-  const update = (patch: Partial<CameraConfig>, focal?: number) =>
-    setSites((all) =>
-      all.map((s, i) => {
-        if (i !== sel) return s;
-        const camera = { ...s.camera, ...patch };
-        const f = focal ?? Math.min(Math.max(s.focal, camera.focal_min_mm), camera.focal_max_mm);
-        return { camera, focal: f };
-      }),
-    );
-
   const applyModel = async (name: string) => {
     const { camera } = await api.cameraFor(name, site.camera);
-    setSites((all) => all.map((s, i) => (i === sel ? { camera, focal: camera.focal_min_mm } : s)));
+    replaceCamera(camera);
   };
 
   const c = site.camera;
@@ -58,7 +38,7 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
       <Panel title="Kameralar" icon={<Camera size={16} className="text-secondary" />} className="w-[220px] shrink-0"
         right={
           <button type="button" aria-label="Kamera ekle" className="text-text-2 hover:text-primary"
-            onClick={() => { setSites((a) => [...a, newSite(a.length + 1)]); setSel(sites.length); }}>
+            onClick={add}>
             <Plus size={16} />
           </button>
         }>
@@ -74,7 +54,7 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
           ))}
         </ul>
         {sites.length > 1 && (
-          <Button className="mt-2 w-full" onClick={() => { setSites((a) => a.filter((_, i) => i !== sel)); setSel(0); }}>
+          <Button className="mt-2 w-full" onClick={() => remove(sel)}>
             <Trash2 size={14} /> Seçiliyi Sil
           </Button>
         )}
@@ -150,56 +130,4 @@ function Empty({ state, error }: { state: string; error?: string }) {
       {error ? <span className="text-danger">{error}</span> : state === "down" ? "Çekirdeğe bağlı değil." : "Hesaplanıyor…"}
     </div>
   );
-}
-
-/** Top view drawn from engine numbers only: HFOV, dead zone, DORI distances. */
-function PlanView({ r }: { r: OpticResult }) {
-  const W = 520, H = 360, cx = W / 2, cy = H - 24;
-  const dists = DORI.map((d) => r.ground_distances[d.key] ?? r.max_geom_dist_m ?? 0);
-  const far = Math.max(...dists.filter((d) => Number.isFinite(d)), r.dead_zone_m + 1, 5);
-  const scale = (H - 48) / far;
-  const half = (Math.min(r.hfov_deg, 170) / 2) * (Math.PI / 180);
-  const wedge = (r0: number, r1: number) => {
-    const p = (rad: number, a: number) => `${cx + rad * Math.sin(a)} ${cy - rad * Math.cos(a)}`;
-    const a = r0 * scale, b = Math.max(r1 * scale, a);
-    return `M${p(a, -half)} L${p(b, -half)} A${b} ${b} 0 0 1 ${p(b, half)} L${p(a, half)} A${a} ${a} 0 0 0 ${p(a, -half)}Z`;
-  };
-  // Draw far-to-near so the better (nearer) level paints over the weaker one.
-  const bands = DORI.map((d, i) => ({ ...d, to: dists[i] })).reverse();
-  const step = niceStep(far);
-  const rings = Array.from({ length: Math.floor(far / step) }, (_, i) => (i + 1) * step);
-
-  return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="block h-auto w-full rounded bg-bg-2" role="img"
-      aria-label={`Kuş bakışı kapsama: yatay FOV ${fmt(r.hfov_deg)} derece, algılama ${fmt(dists[3])} m`}>
-      {rings.map((m) => (
-        <g key={m}>
-          <circle cx={cx} cy={cy} r={m * scale} fill="none" stroke="var(--color-line-soft)" />
-          <text x={cx - m * scale + 4} y={cy - 4} fill="var(--color-text-3)" fontSize="10" fontFamily="var(--font-mono)">{m} m</text>
-        </g>
-      ))}
-      {bands.map((b) => (
-        <path key={b.key} d={wedge(r.dead_zone_m, b.to)} fill={`var(--color-${b.tone})`} opacity={0.55} />
-      ))}
-      {r.dead_zone_m > 0.05 && (
-        <path d={wedge(0, r.dead_zone_m)} fill="var(--color-bg-0)" stroke="var(--color-warn)" strokeDasharray="4 3" opacity={0.9} />
-      )}
-      <circle cx={cx} cy={cy} r={6} fill="var(--color-primary)" stroke="var(--color-bg-0)" strokeWidth={2} />
-      <text x={cx + 10} y={cy + 4} fill="var(--color-text)" fontSize="11" fontFamily="var(--font-mono)">
-        {r.camera.name} · {fmt(r.camera.pole_height_m)} m
-      </text>
-    </svg>
-  );
-}
-
-/** The engine caps a level at the frame's top-edge ground distance (status "Geometrik limit"). */
-function atGeomLimit(r: OpticResult, key: string) {
-  const d = r.ground_distances[key];
-  return r.max_geom_dist_m != null && d != null && d === r.max_geom_dist_m;
-}
-
-function niceStep(far: number) {
-  const raw = far / 5;
-  const p = 10 ** Math.floor(Math.log10(raw));
-  return [1, 2, 5, 10].map((k) => k * p).find((s) => s >= raw) ?? p * 10;
 }

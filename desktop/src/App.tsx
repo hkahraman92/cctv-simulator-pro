@@ -6,6 +6,9 @@ import { CoreProvider, useCore } from "./core/CoreProvider";
 import Workspace from "./pages/Workspace";
 import Library from "./pages/Library";
 import Terrain from "./pages/Terrain";
+import Optics from "./pages/Optics";
+import View3D from "./pages/View3D";
+import { ProjectProvider } from "./core/project";
 import NotMigrated from "./pages/NotMigrated";
 
 type Page = "workspace" | "optics" | "view3d" | "terrain" | "library" | "spec" | "reports";
@@ -80,7 +83,9 @@ function Shell() {
           {page === "workspace" && <Workspace onStatus={setStatus} />}
           {page === "library" && <Library />}
           {page === "terrain" && <Terrain />}
-          {!["workspace", "library", "terrain"].includes(page) && <NotMigrated title={current.label} />}
+          {page === "optics" && <Optics />}
+          {page === "view3d" && <View3D />}
+          {!["workspace", "library", "terrain", "optics", "view3d"].includes(page) && <NotMigrated title={current.label} />}
         </main>
       </div>
 
@@ -97,7 +102,9 @@ function Shell() {
 export default function App() {
   return (
     <CoreProvider>
-      <Shell />
+      <ProjectProvider>
+        <Shell />
+      </ProjectProvider>
     </CoreProvider>
   );
 }

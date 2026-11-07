@@ -3,10 +3,12 @@ import { api, type Api } from "./api";
 import { RpcClient, type CoreState } from "./rpc";
 import { defaultTransport } from "./tauriTransport";
 import { terrainApi, type TerrainApi } from "./terrainApi";
+import { benchApi, type BenchApi } from "./benchApi";
 
 interface CoreCtx {
   api: Api;
   terrain: TerrainApi;
+  bench: BenchApi;
   rpc: RpcClient;
   state: CoreState;
   logs: string[];
@@ -30,7 +32,7 @@ export function CoreProvider({ children }: { children: ReactNode }) {
     };
   }, [rpc]);
 
-  const apis = useMemo(() => ({ api: api(rpc), terrain: terrainApi(rpc) }), [rpc]);
+  const apis = useMemo(() => ({ api: api(rpc), terrain: terrainApi(rpc), bench: benchApi(rpc) }), [rpc]);
   const value = useMemo(() => ({ ...apis, rpc, state, logs }), [apis, rpc, state, logs]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

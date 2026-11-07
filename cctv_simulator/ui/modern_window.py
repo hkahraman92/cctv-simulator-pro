@@ -29,7 +29,7 @@ from ..config import SENSOR_DIMS_MM, RESOLUTIONS
 from ..database import load_camera_library
 from ..models import CameraConfig, OpticResult
 from ..calculations import calculate_for_camera, ground_distance_for_ppm, ppm_at_distance
-from ..atmosphere import WEATHER_PRESETS, band_for_camera, usable_range_m
+from ..atmosphere import WEATHER_PRESETS
 from .. import design_tokens as _dt
 
 
@@ -1013,31 +1013,8 @@ class _WorkbenchBody:
         req_dist/req_ppm against the current camera/result/weather. The one
         place that decides pass/fail so the plot marker and the verdict card
         can't disagree (see _draw_requirement's BUGFIX note)."""
-        r = self.result
-        achieved = ppm_at_distance(r, req_dist)
-
-        weather = self.sel_weather.get()
-        vis_km = WEATHER_PRESETS.get(weather, 40.0)
-        atm_limit = float("inf")
-        if vis_km < 20.0:
-            band = band_for_camera(self.camera.sensor_name, self.camera.model_name)
-            atm_limit = usable_range_m(ground_distance_for_ppm(r, req_ppm), vis_km, band, weather)
-
-        reasons = []
-        if achieved < req_ppm:
-            reasons.append("piksel yoğunluğu yetersiz")
-        if req_dist > atm_limit:
-            reasons.append(f"atmosferik menzil aşıldı ({weather})")
-        if req_dist < r.dead_zone_m:
-            reasons.append("kör noktada")
-        if req_dist > r.max_geom_dist_m:
-            reasons.append("geometrik limit ötesinde")
-        if self.camera.ir_range_m > 0 and req_dist > self.camera.ir_range_m:
-            reasons.append("IR menzili dışında")
-        if self.camera.min_lux > 0.05 and (self.camera.ir_range_m <= 0
-                                           or req_dist > self.camera.ir_range_m):
-            reasons.append("düşük ışıkta yetersiz")
-        return achieved, atm_limit, reasons
+        from ..optics_bench import evaluate_requirement
+        return evaluate_requirement(self.camera, self.result, req_ppm, req_dist, self.sel_weather.get())
 
     def _update_cards(self, req_ppm: float, req_dist: float, achieved: float,
                       atm_limit: float, reasons: List[str]):
