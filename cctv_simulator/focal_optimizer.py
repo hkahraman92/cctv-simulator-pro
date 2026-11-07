@@ -409,3 +409,17 @@ def fence_roi(terrain: TerrainData, fence_points: Sequence[Tuple[float, float]],
     rows = terrain.origin_y + np.arange(terrain.rows) * terrain.cell_size_m
     mx, my = np.meshgrid(cols, rows)
     return _fence_band_mask(mx, my, pts, band_m)
+
+
+def mounts_from_plan(plan, camera: CameraConfig, ptz_camera: Optional[CameraConfig] = None,
+                     pan_search_deg: float = 0.0) -> List[Mount]:
+    """A perimeter plan's poles as optimiser mounts (current settings kept as
+    each mount's starting candidate); PTZ rows only if a PTZ model is given."""
+    mounts = [Mount(c.x_m, c.y_m, c.mast_height_m, camera, pan_deg=c.pan_deg, tilt_deg=c.tilt_deg,
+                    focal_mm=c.focal_mm, pan_search_deg=pan_search_deg, label=f"Direk {c.pole_id}")
+              for c in plan.placed_cameras]
+    if ptz_camera is not None:
+        mounts += [Mount(p.x_m, p.y_m, p.mast_height_m, ptz_camera, pan_deg=p.pan_deg,
+                         tilt_deg=p.tilt_deg, ptz=True, label=f"PTZ {p.pole_id}")
+                   for p in getattr(plan, "ptz_cameras", [])]
+    return mounts

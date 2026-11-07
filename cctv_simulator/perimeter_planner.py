@@ -184,7 +184,8 @@ def generate_perimeter_plan(terrain: TerrainData,
                             ptz_camera: Optional[CameraConfig] = None,
                             ptz_every_n: int = 0,
                             ptz_patrol_span_deg: float = 360.0,
-                            ptz_target_ppm: float = PPM_IDENT) -> PerimeterPlanResult:
+                            ptz_target_ppm: float = PPM_IDENT,
+                            spacing_m: Optional[float] = None) -> PerimeterPlanResult:
     """Places cameras along fence line ensuring continuous dead-zone overlapping coverage.
 
     ``line_mode`` picks what the poles actually watch — the three use cases
@@ -211,6 +212,10 @@ def generate_perimeter_plan(terrain: TerrainData,
     ``ptz_patrol_span_deg`` (360 = continuous rotation). The PTZ row's
     ``effective_range_m`` is its slew-to-cue reach: the ground distance where
     the longest focal still resolves ``ptz_target_ppm``.
+
+    ``spacing_m`` overrides the computed pole spacing (pole_optimizer searches
+    sparser layouts whose per-pole focal / tilt it then optimises). None =
+    the DORI spacing below, bit-identical to before.
     """
     if len(fence_points) < 2:
         return PerimeterPlanResult(
@@ -242,6 +247,8 @@ def generate_perimeter_plan(terrain: TerrainData,
         visibility_km=visibility_km,
         weather=weather,
     )
+    if spacing_m is not None:
+        optimal_spacing = max(float(spacing_m), 1.0)
 
     focal_mm = camera.focal_min_mm if lens_mode == "min" else camera.focal_max_mm
     optics = camera_optics(camera, focal_mm)
