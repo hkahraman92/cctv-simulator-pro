@@ -144,6 +144,33 @@ def test_optimize_in_place_never_loses_band_area_and_can_move_poles(hills):
     assert sum(moved) == r["moved"]
 
 
+def test_network_and_cost_of_the_current_plan(hills):
+    from cctv_simulator.network_plan import PriceBook, estimate_cost, plan_network
+
+    tid = hills["terrain_id"]
+    ok("perimeter.plan", terrain_id=tid, camera=CAM, fence=[[200, 600], [1000, 600]], closed=False, spacing_m=30)
+    r = ok("network.plan", terrain_id=tid, switch_ports=8, prices={"camera": 9000, "pole": 7000})
+    plan = session.SESSION.get(tid).results["plan"][0]
+    net = plan_network(plan)
+    assert len(r["network"]["switches"]) == len(net.switches) and r["network"]["copper_m"] == net.copper_m
+    assert r["cost"]["total"] == estimate_cost(plan, net, PriceBook(camera=9000, pole=7000)).total
+    assert "PoE switch (dış ortam)" in r["cost"]["unpriced"]
+    bad, _ = call("network.plan", terrain_id=tid, prices={"camera": -1})
+    assert bad["error"]["code"] == INVALID_PARAMS
+
+
+def test_compare_models_then_use_one(hills):
+    tid = hills["terrain_id"]
+    names = [m["name"] for m in ok("library.list")["models"] if not m["is_ptz"] and "Genel" in m["name"]][:2]
+    r = ok("perimeter.compare_models", terrain_id=tid, camera=CAM, models=names, fence=[[200, 600], [1000, 600]],
+           closed=False, goal_frac=0.5, level="detect")
+    assert [o["model_name"] for o in r["options"]] and set(o["model_name"] for o in r["options"]) == set(names)
+    first = r["options"][0]
+    used = ok("perimeter.compare_use", terrain_id=tid, camera=CAM, model_name=first["model_name"],
+              fence=[[200, 600], [1000, 600]], closed=False)
+    assert used["plan"]["pole_count"] == first["poles"]
+
+
 def test_focal_sweep_curve_is_wide_to_tele(hills):
     r = ok("focal.sweep", terrain_id=hills["terrain_id"], camera=CAM, x_m=600, y_m=600, mast_m=8,
            level="detect", n_focals=5)

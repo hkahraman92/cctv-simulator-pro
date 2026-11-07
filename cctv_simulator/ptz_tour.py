@@ -49,6 +49,8 @@ class PTZTour:
     slew_speed_deg_s: float = 90.0    # pan/tilt slew speed (deg/s)
     settle_s: float = 1.5            # stabilisation time after each move before dwell
     zoom_full_sweep_s: float = 3.0    # time for a full min->max optical zoom
+    # pan/tilt acceleration (deg/s^2); None = instant top speed (the original model)
+    slew_accel_deg_s2: Optional[float] = None
 
 
 def _preset_focal(preset: PTZPreset, camera: CameraConfig) -> float:
@@ -74,19 +76,39 @@ class PTZTourResult:
     preset_labels: List[str]
 
 
+def axis_time_s(angle_deg, speed_deg_s: float, accel_deg_s2: Optional[float] = None):
+    """Seconds to turn ``angle_deg`` with a trapezoidal speed profile: accelerate
+    at ``accel`` to ``speed``, cruise, decelerate. A short move never reaches
+    top speed (triangular profile: 2·sqrt(d/a)). ``accel`` None = instant top
+    speed, d / v (the original model, bit-identical)."""
+    d = np.abs(np.asarray(angle_deg, dtype=float))
+    v = max(float(speed_deg_s), 1.0)
+    if accel_deg_s2 is None or accel_deg_s2 <= 0:
+        return d / v
+    a = float(accel_deg_s2)
+    ramp = v * v / a                       # angle spent speeding up + slowing down
+    return np.where(d >= ramp, d / v + v / a, 2.0 * np.sqrt(d / a))
+
+
 def move_time_s(d_pan_deg, d_tilt_deg, d_focal_mm, camera: CameraConfig, *,
-                slew_speed_deg_s: float, zoom_full_sweep_s: float, settle_s: float):
+                slew_speed_deg_s: float, zoom_full_sweep_s: float, settle_s: float,
+                slew_accel_deg_s2: Optional[float] = None):
     """(pan/tilt slew, optical zoom, settle) seconds for one PTZ move.
 
     The single motion model -- preset-tour transitions and slew-to-cue
     response (ptz_fusion.cue_response) both use it. Pan wraps (the short way
-    round), pan and tilt move together, zoom time is proportional to the
-    focal change over the full zoom range, settle applies once anything moved.
-    Accepts scalars or numpy arrays.
+    round), pan and tilt move together (the slower axis decides), zoom time is
+    proportional to the focal change over the full zoom range, settle applies
+    once anything moved. ``slew_accel_deg_s2``: trapezoidal speed profile
+    (axis_time_s); None keeps instant top speed. Accepts scalars or arrays.
     """
-    speed = max(slew_speed_deg_s, 1.0)
     d_pan = np.abs((np.asarray(d_pan_deg, dtype=float) + 180.0) % 360.0 - 180.0)
-    slew = np.maximum(d_pan, np.abs(d_tilt_deg)) / speed
+    if slew_accel_deg_s2 is None:
+        speed = max(slew_speed_deg_s, 1.0)
+        slew = np.maximum(d_pan, np.abs(d_tilt_deg)) / speed
+    else:
+        slew = np.maximum(axis_time_s(d_pan, slew_speed_deg_s, slew_accel_deg_s2),
+                          axis_time_s(d_tilt_deg, slew_speed_deg_s, slew_accel_deg_s2))
     zoom_span = max(camera.focal_max_mm - camera.focal_min_mm, 1e-6)
     zoom = (np.abs(d_focal_mm) / zoom_span) * max(zoom_full_sweep_s, 0.0)
     settle = np.where((slew > 0.05) | (zoom > 0.05), settle_s, 0.0)
@@ -99,7 +121,7 @@ def _transition_s(tour: PTZTour, cur: PTZPreset, nxt: PTZPreset) -> tuple[float,
         nxt.pan_deg - cur.pan_deg, nxt.tilt_deg - cur.tilt_deg,
         _preset_focal(nxt, tour.camera) - _preset_focal(cur, tour.camera), tour.camera,
         slew_speed_deg_s=tour.slew_speed_deg_s, zoom_full_sweep_s=tour.zoom_full_sweep_s,
-        settle_s=tour.settle_s)
+        settle_s=tour.settle_s, slew_accel_deg_s2=tour.slew_accel_deg_s2)
     return float(slew), float(zoom), float(settle)
 
 

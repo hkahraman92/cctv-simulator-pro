@@ -22,6 +22,7 @@ interface Props {
   poles?: PlacedCamera[];
   ptz?: PlacedCamera[];
   gaps?: FenceGap[];
+  switches?: { index: number; x_m: number; y_m: number; ports_used: number; over_budget: boolean }[];
   /** what a plain click does */
   tool: "camera" | "fence" | "none";
   onPick?: (x: number, y: number) => void;
@@ -127,6 +128,12 @@ export default function MapView(p: Props) {
             <line x1={c.x_m} y1={H - c.y_m} x2={c.x_m + Math.sin((c.pan_deg * Math.PI) / 180) * 14 * px}
               y2={H - c.y_m - Math.cos((c.pan_deg * Math.PI) / 180) * 14 * px} stroke="var(--color-primary)" strokeWidth={1.5 * px} />
             <circle cx={c.x_m} cy={H - c.y_m} r={3.5 * px} fill="var(--color-primary)" stroke="var(--color-bg-0)" strokeWidth={1.2 * px} />
+          </g>
+        ))}
+        {(p.switches ?? []).map((s) => (
+          <g key={`sw${s.index}`}>
+            <rect x={s.x_m - 5 * px} y={H - s.y_m - 5 * px} width={10 * px} height={10 * px} fill={s.over_budget ? "var(--color-danger)" : "var(--color-secondary)"}
+              stroke="var(--color-bg-0)" strokeWidth={1.2 * px}><title>{`Switch ${s.index}: ${s.ports_used} port`}</title></rect>
           </g>
         ))}
         {(p.ptz ?? []).map((c) => (

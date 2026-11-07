@@ -33,9 +33,10 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, mount, weath
   const [span, setSpan] = useState(120);
   const [dwell, setDwell] = useState(2);
   const [target, setTarget] = useState(250);
+  const [accel, setAccel] = useState(0);        // deg/s^2, 0 = instant top speed
   const [sweep, setSweep] = useState<SweepResult | null>(null);
   const [cue, setCue] = useState<CueResult | null>(null);
-  const base = { terrain_id: terrainId, use_obstacles: useObstacles, camera, x_m: mount.x, y_m: mount.y, mast_m: mount.mast, range_m: mount.range, weather, max_px: 1200 };
+  const base = { terrain_id: terrainId, use_obstacles: useObstacles, camera, x_m: mount.x, y_m: mount.y, mast_m: mount.mast, range_m: mount.range, weather, max_px: 1200, slew_accel_deg_s2: accel };
 
   const run = () => {
     if (mode === "tour") {
@@ -67,6 +68,7 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, mount, weath
         {mode === "sector" && <Slider label="Sektör genişliği (yön merkezli)" unit="°" value={span} min={10} max={350} step={5} onChange={setSpan} />}
         {mode === "sector" && <Slider label="Uçta bekleme" unit="sn" value={dwell} min={0} max={30} step={0.5} onChange={setDwell} />}
         {mode === "cue" && <Slider label="Hedef (teşhis 250)" unit="px/m" value={target} min={25} max={500} step={5} onChange={setTarget} />}
+        {(mode === "cue" || mode === "tour") && <Slider label="Pan/tilt ivmesi (0 = anlık)" unit="°/s²" value={accel} min={0} max={600} step={10} onChange={setAccel} />}
         {mode === "tour" && (
           <div>
             <Button className="w-full" onClick={() => setPresets((ps) => [...ps, { name: `P${ps.length + 1}`, pan_deg: mount.pan, tilt_deg: mount.tilt, focal_mm: mount.focal, dwell_s: 5 }])}>

@@ -136,7 +136,8 @@ def cue_response(terrain: TerrainData, x_m: float, y_m: float, mast_height_m: fl
                  slew_speed_deg_s: float = 90.0, zoom_full_sweep_s: float = 3.0,
                  settle_s: float = 1.5, tilt_min_deg: float = -90.0, tilt_max_deg: float = 20.0,
                  max_range_m: float = 2000.0, visibility_km: float = 40.0, weather: str = "",
-                 earth_curvature: bool = True) -> CueResponse:
+                 earth_curvature: bool = True,
+                 slew_accel_deg_s2: Optional[float] = None) -> CueResponse:
     """Seconds for a PTZ parked at (home pan/tilt/focal) to aim at each cell
     and hold it at ``target_ppm`` (see module docstring)."""
     mv = mount_visibility(terrain, x_m, y_m, mast_height_m, max_range_m=max_range_m,
@@ -165,7 +166,7 @@ def cue_response(terrain: TerrainData, x_m: float, y_m: float, mast_height_m: fl
     slew, zoom, settle = move_time_s(aim_pan - home_pan_deg, aim_tilt - home_tilt_deg,
                                      f_use - home_focal, camera,
                                      slew_speed_deg_s=slew_speed_deg_s,
-                                     zoom_full_sweep_s=zoom_full_sweep_s, settle_s=settle_s)
+                                     zoom_full_sweep_s=zoom_full_sweep_s, settle_s=settle_s, slew_accel_deg_s2=slew_accel_deg_s2)
     resp = np.where(ok, slew + zoom + settle, np.inf)
 
     full_resp = np.full(mv.grid_shape, np.inf)

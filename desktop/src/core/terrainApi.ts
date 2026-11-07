@@ -298,13 +298,19 @@ export function terrainApi(rpc: RpcClient) {
       opts?: CallOptions,
     ) => rpc.call<SweepResult>("ptz.sweep", p, { timeoutMs: 0, ...opts }),
     ptzCue: (
-      p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; home_pan_deg: number; home_tilt_deg: number; target_ppm: number; range_m: number; weather?: string; max_px?: number },
+      p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; home_pan_deg: number; home_tilt_deg: number; target_ppm: number; range_m: number; weather?: string; max_px?: number; slew_accel_deg_s2?: number },
       opts?: CallOptions,
     ) => rpc.call<CueResult>("ptz.cue", p, { timeoutMs: 0, ...opts }),
     ptzTour: (
-      p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; presets: { name: string; pan_deg: number; tilt_deg: number; focal_mm?: number; dwell_s: number }[]; range_m: number; weather?: string; max_px?: number },
+      p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; presets: { name: string; pan_deg: number; tilt_deg: number; focal_mm?: number; dwell_s: number }[]; range_m: number; weather?: string; max_px?: number; slew_accel_deg_s2?: number },
       opts?: CallOptions,
     ) => rpc.call<TourResult>("ptz.tour", p, { timeoutMs: 0, ...opts }),
+    network: (p: T & { switch_ports: number; poe_budget_w: number; max_copper_m: number; retention_days: number; prices: object }) =>
+      rpc.call<import("../components/PlanningPanels").NetworkResult>("network.plan", p, { timeoutMs: 0 }),
+    compareModels: (p: T & Record<string, unknown>, opts?: CallOptions) =>
+      rpc.call<{ options: { model_name: string; met: boolean; poles: number; band_frac: number; seconds: number; switches: number; copper_m: number; storage_tb: number; cost: import("../components/PlanningPanels").NetworkResult["cost"] | null }[] }>(
+        "perimeter.compare_models", p, { timeoutMs: 0, ...opts }),
+    compareUse: (p: T & Record<string, unknown>) => rpc.call<{ plan: PlanResult; camera: CameraConfig }>("perimeter.compare_use", p),
     mixed: (p: T & { speed_deg_s: number; layer?: "fused" | "cue"; cue_target_ppm?: number; max_px?: number }, opts?: CallOptions) =>
       rpc.call<MixedResult>("perimeter.mixed", p, { timeoutMs: 0, ...opts }),
   };

@@ -17,6 +17,7 @@ import MapView from "../components/MapView";
 import JobBar from "../components/JobBar";
 import { FocalCurve, ProfileChart } from "../components/charts";
 import { MixedPanel, PtzPanel, type Layer } from "../components/PtzPanels";
+import { ComparePanel, EMPTY_PRICES, NetworkPanel, type NetworkResult, type PriceBook } from "../components/PlanningPanels";
 import { Button, Panel, Slider, Tile, fmt } from "../components/ui";
 
 const ha = (m2: number) => `${fmt(m2 / 1e4, 2)} ha`;
@@ -62,6 +63,8 @@ export default function Terrain() {
   const [planRes, setPlanRes] = useState<PlanResult | null>(null);
   const [coverage, setCoverage] = useState<CoverageResult | null>(null);
   const [goal, setGoal] = useState(95);
+  const [prices, setPrices] = useState<PriceBook>(EMPTY_PRICES);
+  const [network, setNetwork] = useState<NetworkResult | null>(null);
   const [slide, setSlide] = useState(true);       // poles may move along the fence
   const [optLevel, setOptLevel] = useState("detect");
   const [optRes, setOptRes] = useState<{ before_m2: number; after_m2: number; band_area_m2: number; changed: number; moved: number; max_move_m: number; notes: string[] } | null>(null);
@@ -123,7 +126,7 @@ export default function Terrain() {
   const runPlan = async () => {
     if (!info || fence.length < 2) return;
     const r = await job.run("Çit planı", () => T.plan({ terrain_id: info.terrain_id, use_obstacles: useObstacles, camera, ...planParams() }));
-    if (r) { setPlanRes(r); setCoverage(null); setPoleRes(null); setMixedLayer(null); }
+    if (r) { setPlanRes(r); setCoverage(null); setPoleRes(null); setMixedLayer(null); setNetwork(null); }
   };
   const runCoverage = async () => {
     if (!info) return;
@@ -159,9 +162,10 @@ export default function Terrain() {
         fence_points: fence, fence_closed: plan.closed, line_mode: plan.line_mode, watch_side: plan.watch_side,
         target_ppm: plan.target_ppm, perimeter_mast_m: plan.mast_m,
         mixed_ptz: { camera: mixedPtz.camera?.model_name ?? "", every_n: mixedPtz.everyN, patrol_span_deg: mixedPtz.span },
+        prices,
       },
     }, { touch: !restoring.current });
-  }, [setTerrainBlock, info, mount, weather, camera, tab, fence, plan, mixedPtz]);
+  }, [setTerrainBlock, info, mount, weather, camera, tab, fence, plan, mixedPtz, prices]);
 
   useEffect(() => {
     if (!loadedTerrain || state !== "ready") return;
@@ -189,6 +193,7 @@ export default function Terrain() {
         mast_m: typeof x.perimeter_mast_m === "number" ? x.perimeter_mast_m : p.mast_m,
       }));
       if (x.planner_mode === "perimeter") setTab("perimeter");
+      if (x.prices && typeof x.prices === "object") setPrices({ ...EMPTY_PRICES, ...(x.prices as Partial<PriceBook>) });
       if (typeof x.camera_model === "string" && x.camera_model) void applyModel(x.camera_model).catch(() => undefined);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -265,6 +270,7 @@ export default function Terrain() {
               fence={tab === "perimeter" ? fence : []} fenceClosed={plan.closed}
               poles={tab === "perimeter" ? planRes?.poles : []} ptz={tab === "perimeter" ? planRes?.ptz : []}
               gaps={tab === "perimeter" ? planRes?.gaps : []}
+              switches={tab === "perimeter" ? network?.network.switches : []}
               tool={tab === "single" ? "camera" : drawing ? "fence" : "none"} onPick={pick}>
               {legend && (
                 <div className="rounded border border-bg-5 bg-bg-1/85 px-3 py-2 backdrop-blur">
@@ -441,6 +447,14 @@ export default function Terrain() {
                   </div>
                 )}
               </Panel>
+            )}
+            {planRes && (
+              <NetworkPanel T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} prices={prices} onPrices={setPrices} onResult={setNetwork} />
+            )}
+            {fence.length >= 2 && (
+              <ComparePanel T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} models={models} camera={camera}
+                planArgs={planParams()} prices={prices}
+                onUse={(p, name) => { setPlanRes(p); setCoverage(null); setNetwork(null); void applyModel(name); }} />
             )}
             <Panel title="En az direk">
               <Slider label="Algılama hedefi (bant)" unit="%" value={goal} min={50} max={99} step={1} onChange={setGoal} />

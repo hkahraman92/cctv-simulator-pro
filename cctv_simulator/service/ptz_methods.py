@@ -18,6 +18,12 @@ def _weather(params):
     return w, WEATHER_PRESETS.get(w, 40.0)
 
 
+def _accel(params) -> "float | None":
+    """Pan/tilt acceleration (deg/s^2); 0 / absent = instant top speed."""
+    a = _num(params, "slew_accel_deg_s2", 0.0, lo=0, hi=5000)
+    return a if a > 0 else None
+
+
 def _fin(v: float):
     return v if math.isfinite(v) else None
 
@@ -85,7 +91,8 @@ def ptz_cue(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
                        slew_speed_deg_s=_num(params, "slew_deg_s", 90.0, lo=1, hi=600),
                        zoom_full_sweep_s=_num(params, "zoom_full_sweep_s", 3.0, lo=0, hi=60),
                        settle_s=_num(params, "settle_s", 1.5, lo=0, hi=30),
-                       max_range_m=_num(params, "range_m", 1500.0, lo=50, hi=20000), visibility_km=vis, weather=weather)
+                       max_range_m=_num(params, "range_m", 1500.0, lo=50, hi=20000), visibility_km=vis, weather=weather,
+                       slew_accel_deg_s2=_accel(params))
     entry.results["cue"] = res
     max_px = int(_num(params, "max_px", _DISPLAY_PX, lo=200, hi=4096))
     overlay = map_render.zone_overlay(res.response_s, _overlay_size(t, max_px), mode="cue")
@@ -125,7 +132,8 @@ def ptz_tour(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
                    camera=cam, presets=presets, max_range_m=_num(params, "range_m", 1500.0, lo=50, hi=20000),
                    slew_speed_deg_s=_num(params, "slew_deg_s", 90.0, lo=1, hi=600),
                    settle_s=_num(params, "settle_s", 1.5, lo=0, hi=30),
-                   zoom_full_sweep_s=_num(params, "zoom_full_sweep_s", 3.0, lo=0, hi=60))
+                   zoom_full_sweep_s=_num(params, "zoom_full_sweep_s", 3.0, lo=0, hi=60),
+                   slew_accel_deg_s2=_accel(params))
     weather, vis = _weather(params)
     ctx.progress(0, 1, f"{len(presets)} preset hesaplanıyor")
     res = evaluate_ptz_tour(t, tour, visibility_km=vis, weather=weather)
