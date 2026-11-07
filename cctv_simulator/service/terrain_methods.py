@@ -515,6 +515,7 @@ def perimeter_minimize_poles(params: Dict[str, Any], ctx: Context) -> Dict[str, 
     goal = _num(params, "goal_frac", 0.95, lo=0.05, hi=1.0)
     res = minimize_poles(t, fence, cam, plan_kwargs=kw, goal_frac=goal, level=level,
                          band_m=_num(params, "band_m", 40.0, lo=5, hi=500),
+                         position_steps=int(_num(params, "position_steps", 0, lo=0, hi=4)),
                          progress=lambda d, n: ctx.progress(d, n, f"Deneme {d}/{n}"))
     plan = None
     if res.met and res.best_plan is not None:
@@ -533,6 +534,45 @@ def perimeter_minimize_poles(params: Dict[str, Any], ctx: Context) -> Dict[str, 
         "trials": [dataclasses.asdict(tr) for tr in res.trials],
         "plan": _plan_json(plan) if plan is not None else None,
     }
+
+
+def perimeter_optimize(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """Optimise the last plan's poles in place: focal / tilt (/ heading) and optionally
+    their place along the fence; both plans re-scored by the authoritative engine."""
+    from ..focal_optimizer import apply_layout, band_area, fence_roi, mounts_from_plan, optimize_layout
+    from ..viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_OBSERVE, ZONE_RECOG
+
+    entry, t = _terrain_of(params)
+    if "plan" not in entry.results:
+        raise RpcError(APP_ERROR, "Önce bir çit planı oluşturun.")
+    plan, cam, kw, fence = entry.results["plan"]
+    levels = {"detect": ZONE_DETECT, "observe": ZONE_OBSERVE, "recognize": ZONE_RECOG, "identify": ZONE_IDENT}
+    level = levels.get(params.get("level", "detect"))
+    if level is None:
+        raise RpcError(INVALID_PARAMS, "'level' detect, observe, recognize ya da identify olmalı.")
+    steps = int(_num(params, "position_steps", 0, lo=0, hi=4))
+    step_m = _num(params, "position_step_m", max(plan.avg_spacing_m / (2 * steps + 2), 1.0) if steps else 0.0,
+                  lo=0, hi=500)
+    band = _num(params, "band_m", 40.0, lo=5, hi=500)
+    roi = fence_roi(t, fence, kw["is_closed_loop"], band)
+    mounts = mounts_from_plan(plan, cam, pan_search_deg=_num(params, "pan_search_deg", 0.0, lo=0, hi=90),
+                              position_step_m=step_m, position_steps=steps)
+    res = optimize_layout(t, mounts, roi=roi, level=level, n_focals=int(_num(params, "n_focals", 6, lo=2, hi=16)),
+                          visibility_km=kw["visibility_km"], weather=kw["weather"],
+                          progress=lambda d, n: ctx.progress(d, n + 2, f"Direk {d}/{n}"))
+    new_plan = apply_layout(plan, res, cam, kw["target_ppm"], terrain=t,
+                            visibility_km=kw["visibility_km"], weather=kw["weather"])
+    ctx.progress(1, 1, "Otoriter motorla doğrulanıyor")
+    _, a0 = band_area(t, plan, cam, roi, level, visibility_km=kw["visibility_km"], weather=kw["weather"])
+    _, a1 = band_area(t, new_plan, cam, roi, level, visibility_km=kw["visibility_km"], weather=kw["weather"])
+    if params.get("apply", True):
+        entry.results["plan"] = (new_plan, cam, kw, fence)
+    moved = [c for c in res.choices if c.moved_m > 0.05]
+    return {"before_m2": a0, "after_m2": a1, "band_area_m2": float(roi.sum()) * t.cell_size_m ** 2,
+            "estimate_before_m2": res.before_m2[level], "estimate_after_m2": res.after_m2[level],
+            "changed": sum(1 for c in res.choices if c.changed), "moved": len(moved),
+            "max_move_m": max((c.moved_m for c in moved), default=0.0), "notes": res.notes,
+            "plan": _plan_json(new_plan)}
 
 
 def focal_sweep(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
@@ -580,5 +620,6 @@ METHODS = {
     "perimeter.plan": perimeter_plan,
     "perimeter.coverage": perimeter_coverage,
     "perimeter.minimize_poles": perimeter_minimize_poles,
+    "perimeter.optimize": perimeter_optimize,
     "focal.sweep": focal_sweep,
 }

@@ -225,6 +225,9 @@ class Mount:
     ptz: bool = False
     pan_search_deg: float = 0.0           # fixed only: also search the heading
     label: str = ""
+    # fixed only: other places this pole may stand (e.g. shifted along the
+    # fence). Each gets its own mount raster; the current place stays first.
+    alt_positions: Sequence[Tuple[float, float]] = ()
 
 
 @dataclass
@@ -237,6 +240,9 @@ class MountChoice:
     hfov_deg: float
     vfov_deg: float
     changed: bool
+    x_m: Optional[float] = None           # chosen place (None = PTZ / unchanged mount)
+    y_m: Optional[float] = None
+    moved_m: float = 0.0                  # distance from the starting place
 
 
 @dataclass
@@ -264,6 +270,8 @@ class _Cand:
     vfov: float
     sl: Tuple[slice, slice]               # absolute grid slices of the crop below
     zone: np.ndarray                      # int8, cropped to the view's own footprint
+    x: float = 0.0                        # mount place of this candidate
+    y: float = 0.0
 
 
 def _crop(zone: np.ndarray, window: Tuple[slice, slice]):
@@ -283,23 +291,27 @@ def _crop(zone: np.ndarray, window: Tuple[slice, slice]):
 
 
 def _candidates(terrain, m: Mount, level, n_focals, rng, vis, weather) -> List[_Cand]:
-    mv = mount_visibility(terrain, m.x_m, m.y_m, m.mast_m, max_range_m=rng)
     cands: List[_Cand] = []
-
-    def add(f, t, pans):
-        lay = view_layers(mv, m.camera, tilt_deg=t, focal_mm=f, max_range_m=rng,
-                          visibility_km=vis, weather=weather)
-        zv = np.where(lay.visible, lay.zone, 0)
-        for p in pans:
-            sl, z = _crop(np.where(_cone(lay.center_az_rad, p, lay.hfov_deg), zv, 0), mv.window)
-            cands.append(_Cand(f, t, p, lay.hfov_deg, lay.vfov_deg, sl, z))
-
     current = m.focal_mm if m.focal_mm is not None else float(m.camera.focal_min_mm)
-    add(current, m.tilt_deg, [m.pan_deg % 360.0])          # index 0 = the starting setting
     pans = _pan_grid(m.pan_deg, m.pan_search_deg, 10.0)
-    for f in focal_steps(m.camera, n_focals):
-        for t in auto_tilts(m.camera, f, m.mast_m, level, rng):
-            add(f, t, pans)
+    for k, (x, y) in enumerate([(m.x_m, m.y_m), *m.alt_positions]):
+        mv = mount_visibility(terrain, x, y, m.mast_m, max_range_m=rng)
+
+        def add(f, t, ps, mv=mv, x=x, y=y):
+            lay = view_layers(mv, m.camera, tilt_deg=t, focal_mm=f, max_range_m=rng,
+                              visibility_km=vis, weather=weather)
+            zv = np.where(lay.visible, lay.zone, 0)
+            for p in ps:
+                sl, z = _crop(np.where(_cone(lay.center_az_rad, p, lay.hfov_deg), zv, 0), mv.window)
+                cands.append(_Cand(f, t, p, lay.hfov_deg, lay.vfov_deg, sl, z, x, y))
+
+        if k == 0:
+            add(current, m.tilt_deg, [m.pan_deg % 360.0])  # index 0 = the starting setting
+        else:
+            add(current, m.tilt_deg, pans)                 # the same setting, moved
+        for f in focal_steps(m.camera, n_focals):
+            for t in auto_tilts(m.camera, f, m.mast_m, level, rng):
+                add(f, t, pans)
     return cands
 
 
@@ -377,11 +389,17 @@ def optimize_layout(terrain: TerrainData, mounts: Sequence[Mount], *, roi: Optio
     choices: List[MountChoice] = []
     for m, cs, k in zip(fixed, cands, choice):
         c = cs[k]
-        choices.append(MountChoice(m.label, False, c.focal, c.tilt, c.pan, c.hfov, c.vfov, k != 0))
+        moved = math.hypot(c.x - m.x_m, c.y - m.y_m)
+        choices.append(MountChoice(m.label, False, c.focal, c.tilt, c.pan, c.hfov, c.vfov, k != 0,
+                                   x_m=c.x, y_m=c.y, moved_m=moved))
     for m in ptzs:
         choices.append(MountChoice(m.label, True, float(m.camera.focal_min_mm), m.tilt_deg,
                                    m.pan_deg, 0.0, 0.0, False))
     notes = []
+    n_moved = sum(1 for c in choices if c.moved_m > 0.05)
+    if n_moved:
+        notes.append(f"{n_moved} direk çit boyunca yer değiştirdi (en çok "
+                     f"{max(c.moved_m for c in choices):.0f} m).")
     if ptzs:
         notes.append("PTZ alanı talep üzerine erişimdir (herhangi bir yön / eğim / odakta) — "
                      "aynı anda değil; sürekli kapsama yalnız sabit kameralardan gelir.")
@@ -411,12 +429,48 @@ def fence_roi(terrain: TerrainData, fence_points: Sequence[Tuple[float, float]],
     return _fence_band_mask(mx, my, pts, band_m)
 
 
+def fence_shifts(fence_points: Sequence[Tuple[float, float]], x: float, y: float,
+                 step_m: float, steps: int) -> List[Tuple[float, float]]:
+    """Places ``±k·step_m`` (k = 1..steps) along the fence polyline from the
+    point of the fence nearest (x, y); ends are not passed."""
+    from .perimeter_planner import point_along_polyline
+
+    pts = [tuple(p) for p in fence_points]
+    if len(pts) < 2 or steps <= 0 or step_m <= 0:
+        return []
+    best, at, run = None, 0.0, 0.0
+    for a, b in zip(pts[:-1], pts[1:]):
+        dx, dy = b[0] - a[0], b[1] - a[1]
+        seg = math.hypot(dx, dy)
+        if seg < 1e-9:
+            continue
+        u = max(0.0, min(1.0, ((x - a[0]) * dx + (y - a[1]) * dy) / (seg * seg)))
+        d = math.hypot(a[0] + u * dx - x, a[1] + u * dy - y)
+        if best is None or d < best:
+            best, at = d, run + u * seg
+        run += seg
+    out = []
+    for k in range(1, steps + 1):
+        for sgn in (-1, 1):
+            s = at + sgn * k * step_m
+            if 0.0 <= s <= run:
+                px, py = point_along_polyline(pts, s)[:2]
+                out.append((float(px), float(py)))
+    return out
+
+
 def mounts_from_plan(plan, camera: CameraConfig, ptz_camera: Optional[CameraConfig] = None,
-                     pan_search_deg: float = 0.0) -> List[Mount]:
+                     pan_search_deg: float = 0.0, position_step_m: float = 0.0,
+                     position_steps: int = 0) -> List[Mount]:
     """A perimeter plan's poles as optimiser mounts (current settings kept as
-    each mount's starting candidate); PTZ rows only if a PTZ model is given."""
+    each mount's starting candidate); PTZ rows only if a PTZ model is given.
+    ``position_steps`` > 0 also lets each fixed pole move ``±k·position_step_m``
+    along the fence (terrain-aware placement: around a ridge or a building)."""
+    def alts(c):
+        return fence_shifts(plan.fence_points, c.x_m, c.y_m, position_step_m, position_steps)
     mounts = [Mount(c.x_m, c.y_m, c.mast_height_m, camera, pan_deg=c.pan_deg, tilt_deg=c.tilt_deg,
-                    focal_mm=c.focal_mm, pan_search_deg=pan_search_deg, label=f"Direk {c.pole_id}")
+                    focal_mm=c.focal_mm, pan_search_deg=pan_search_deg, label=f"Direk {c.pole_id}",
+                    alt_positions=alts(c))
               for c in plan.placed_cameras]
     if ptz_camera is not None:
         mounts += [Mount(p.x_m, p.y_m, p.mast_height_m, ptz_camera, pan_deg=p.pan_deg,
@@ -441,11 +495,16 @@ def apply_layout(plan, layout: LayoutResult, camera: CameraConfig, target_ppm: f
             new_cams.append(cam)
             continue
         slant = camera_optics(camera, ch.focal_mm).distance_for_ppm(target_ppm)
+        place = {}
+        if ch.x_m is not None and ch.moved_m > 0.05:
+            place = {"x_m": round(ch.x_m, 2), "y_m": round(ch.y_m, 2)}
+            if terrain is not None:
+                place["ground_z_m"] = round(float(terrain.ground_elevation_at(ch.x_m, ch.y_m)), 2)
         new_cams.append(replace(
             cam, focal_mm=round(ch.focal_mm, 2), tilt_deg=round(ch.tilt_deg, 1),
             pan_deg=round(ch.pan_deg % 360.0, 1), hfov_deg=round(ch.hfov_deg, 1),
             vfov_deg=round(ch.vfov_deg, 1),
-            effective_range_m=round(math.sqrt(max(slant ** 2 - cam.mast_height_m ** 2, 1.0)), 1)))
+            effective_range_m=round(math.sqrt(max(slant ** 2 - cam.mast_height_m ** 2, 1.0)), 1), **place))
     gaps, cov = _analyse_fence_coverage(
         list(plan.fence_points), new_cams, visibility_km, weather,
         _atm.band_for_camera(camera.sensor_name, camera.model_name), terrain=terrain)

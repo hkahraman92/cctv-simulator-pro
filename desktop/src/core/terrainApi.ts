@@ -284,7 +284,10 @@ export function terrainApi(rpc: RpcClient) {
     plan: (p: T & PlanParams & { camera: CameraConfig }) => rpc.call<PlanResult>("perimeter.plan", p),
     coverage: (p: T & { layer?: "dori" | "overlap"; band_m?: number; max_px?: number }, opts?: CallOptions) =>
       rpc.call<CoverageResult>("perimeter.coverage", p, { timeoutMs: 0, ...opts }),
-    minimizePoles: (p: T & PlanParams & { camera: CameraConfig; goal_frac: number; level: string }, opts?: CallOptions) =>
+    optimize: (p: T & { level: string; position_steps: number; pan_search_deg?: number; n_focals?: number }, opts?: CallOptions) =>
+      rpc.call<{ before_m2: number; after_m2: number; band_area_m2: number; changed: number; moved: number; max_move_m: number; notes: string[]; plan: PlanResult }>(
+        "perimeter.optimize", p, { timeoutMs: 0, ...opts }),
+    minimizePoles: (p: T & PlanParams & { camera: CameraConfig; goal_frac: number; level: string; position_steps?: number }, opts?: CallOptions) =>
       rpc.call<PoleSearch>("perimeter.minimize_poles", p, { timeoutMs: 0, ...opts }),
     focalSweep: (
       p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; pan_deg: number; level: string; pan_search_deg?: number; weather?: string; n_focals?: number },

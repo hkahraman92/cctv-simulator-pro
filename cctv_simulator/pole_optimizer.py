@@ -61,7 +61,13 @@ class PoleSearchResult:
 def minimize_poles(terrain: TerrainData, fence_points: Sequence[Tuple[float, float]], camera: CameraConfig,
                    *, plan_kwargs: Optional[Dict] = None, goal_frac: float = 0.95, level: int = ZONE_DETECT,
                    objective: str = "area", band_m: float = 40.0, n_focals: int = 6, max_trials: int = 9,
+                   position_steps: int = 0,
                    progress: Optional[Callable[[int, int], None]] = None) -> PoleSearchResult:
+    """Fewest fixed poles that hold ``goal_frac`` of the fence band at ``level``.
+
+    ``position_steps`` > 0: every trial also lets each pole move
+    ±k × spacing / (2·steps + 2) along the fence (terrain-aware placement:
+    a pole behind a ridge or a building slides to where it sees the band)."""
     kw = dict(plan_kwargs or {})
     closed = bool(kw.get("is_closed_loop", True))
     vis = float(kw.get("visibility_km", 40.0))
@@ -85,7 +91,9 @@ def minimize_poles(terrain: TerrainData, fence_points: Sequence[Tuple[float, flo
         n = len(plan.placed_cameras)
         if n in cache:                                # same pole count -> same layout question
             return cache[n]
-        res = optimize_layout(terrain, mounts_from_plan(plan, camera, ptz_camera), roi=roi,
+        step = spacing / (2 * position_steps + 2) if position_steps else 0.0
+        mounts = mounts_from_plan(plan, camera, ptz_camera, position_step_m=step, position_steps=position_steps)
+        res = optimize_layout(terrain, mounts, roi=roi,
                               level=level, objective=objective, n_focals=n_focals,
                               visibility_km=vis, weather=weather)
         area = max(res.roi_area_m2, 1e-9)

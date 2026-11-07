@@ -133,6 +133,17 @@ def test_pole_search_plan_is_the_one_that_met_the_goal(hills):
     assert cov["band_share"]["detect"] >= 0.6 - 0.02
 
 
+def test_optimize_in_place_never_loses_band_area_and_can_move_poles(hills):
+    tid = hills["terrain_id"]
+    fence = [[300, 300], [900, 300], [900, 900], [300, 900]]
+    p = ok("perimeter.plan", terrain_id=tid, camera=CAM, fence=fence, target_ppm=40, mast_m=6, spacing_m=60)
+    r = ok("perimeter.optimize", terrain_id=tid, level="detect", position_steps=1, n_focals=4)
+    assert r["after_m2"] >= r["before_m2"] - 1e-6
+    assert r["plan"]["pole_count"] == p["pole_count"]
+    moved = [(a["x_m"], a["y_m"]) != (b["x_m"], b["y_m"]) for a, b in zip(p["poles"], r["plan"]["poles"])]
+    assert sum(moved) == r["moved"]
+
+
 def test_focal_sweep_curve_is_wide_to_tele(hills):
     r = ok("focal.sweep", terrain_id=hills["terrain_id"], camera=CAM, x_m=600, y_m=600, mast_m=8,
            level="detect", n_focals=5)

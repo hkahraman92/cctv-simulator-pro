@@ -62,6 +62,9 @@ export default function Terrain() {
   const [planRes, setPlanRes] = useState<PlanResult | null>(null);
   const [coverage, setCoverage] = useState<CoverageResult | null>(null);
   const [goal, setGoal] = useState(95);
+  const [slide, setSlide] = useState(true);       // poles may move along the fence
+  const [optLevel, setOptLevel] = useState("detect");
+  const [optRes, setOptRes] = useState<{ before_m2: number; after_m2: number; band_area_m2: number; changed: number; moved: number; max_move_m: number; notes: string[] } | null>(null);
   const [poleRes, setPoleRes] = useState<PoleSearch | null>(null);
 
   useEffect(() => {
@@ -130,7 +133,7 @@ export default function Terrain() {
   const runPoles = async () => {
     if (!info || fence.length < 2) return;
     const r = await job.run("En az direk araması", (o) => T.minimizePoles(
-      { terrain_id: info.terrain_id, use_obstacles: useObstacles, camera, ...planParams(), goal_frac: goal / 100, level: "detect" }, o));
+      { terrain_id: info.terrain_id, use_obstacles: useObstacles, camera, ...planParams(), goal_frac: goal / 100, level: "detect", position_steps: slide ? 2 : 0 }, o));
     if (r) { setPoleRes(r); if (r.plan) { setPlanRes(r.plan); setCoverage(null); } }
   };
   const runSweep = async () => {
@@ -418,6 +421,27 @@ export default function Terrain() {
               value={mixedPtz} onChange={setMixedPtz} hasPlanWithPtz={!!planRes?.ptz.length} onLayer={setMixedLayer}
               ptzModelFor={async (n) => (await api.cameraFor(n, undefined, true)).camera} />
             {mixedLayer && <Button className="w-full" onClick={() => setMixedLayer(null)}>Birleşik kapsamaya dön</Button>}
+            {planRes && (
+              <Panel title="Dizilimi optimize et">
+                <select className="h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={optLevel} onChange={(e) => setOptLevel(e.target.value)} aria-label="Hedef seviye">
+                  {LEVELS.map(([k, l]) => <option key={k} value={k}>Bantta {l} alanı</option>)}
+                </select>
+                <label className="mt-2 flex items-center gap-2 text-[12px]"><input type="checkbox" checked={slide} onChange={(e) => setSlide(e.target.checked)} /> Direkleri çit boyunca kaydır (arazi / bina)</label>
+                <Button className="mt-2 w-full" disabled={job.running} onClick={() => job.run("Dizilim optimizasyonu", (o) => T.optimize({
+                  terrain_id: info.terrain_id, use_obstacles: useObstacles, level: optLevel, position_steps: slide ? 2 : 0 }, o))
+                  .then((r) => { if (!r) return; setOptRes(r); setPlanRes(r.plan); setCoverage(null); setMixedLayer(null); })}>
+                  <Play size={14} /> Odak / eğim{slide ? " / konum" : ""} optimize et
+                </Button>
+                {optRes && (
+                  <div className="mt-2 text-[12px]">
+                    <div className={optRes.after_m2 > optRes.before_m2 ? "text-primary" : "text-text-2"}>
+                      ● Otoriter motor, bant: {ha(optRes.before_m2)} → <b>{ha(optRes.after_m2)}</b> ({pct(optRes.after_m2 / Math.max(optRes.band_area_m2, 1))})
+                    </div>
+                    <div className="mt-1 text-[11px] text-text-3">{optRes.changed} direğin ayarı değişti{optRes.moved ? ` · ${optRes.moved} direk en çok ${fmt(optRes.max_move_m, 0)} m kaydı` : ""}</div>
+                  </div>
+                )}
+              </Panel>
+            )}
             <Panel title="En az direk">
               <Slider label="Algılama hedefi (bant)" unit="%" value={goal} min={50} max={99} step={1} onChange={setGoal} />
               <Button className="mt-2 w-full" disabled={job.running || fence.length < 2} onClick={runPoles}><Play size={14} /> Aramayı Başlat</Button>
