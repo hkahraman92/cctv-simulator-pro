@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
-import { DEFAULT_CAMERA, type CameraConfig } from "./api";
+import { DEFAULT_CAMERA, type CameraConfig, type PPMLevel } from "./api";
 
 /** One camera on the plan plus the focal it is being looked at with. */
 export interface Site {
@@ -20,6 +20,9 @@ export type TerrainBlock = Record<string, unknown>;
 
 interface ProjectCtx {
   sites: Site[];
+  /** the project's PPM levels; null = the engine defaults (models.DEFAULT_LEVELS) */
+  levels: PPMLevel[] | null;
+  setLevels: (l: PPMLevel[] | null) => void;
   /** what the terrain page last published (saved with the project) */
   terrainBlock: TerrainBlock | null;
   setTerrainBlock: (b: TerrainBlock | null, opts?: { touch?: boolean }) => void;
@@ -40,7 +43,7 @@ interface ProjectCtx {
   updateAt: (i: number, patch: Partial<CameraConfig>) => void;
   replaceCamera: (camera: CameraConfig) => void;
   setPlan: (patch: Partial<PlanSettings>) => void;
-  load: (sites: Site[], path: string, name: string, plan?: Partial<PlanSettings>, terrain?: TerrainBlock) => void;
+  load: (sites: Site[], path: string, name: string, plan?: Partial<PlanSettings>, terrain?: TerrainBlock, levels?: PPMLevel[] | null) => void;
   markSaved: (path: string, name: string) => void;
 }
 
@@ -72,6 +75,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [path, setPath] = useState("");
   const [name, setName] = useState("Yeni proje");
   const [dirty, setDirty] = useState(false);
+  const [levels, setLevelsState] = useState<PPMLevel[] | null>(null);
   const [terrainBlock, setTerrainBlockState] = useState<TerrainBlock | null>(null);
   const [loadedTerrain, setLoadedTerrain] = useState<{ block: TerrainBlock; nonce: number } | null>(null);
   const sel = Math.min(selected, sites.length - 1);
@@ -79,7 +83,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const touch = useCallback((fn: (s: Site[]) => Site[]) => { setSites(fn); setDirty(true); }, []);
 
   const value = useMemo<ProjectCtx>(() => ({
-    sites, selected: sel, site: sites[sel], plan, path, name, dirty, terrainBlock, loadedTerrain,
+    sites, selected: sel, site: sites[sel], plan, path, name, dirty, terrainBlock, loadedTerrain, levels,
+    setLevels: (l) => { setLevelsState(l); setDirty(true); },
     setTerrainBlock: (b, opts) => {
       setTerrainBlockState((prev) => {
         if (opts?.touch && JSON.stringify(prev) !== JSON.stringify(b)) setDirty(true);
@@ -102,13 +107,14 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     updateAt: (idx, patch) => touch((a) => a.map((s, i) => (i === idx ? { ...s, camera: { ...s.camera, ...patch } } : s))),
     replaceCamera: (camera) => touch((a) => a.map((s, i) => (i === sel ? { camera, focal: camera.focal_min_mm } : s))),
     setPlan: (patch) => { setPlanState((p) => ({ ...p, ...patch })); setDirty(true); },
-    load: (next, p, n, pl, terrain) => {
+    load: (next, p, n, pl, terrain, lv) => {
+      setLevelsState(lv ?? null);
       setSites(next.length ? next : [newSite(1)]); setSelected(0); setPath(p); setName(n);
       setPlanState({ ...DEFAULT_PLAN, ...pl }); setDirty(false);
       if (terrain) setLoadedTerrain((t) => ({ block: terrain, nonce: (t?.nonce ?? 0) + 1 }));
     },
     markSaved: (p, n) => { setPath(p); setName(n); setDirty(false); },
-  }), [sites, sel, plan, path, name, dirty, touch, terrainBlock, loadedTerrain]);
+  }), [sites, sel, plan, path, name, dirty, touch, terrainBlock, loadedTerrain, levels]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

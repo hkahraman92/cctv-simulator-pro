@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { Play, RotateCw } from "lucide-react";
+import { Play, Plus, RotateCw, X } from "lucide-react";
 import type { CameraConfig, ModelSummary } from "../core/api";
-import type { CueResult, LegendRow, MixedResult, SweepResult, TerrainApi } from "../core/terrainApi";
+import type { CueResult, LegendRow, MixedResult, SweepResult, TerrainApi, TourResult } from "../core/terrainApi";
 import type { useJob } from "../core/useJob";
 import { Button, Panel, Slider, Tile, fmt } from "./ui";
 
@@ -26,7 +26,9 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, mount, weath
   weather: string;
   onLayer: (l: Layer | null) => void;
 }) {
-  const [mode, setMode] = useState<"rotation" | "sector" | "cue">("rotation");
+  const [mode, setMode] = useState<"rotation" | "sector" | "cue" | "tour">("rotation");
+  const [presets, setPresets] = useState<{ name: string; pan_deg: number; tilt_deg: number; focal_mm?: number; dwell_s: number }[]>([]);
+  const [tour, setTour] = useState<TourResult | null>(null);
   const [speed, setSpeed] = useState(20);
   const [span, setSpan] = useState(120);
   const [dwell, setDwell] = useState(2);
@@ -36,6 +38,11 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, mount, weath
   const base = { terrain_id: terrainId, use_obstacles: useObstacles, camera, x_m: mount.x, y_m: mount.y, mast_m: mount.mast, range_m: mount.range, weather, max_px: 1200 };
 
   const run = () => {
+    if (mode === "tour") {
+      void job.run("Preset turu", (o) => T.ptzTour({ ...base, presets }, o))
+        .then((r) => { if (!r) return; setTour(r); setSweep(null); setCue(null); onLayer({ overlay: r.overlay.data, legend: r.legend, title: `Revizit — ${r.preset_labels.length} preset turu` }); });
+      return;
+    }
     if (mode === "cue") {
       void job.run("Tespit → teşhis süresi", (o) => T.ptzCue({ ...base, home_pan_deg: mount.pan, home_tilt_deg: mount.tilt, target_ppm: target }, o))
         .then((r) => { if (!r) return; setCue(r); setSweep(null); onLayer({ overlay: r.overlay.data, legend: r.legend, title: `Tepki süresi · ${fmt(r.target_ppm, 0)} px/m` }); });
@@ -49,8 +56,8 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, mount, weath
 
   return (
     <Panel title="PTZ" icon={<RotateCw size={16} className="text-ptz" />}>
-      <div className="grid grid-cols-3 gap-1">
-        {([["rotation", "360° dönüş"], ["sector", "Sektör"], ["cue", "Tespit→Teşhis"]] as const).map(([id, l]) => (
+      <div className="grid grid-cols-2 gap-1">
+        {([["rotation", "360° dönüş"], ["sector", "Sektör"], ["tour", "Preset turu"], ["cue", "Tespit→Teşhis"]] as const).map(([id, l]) => (
           <button key={id} type="button" onClick={() => setMode(id)}
             className={`h-8 rounded text-[11px] font-semibold ${mode === id ? "bg-bg-6 text-ptz" : "bg-bg-5 text-text-2"}`}>{l}</button>
         ))}
@@ -60,9 +67,38 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, mount, weath
         {mode === "sector" && <Slider label="Sektör genişliği (yön merkezli)" unit="°" value={span} min={10} max={350} step={5} onChange={setSpan} />}
         {mode === "sector" && <Slider label="Uçta bekleme" unit="sn" value={dwell} min={0} max={30} step={0.5} onChange={setDwell} />}
         {mode === "cue" && <Slider label="Hedef (teşhis 250)" unit="px/m" value={target} min={25} max={500} step={5} onChange={setTarget} />}
+        {mode === "tour" && (
+          <div>
+            <Button className="w-full" onClick={() => setPresets((ps) => [...ps, { name: `P${ps.length + 1}`, pan_deg: mount.pan, tilt_deg: mount.tilt, focal_mm: mount.focal, dwell_s: 5 }])}>
+              <Plus size={14} /> Bu bakışı preset ekle (yön {fmt(mount.pan, 0)}°, eğim {fmt(mount.tilt)}°)
+            </Button>
+            <ul className="mt-2 flex flex-col gap-1 font-mono text-[11px]">
+              {presets.map((p, i) => (
+                <li key={i} className="flex items-center gap-1.5 rounded bg-bg-1 px-2 py-1">
+                  <span className="w-7 text-text-2">{p.name}</span>
+                  <span className="flex-1">{fmt(p.pan_deg, 0)}° · {fmt(p.tilt_deg)}° · {p.focal_mm ? `${fmt(p.focal_mm)} mm` : "dar uç"}</span>
+                  <input type="number" min={0.5} step={0.5} value={p.dwell_s} aria-label={`${p.name} bekleme (sn)`}
+                    onChange={(e) => { const v = Number(e.target.value); if (v > 0) setPresets((ps) => ps.map((q, j) => (j === i ? { ...q, dwell_s: v } : q))); }}
+                    className="h-6 w-14 rounded border border-line bg-bg-0 px-1 text-right" />
+                  <span className="text-text-3">sn</span>
+                  <button type="button" aria-label={`${p.name} sil`} onClick={() => setPresets((ps) => ps.filter((_, j) => j !== i))} className="text-text-3 hover:text-danger"><X size={13} /></button>
+                </li>
+              ))}
+            </ul>
+            {presets.length < 2 && <p className="mt-1 text-[11px] text-text-3">◆ Yön/eğim/odak kaydırıcılarıyla bakışı ayarlayıp en az iki preset ekleyin.</p>}
+          </div>
+        )}
       </div>
-      <p className="mt-2 text-[11px] text-text-3">◆ Eğim ve odak yukarıdaki kaydırıcılardan; {mode === "cue" ? "ev konumu = yön/eğim." : "bakışı 0,5 sn'den kısa hücreler kapsama sayılmaz."}</p>
-      <Button className="mt-2 w-full" disabled={job.running} onClick={run}><Play size={14} /> Hesapla</Button>
+      {mode !== "tour" && <p className="mt-2 text-[11px] text-text-3">◆ Eğim ve odak yukarıdaki kaydırıcılardan; {mode === "cue" ? "ev konumu = yön/eğim." : "bakışı 0,5 sn'den kısa hücreler kapsama sayılmaz."}</p>}
+      <Button className="mt-2 w-full" disabled={job.running || (mode === "tour" && presets.length < 2)} onClick={run}><Play size={14} /> {mode === "tour" ? "Turu Çöz" : "Hesapla"}</Button>
+      {tour && mode === "tour" && (
+        <div className="mt-2 grid grid-cols-2 gap-1.5">
+          <Tile label="Tur süresi" value={fmt(tour.tour_period_s, 1)} unit="sn" />
+          <Tile label="En kötü revizit" value={sec(tour.worst_revisit_s)} tone="text-warn" />
+          <Tile label="Kapsanan alan" value={ha(tour.covered_area_m2)} tone="text-secondary" />
+          <Tile label="Geçiş (hareket+zoom+oturma)" value={fmt(tour.slew_total_s + tour.zoom_total_s + tour.settle_total_s, 1)} unit="sn" />
+        </div>
+      )}
       {sweep && (
         <div className="mt-2 grid grid-cols-2 gap-1.5">
           <Tile label="Tur süresi" value={fmt(sweep.period_s, 1)} unit="sn" />

@@ -68,7 +68,7 @@ export interface ProjectCamera {
 
 export function benchApi(rpc: RpcClient) {
   return {
-    project: (p: { cameras: CameraConfig[]; focals: number[]; target?: { x_m: number; y_m: number }; level_key?: string }, opts?: CallOptions) =>
+    project: (p: { cameras: CameraConfig[]; focals: number[]; target?: { x_m: number; y_m: number }; level_key?: string; levels?: import("./api").PPMLevel[] }, opts?: CallOptions) =>
       rpc.call<{ cameras: ProjectCamera[]; level: { key: string; name: string; ppm: number } | null }>("optics.project", p, opts),
     planImage: (path: string) =>
       rpc.call<Picture & { source_width_px: number; source_height_px: number; aspect: number }>("plan.image", { path }),

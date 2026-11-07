@@ -64,6 +64,19 @@ def test_project_overlap_matches_the_engine():
     assert r["cameras"][0]["dead_zone_covered_by"] == ["B"]
 
 
+def test_custom_level_drives_distances_and_the_check_point():
+    from cctv_simulator.models import DEFAULT_LEVELS
+
+    custom = [dataclasses.asdict(lv) for lv in DEFAULT_LEVELS] + [
+        {"key": "Firma_Yuz", "name": "Firma: Yüz (400 px/m)", "ppm": 400, "color": "#ffffff", "level_type": "Özel"}]
+    cam = dataclasses.asdict(CameraConfig(name="A", heading_deg=0, tilt_deg=10))
+    r = ok("optics.project", cameras=[cam], levels=custom, target={"x_m": 3, "y_m": 0}, level_key="Firma_Yuz")
+    c = r["cameras"][0]
+    assert "Firma_Yuz" in c["ground_distances"]
+    assert c["ground_distances"]["Firma_Yuz"] < c["ground_distances"]["Characterize"]
+    assert r["level"]["ppm"] == 400 and c["target"]["ppm_ok"] == (c["target"]["ppm"] >= 400)
+
+
 def test_plan_image_reads_a_picture(tmp_path):
     p = tmp_path / "plan.png"
     Image.new("RGB", (800, 400), "white").save(p)

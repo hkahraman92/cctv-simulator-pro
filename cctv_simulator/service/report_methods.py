@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from . import session as _s
-from .params import _camera_from, _require
+from .params import _camera_from, _levels_from, _require
 from .protocol import APP_ERROR, INVALID_PARAMS, Context, RpcError
 
 _FORMATS = {"csv", "xlsx", "pdf"}
@@ -42,7 +42,7 @@ def report_optics(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """Optic table report for the project's cameras (the classic app's CSV / XLSX / PDF)."""
     from .. import exporters
     from ..calculations import analyze_dead_zone_coverage, calculate_for_camera
-    from ..models import DEFAULT_LEVELS, TargetPoint
+    from ..models import TargetPoint
 
     cams = params.get("cameras")
     if not isinstance(cams, list) or not cams:
@@ -58,7 +58,7 @@ def report_optics(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     out = _out_dir(params)
     stem = _stem(params)
     modes = ["min", "max"] if mode == "compare" else [mode]
-    levels = list(DEFAULT_LEVELS)
+    levels = _levels_from(params.get("levels"))
     results = {c.name: [calculate_for_camera(c, m, levels) for m in modes] for c in cameras}
     analyze_dead_zone_coverage(results, cameras)
     target, level_name = TargetPoint(), str(params.get("level_name", ""))

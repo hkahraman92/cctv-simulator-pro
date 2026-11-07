@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { isTauri } from "@tauri-apps/api/core";
 import { AlertTriangle, Camera, Crosshair, ImagePlus, Move, Plus, Trash2, X } from "lucide-react";
-import { DORI, type ModelSummary } from "../core/api";
+import { DORI, type ModelSummary, type PPMLevel } from "../core/api";
+import LevelEditor from "../components/LevelEditor";
 import { useProject } from "../core/project";
 import { useCoalesced, useCore } from "../core/CoreProvider";
 import { usePageActive } from "../core/pageActive";
@@ -13,7 +14,9 @@ import SitePlan from "../components/SitePlan";
 export default function Workspace({ onStatus }: { onStatus: (s: string) => void }) {
   const active = usePageActive();
   const { api, bench, state } = useCore();
-  const { sites, selected: sel, site, select: setSel, add, remove, update, updateAt, replaceCamera, plan, setPlan } = useProject();
+  const { sites, selected: sel, site, select: setSel, add, remove, update, updateAt, replaceCamera, plan, setPlan, levels, setLevels } = useProject();
+  const [defaults, setDefaults] = useState<PPMLevel[]>([]);
+  const effLevels = levels ?? defaults;
   const [models, setModels] = useState<ModelSummary[]>([]);
   const [view, setView] = useState<"site" | "single">("site");
   const [tool, setTool] = useState<"move" | "target">("move");
@@ -31,17 +34,19 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
   const projInput = useMemo(() => ({
     cameras: sites.map((x) => x.camera), focals: sites.map((x) => x.focal),
     target: plan.target.active ? { x_m: plan.target.x_m, y_m: plan.target.y_m } : undefined, level_key: plan.level_key,
-  }), [sites, plan.target, plan.level_key]);
+    ...(levels ? { levels } : {}),
+  }), [sites, plan.target, plan.level_key, levels]);
   const dupNames = new Set(sites.map((x) => x.camera.name)).size !== sites.length;
   const proj = useCoalesced(projInput, (i) => bench.project(i), state === "ready" && active && !dupNames);
 
   useEffect(() => {
     if (state !== "ready") return;
     api.library().then((r) => setModels(r.models)).catch(() => setModels([]));
+    api.catalog().then((c) => setDefaults(c.levels)).catch(() => undefined);
   }, [api, state]);
 
-  const input = useMemo(() => ({ camera: site.camera, focal: site.focal }), [site]);
-  const res = useCoalesced(input, (i) => api.optics(i.camera, { focal_mm: i.focal }), state === "ready" && active);
+  const input = useMemo(() => ({ camera: site.camera, focal: site.focal, levels }), [site, levels]);
+  const res = useCoalesced(input, (i) => api.optics(i.camera, { focal_mm: i.focal, ...(i.levels ? { levels: i.levels } : {}) }), state === "ready" && active);
   const r = res.value;
 
   useEffect(() => {
@@ -108,7 +113,7 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
           <>
             <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-1 text-[12px]" value={plan.level_key} aria-label="Gereken seviye"
               onChange={(e) => setPlan({ level_key: e.target.value })}>
-              {[["Characterize", "Teşhis 250"], ["ANPR_Alg", "Plaka 143"], ["Perceive", "Tanıma 125"], ["Discern", "Gözlem 62,5"], ["Outline", "Algılama 25"]].map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              {[...effLevels].sort((a, b) => b.ppm - a.ppm).map((lv) => <option key={lv.key} value={lv.key}>{lv.name} · {fmt(lv.ppm, lv.ppm % 1 ? 1 : 0)}</option>)}
             </select>
             <div className="mt-1 font-mono text-[10px] text-text-3">({fmt(plan.target.x_m)}, {fmt(plan.target.y_m)}) m · ⌖ ile haritaya tıklayın</div>
             <ul className="mt-2 flex flex-col gap-1 text-[11px]">
@@ -168,6 +173,8 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
           </p>
         )}
       </Panel>
+
+      <LevelEditor levels={effLevels} defaults={defaults} onChange={(l) => setLevels(l)} onReset={() => setLevels(null)} custom={!!levels} />
 
       <Panel title="İnceleme" className="flex-[2_1_300px]">
         <label className="mb-3 block">

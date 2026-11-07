@@ -1,15 +1,18 @@
 ## -36. Yeni masaüstü uygulaması: Tauri 2 + React/TS + Python çekirdek servisi — ✅ (2026-11-07)
 
 - Mimari: `desktop/` (Rust kabuk + WebView2 arayüzü) Python çekirdeğini
-  (`cctv_simulator/service`, stdio JSON-RPC 2.0, API v1, 45 yöntem) alt süreç
+  (`cctv_simulator/service`, stdio JSON-RPC 2.0, API v1, 53 yöntem) alt süreç
   olarak çalıştırır. Ekran fizik türetmez; her sayı motordan. Klasik Tk
   uygulaması değişmeden çalışır.
-- Ekranlar: CAD Çalışma Alanı, Optik Laboratuvarı, 3B Kamera Görüşü, Arazi &
+- Ekranlar: CAD Çalışma Alanı (vaziyet planı resmi, sürükle-bırak kamera +
+  yön kulpu, kör nokta örtüşmesi, kontrol noktası), Optik Laboratuvarı, 3B Kamera Görüşü, Arazi &
   Görüş Alanı (kaynaklar, OSM/nDSM yüzey, tek kamera + kesit + varifokal,
   çit planı, birleşik kapsama, en az direk, PTZ tarama / tespit→teşhis,
-  karma sabit+PTZ), Kamera Kütüphanesi, Şartname & Uyum (kurallı / Ollama /
-  Gemini, elle düzeltme, şablon, beyan), Raporlar (optik + mühendislik).
-  Proje aç/kaydet klasik şemayla; sayfalar ziyaret sonrası canlı tutulur.
+  karma sabit+PTZ), Kamera Kütüphanesi (+ yönetici şifreli düzenleme),
+  Şartname & Uyum (kurallı / Ollama / Gemini, elle düzeltme, şablon, beyan),
+  Raporlar (optik + mühendislik). Proje aç/kaydet klasik şemayla — plan resmi,
+  kontrol noktası, arazi kaynağı, çit, hat modu ve karma PTZ dahil; sayfalar
+  ziyaret sonrası canlı tutulur.
 - Ortaklaştırılan (Tk'siz) mantık: `map_render` (24 kombinasyonda bit-aynı),
   `optics_bench.evaluate_requirement`, `focal_optimizer.apply_layout /
   band_area`, `compliance.call_gemini / evaluate_template`. Klasik arayüz
@@ -23,6 +26,12 @@
   - `compliance.py` ve `exporters.py` en üstte tkinter alıyordu; Tk'siz
     paketli çekirdekte şartname analizi ve rapor PDF'i açılmazdı.
     `test_every_engine_module_imports_without_tk` artık bunu denetler.
+  - `project_io` arazi bloğunun bilinmeyen anahtarlarını (çit noktaları,
+    hat modu, karma PTZ) atıyordu; başsız CLI ile yeniden kaydedilen klasik
+    proje çitini kaybediyordu. Artık `terrain_extra` ile korunur.
+  - Kamera DB kaydetme/silme mantığı (hazır model yeniden adlandırma mezar
+    taşı, Türkçe sayı) Tk'siz `database.py`'ye taşındı; iki arayüz aynı kodu
+    kullanır.
 - Paket: `desktop\packaging\build_release.bat` → `cctv-core.exe` (Tk'siz,
   onedir) + duman testi (14 ağır yol paketli çekirdekte) → NSIS kurulum
   27 MB. Kurulu sürüm uçtan uca sürüldü; derin klasöre kurulunca (MAX_PATH)
@@ -30,12 +39,15 @@
 - Testler: `test_service*.py` (motorla birebir eşlik), `test_map_render.py`,
   arayüzde `rpc.test.ts`.
 
+- PTZ: 360° dönüş, sektör devriyesi, preset turu (bakışı ekle, bekleme
+  süresi, revizit), tespit→teşhis; PPM seviye düzenleyici (projeye özel
+  seviyeler; mesafe tablosu, kontrol noktası, rapor ve proje dosyası aynı
+  listeyi kullanır).
+
 Kalan: kod imzalama (sertifika yok — Norton/SmartScreen uyarabilir);
-otomatik güncelleme yok; arayüzün İngilizce çevirisi yok (yeni kabuk
-yalnız Türkçe); kamera veritabanı düzenleme (yönetici parolalı ekran) yeni
-arayüze taşınmadı, kütüphane salt okunur; CAD'de vaziyet planı resmi ve
-sürükle-bırak kamera yerleşimi yok (yalnız optik); proje dosyası arazi/çit
-durumunu taşımıyor.
+otomatik güncelleme yok (imzalı sürüm + yayın sunucusu gerekir); yeni kabuk
+yalnız Türkçe (İngilizce çeviri yok); yönetici şifresi klasikteki gibi düz
+metin `admin_settings.json`'da (karma/salt yok).
 
 ## -35. Yerel yüzey modeli: LiDAR nDSM / DSM GeoTIFF — ✅ (2026-11-07)
 

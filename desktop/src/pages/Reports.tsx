@@ -12,7 +12,7 @@ import { Button, Panel } from "../components/ui";
 /** Report files from the same writers as the classic app and the headless CLI. */
 export default function Reports() {
   const { report } = useCore();
-  const { sites, name } = useProject();
+  const { sites, name, levels } = useProject();
   const { active } = useActiveTerrain();
   const job = useJob();
   const [dir, setDir] = useState("");
@@ -64,6 +64,7 @@ export default function Reports() {
         <Button primary className="mt-3 w-full" disabled={!dir || job.running || dupNames || !Object.values(fmts).some(Boolean)}
           onClick={() => job.run("Optik rapor yazılıyor", () => report.optics({
             cameras: sites.map((s) => s.camera), mode, formats: Object.keys(fmts).filter((k) => fmts[k]), out_dir: dir, stem: base,
+            ...(levels ? { levels } : {}),
           })).then((r) => done(r))}>
           <FileText size={14} /> Optik Raporu Yaz
         </Button>

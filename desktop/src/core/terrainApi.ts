@@ -209,6 +209,21 @@ export interface SweepResult {
   legend: LegendRow[];
 }
 
+export interface TourResult {
+  tour_period_s: number;
+  active_dwell_s: number;
+  slew_total_s: number;
+  zoom_total_s: number;
+  settle_total_s: number;
+  mean_revisit_s: number | null;
+  worst_revisit_s: number | null;
+  covered_area_m2: number;
+  preset_labels: string[];
+  zone_areas_m2: ZoneAreas;
+  overlay: Picture;
+  legend: LegendRow[];
+}
+
 export interface CueResult {
   target_ppm: number;
   reachable_area_m2: number;
@@ -283,6 +298,10 @@ export function terrainApi(rpc: RpcClient) {
       p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; home_pan_deg: number; home_tilt_deg: number; target_ppm: number; range_m: number; weather?: string; max_px?: number },
       opts?: CallOptions,
     ) => rpc.call<CueResult>("ptz.cue", p, { timeoutMs: 0, ...opts }),
+    ptzTour: (
+      p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; presets: { name: string; pan_deg: number; tilt_deg: number; focal_mm?: number; dwell_s: number }[]; range_m: number; weather?: string; max_px?: number },
+      opts?: CallOptions,
+    ) => rpc.call<TourResult>("ptz.tour", p, { timeoutMs: 0, ...opts }),
     mixed: (p: T & { speed_deg_s: number; layer?: "fused" | "cue"; cue_target_ppm?: number; max_px?: number }, opts?: CallOptions) =>
       rpc.call<MixedResult>("perimeter.mixed", p, { timeoutMs: 0, ...opts }),
   };

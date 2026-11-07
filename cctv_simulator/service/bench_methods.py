@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 from typing import Any, Dict
 
-from .params import _camera_from, _require
+from .params import _camera_from, _levels_from, _require
 from .protocol import APP_ERROR, INVALID_PARAMS, Context, RpcError
 from .terrain_methods import _image, _num
 
@@ -139,7 +139,7 @@ def optics_project(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """Every camera of a site plan at once: DORI distances, dead zones and which
     other cameras cover each dead zone, plus the check point verdict per camera."""
     from ..calculations import analyze_dead_zone_coverage, calculate_for_camera, target_analysis_for_result
-    from ..models import DEFAULT_LEVELS, TargetPoint
+    from ..models import TargetPoint
 
     raw = params.get("cameras")
     if not isinstance(raw, list) or not raw:
@@ -153,19 +153,20 @@ def optics_project(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     if mode not in ("min", "max"):
         raise RpcError(INVALID_PARAMS, "'mode' 'min' veya 'max' olmalı.")
     import dataclasses
+    levels = _levels_from(params.get("levels"))      # the project's own levels (custom ones included)
     results = {}
     for i, c in enumerate(cams):
         f = focals[i] if isinstance(focals, list) and i < len(focals) and isinstance(focals[i], (int, float)) else None
         if f is not None and c.focal_min_mm <= f <= c.focal_max_mm:
             c = dataclasses.replace(c, focal_min_mm=float(f), focal_max_mm=float(f))
-            results[c.name] = [calculate_for_camera(c, "min", list(DEFAULT_LEVELS), with_recommendations=False)]
+            results[c.name] = [calculate_for_camera(c, "min", levels, with_recommendations=False)]
         else:
-            results[c.name] = [calculate_for_camera(c, mode, list(DEFAULT_LEVELS), with_recommendations=False)]
+            results[c.name] = [calculate_for_camera(c, mode, levels, with_recommendations=False)]
     analyze_dead_zone_coverage(results, [r[0].camera for r in results.values()])
 
     tp = params.get("target")
     level_key = str(params.get("level_key", "Characterize"))
-    level = next((lv for lv in DEFAULT_LEVELS if lv.key == level_key), None)
+    level = next((lv for lv in levels if lv.key == level_key), None)
     if tp is not None and level is None:
         raise RpcError(INVALID_PARAMS, f"Bilinmeyen seviye: {level_key}")
     target = None

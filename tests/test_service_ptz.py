@@ -57,6 +57,25 @@ def test_cue_matches_the_engine_and_explains_unreachable_cells(hills):
     assert r["unreachable"] and all(u["area_m2"] > 0 for u in r["unreachable"])
 
 
+def test_tour_matches_the_engine(hills):
+    from cctv_simulator.ptz_tour import PTZPreset, PTZTour, evaluate_ptz_tour
+
+    presets = [{"name": "Kapı", "pan_deg": 0, "tilt_deg": -4, "focal_mm": 20.0, "dwell_s": 4},
+               {"name": "Otopark", "pan_deg": 120, "tilt_deg": -6, "dwell_s": 6},
+               {"name": "Arka", "pan_deg": 240, "tilt_deg": -5, "focal_mm": 60.0, "dwell_s": 3}]
+    r = ok("ptz.tour", terrain_id=hills, camera=dataclasses.asdict(PTZ), x_m=500, y_m=500, mast_m=10,
+           presets=presets, range_m=500, max_px=400)
+    t = session.SESSION.get(hills).bare
+    tour = PTZTour(x_m=500, y_m=500, mast_height_m=10, camera=PTZ, max_range_m=500, presets=[
+        PTZPreset("Kapı", 0, -4, focal_mm=20.0, dwell_s=4), PTZPreset("Otopark", 120, -6, dwell_s=6),
+        PTZPreset("Arka", 240, -5, focal_mm=60.0, dwell_s=3)])
+    want = evaluate_ptz_tour(t, tour)
+    assert r["tour_period_s"] == want.tour_period_s and r["worst_revisit_s"] == want.worst_revisit_s
+    assert r["preset_labels"] == want.preset_labels
+    assert call("ptz.tour", terrain_id=hills, camera=dataclasses.asdict(PTZ), x_m=1, y_m=1,
+                presets=presets[:1])["error"]["code"] == -32602
+
+
 def test_mixed_perimeter_needs_ptz_then_reports_continuous_and_intermittent(hills):
     fence = [[250, 250], [750, 250], [750, 750], [250, 750]]
     ok("perimeter.plan", terrain_id=hills, camera=dataclasses.asdict(FIX), fence=fence, target_ppm=40, mast_m=6)

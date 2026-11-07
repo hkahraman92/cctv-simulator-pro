@@ -4,6 +4,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { FolderOpen, Save, SaveAll } from "lucide-react";
 import { useCore } from "../core/CoreProvider";
 import { useProject } from "../core/project";
+import type { PPMLevel } from "../core/api";
 
 const FILTERS = [{ name: "CCTV projesi", extensions: ["json"] }];
 
@@ -29,6 +30,7 @@ export default function ProjectBar() {
           y_m: proj.plan.target.y_m, required_level_key: proj.plan.level_key },
         // the terrain page may never have opened this session: keep the block read from the file
         ...(proj.terrainBlock ?? proj.loadedTerrain?.block ?? {}),
+        ...(proj.levels ? { ppm_levels: proj.levels } : {}),
       });
       proj.markSaved(path, name);
       setMsg("");
@@ -49,7 +51,8 @@ export default function ProjectBar() {
         plan_path: String(r.project.plan_path ?? ""), plan_width_m: Number(r.project.plan_width_m ?? 45) || 45,
         target: { active: !!tp.active, x_m: tp.x_m ?? 12, y_m: tp.y_m ?? 0 }, level_key: tp.required_level_key || "Characterize",
       }, Object.fromEntries(Object.entries(r.project).filter(([k]) =>
-        k.startsWith("terrain_") || ["viewshed_range_m", "weather", "placements", "ptz"].includes(k))));
+        k.startsWith("terrain_") || ["viewshed_range_m", "weather", "placements", "ptz"].includes(k))),
+        (r.project.ppm_levels as PPMLevel[] | undefined) ?? null);
       setMsg("");
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));

@@ -100,6 +100,56 @@ def ptz_cue(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     }
 
 
+def ptz_tour(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """A PTZ preset tour: union coverage of the presets and the revisit time of every cell."""
+    from .. import map_render
+    from ..ptz_tour import PTZPreset, PTZTour, evaluate_ptz_tour
+
+    entry, t = _terrain_of(params)
+    cam = _camera_from(params.get("camera", {}))
+    raw = params.get("presets")
+    if not isinstance(raw, list) or len(raw) < 2:
+        raise RpcError(INVALID_PARAMS, "Tur için en az iki preset gerekli.")
+    presets = []
+    for i, p in enumerate(raw):
+        if not isinstance(p, dict):
+            raise RpcError(INVALID_PARAMS, "Her preset bir nesne olmalı.")
+        focal = p.get("focal_mm")
+        if focal is not None and not (isinstance(focal, (int, float)) and cam.focal_min_mm <= focal <= cam.focal_max_mm):
+            raise RpcError(INVALID_PARAMS, f"Preset {i + 1}: odak lens aralığının dışında.")
+        presets.append(PTZPreset(name=str(p.get("name") or f"P{i + 1}"), pan_deg=_num(p, "pan_deg") % 360.0,
+                                 tilt_deg=_num(p, "tilt_deg", -5.0, lo=-89, hi=30),
+                                 focal_mm=float(focal) if focal is not None else None,
+                                 dwell_s=_num(p, "dwell_s", 5.0, lo=0.1, hi=3600)))
+    tour = PTZTour(x_m=_num(params, "x_m"), y_m=_num(params, "y_m"), mast_height_m=_num(params, "mast_m", 8.0, lo=0.5, hi=200),
+                   camera=cam, presets=presets, max_range_m=_num(params, "range_m", 1500.0, lo=50, hi=20000),
+                   slew_speed_deg_s=_num(params, "slew_deg_s", 90.0, lo=1, hi=600),
+                   settle_s=_num(params, "settle_s", 1.5, lo=0, hi=30),
+                   zoom_full_sweep_s=_num(params, "zoom_full_sweep_s", 3.0, lo=0, hi=60))
+    weather, vis = _weather(params)
+    ctx.progress(0, 1, f"{len(presets)} preset hesaplanıyor")
+    res = evaluate_ptz_tour(t, tour, visibility_km=vis, weather=weather)
+    entry.results["tour"] = res
+    max_px = int(_num(params, "max_px", _DISPLAY_PX, lo=200, hi=4096))
+    layer = params.get("layer", "revisit")
+    if layer == "revisit":
+        overlay = map_render.zone_overlay(res.revisit_grid, _overlay_size(t, max_px), mode="revisit")
+    elif layer == "dori":
+        overlay = map_render.zone_overlay(res.combined.dori_grid, _overlay_size(t, max_px), mode="dori")
+    else:
+        raise RpcError(INVALID_PARAMS, "'layer' revisit ya da dori olmalı.")
+    cell = t.cell_size_m ** 2
+    seen = np.isfinite(res.revisit_grid)
+    return {
+        "tour_period_s": res.tour_period_s, "active_dwell_s": res.active_dwell_s, "slew_total_s": res.slew_total_s,
+        "zoom_total_s": res.zoom_total_s, "settle_total_s": res.settle_total_s,
+        "mean_revisit_s": _fin(res.mean_revisit_s), "worst_revisit_s": _fin(res.worst_revisit_s),
+        "covered_area_m2": float(seen.sum() * cell), "preset_labels": res.preset_labels,
+        "zone_areas_m2": _zone_areas(res.combined.dori_grid, cell),
+        "overlay": _image(overlay, max_px=max_px), "legend": map_render.legend(layer)[1],
+    }
+
+
 def perimeter_mixed(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """The last plan's fixed poles + co-mounted PTZs: continuous vs intermittent detection, detect -> identify."""
     from .. import map_render
@@ -148,5 +198,6 @@ def perimeter_mixed(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
 METHODS = {
     "ptz.sweep": ptz_sweep,
     "ptz.cue": ptz_cue,
+    "ptz.tour": ptz_tour,
     "perimeter.mixed": perimeter_mixed,
 }
