@@ -1,20 +1,17 @@
-import base64
 import csv
-import json
 import os
 import re
 import threading
-import urllib.request
 import zipfile
 from pathlib import Path
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from typing import Dict, Any, Optional
 
-from ..compliance import build_compliance_prompt, gemini_response_text, extract_json_object, rule_based_compliance, run_gemini_in_thread
+from ..compliance import (gemini_request, rule_based_compliance, run_gemini_in_thread)
 from ..exporters import export_compliance_excel
 from .. import training_log
-from ..theme import is_themed, COLORS, FONT_UI, StyledButton, fit_and_center_window, flow_layout, set_window_icon
+from ..theme import COLORS, FONT_UI, StyledButton, fit_and_center_window, flow_layout, set_window_icon
 
 
 class SpecAssistantWindow:
@@ -330,31 +327,8 @@ class SpecAssistantWindow:
             return
         model = self.spec_model_entry.get().strip() or "gemini-2.0-flash"
 
-        prompt = build_compliance_prompt(spec_text, self.app.camera_library)
-        endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-        parts = [{"text": prompt}]
-        if self.loaded_file_bytes and self.loaded_file_mime == "application/pdf":
-            parts.append(
-                {
-                    "inline_data": {
-                        "mime_type": self.loaded_file_mime,
-                        "data": base64.b64encode(self.loaded_file_bytes).decode("ascii"),
-                    }
-                }
-            )
-        payload = {
-            "contents": [{"role": "user", "parts": parts}],
-            "generationConfig": {"temperature": 0.1},
-        }
-        api_request = urllib.request.Request(
-            endpoint,
-            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "x-goog-api-key": api_key,
-            },
-            method="POST",
-        )
+        pdf = self.loaded_file_bytes if self.loaded_file_mime == "application/pdf" else None
+        api_request = gemini_request(spec_text, self.app.camera_library, api_key, model, pdf)
         self._analysis_source = "gemini"
         # BUGFIX: on_success/on_failure used to be bound with no spec_text,
         # so apply_compliance_result/analyze_spec_rule_based re-read the Text
@@ -680,7 +654,7 @@ class SpecAssistantWindow:
 
     def load_requirement_template(self):
         from .. import requirement_library as RL
-        from ..compliance import evaluate_dori_requirement, evaluate_rule_requirement
+        from ..compliance import evaluate_template
         name = self.template_combo.get().strip()
         tpl = RL.load_template(name) if name else None
         if not tpl:
@@ -690,44 +664,7 @@ class SpecAssistantWindow:
         if not requirements:
             messagebox.showinfo("Şablon", "Şablonda ister yok.", parent=self.window)
             return
-        # re-evaluate the template's requirements against the current camera library
-        items = [(n, m) for n, m in self.app.camera_library.items() if m]
-        real = [(n, m) for n, m in items if m.get("stock_code")] or items
-        matrix, rows = [], []
-        for model_name, model in real:
-            passed = total = 0.0
-            for req in requirements:
-                w = max(float(req.get("weight", 1)), 0.1)
-                total += w
-                if req.get("category") == "dori":
-                    status, ev = evaluate_dori_requirement(model_name, model, req)
-                    kind = "optik motor"
-                else:
-                    status, ev = evaluate_rule_requirement(model_name, model, req)
-                    kind = "broşür"
-                if status == "Uyumlu":
-                    passed += w
-                elif status == "Kısmi":
-                    passed += w * 0.5
-                matrix.append({
-                    "profile_name": req.get("profile_name", tpl.get("name", "Şablon")),
-                    "requirement_id": req.get("id", ""), "requirement": req.get("requirement", ""),
-                    "camera_model": model_name, "status": status, "evidence": ev,
-                    "evidence_kind": kind, "standard_clause": req.get("standard_clause", ""),
-                    "confidence": req.get("confidence", 0.7), "spec_quote": req.get("spec_quote", ""),
-                })
-            score = round(passed / max(total, 1) * 100)
-            rows.append({"profile_name": tpl.get("name", "Şablon"), "camera_model": model_name,
-                         "score": score, "verdict": "Uyumlu" if score >= 82 else "Kısmi" if score >= 50 else "Uyumsuz",
-                         "notes": f"{passed:g}/{total:g} ağırlık"})
-        rows.sort(key=lambda r: r["score"], reverse=True)
-        result = {
-            "profiles": [{"id": "T1", "name": tpl.get("name", "Şablon"), "description": ""}],
-            "requirements": requirements, "matrix": matrix, "camera_scores": rows,
-            "recommendation": f"Şablon “{tpl.get('name', name)}” — en yüksek: "
-                              + (f"{rows[0]['camera_model']} ({rows[0]['score']}/100)" if rows else "model yok"),
-            "ambiguities": [], "clarification_questions": [],
-        }
+        result = evaluate_template(tpl, self.app.camera_library)
         self._analysis_source = "template"
         self.apply_compliance_result(result)
 

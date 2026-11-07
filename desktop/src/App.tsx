@@ -8,7 +8,9 @@ import Library from "./pages/Library";
 import Terrain from "./pages/Terrain";
 import Optics from "./pages/Optics";
 import View3D from "./pages/View3D";
+import Spec from "./pages/Spec";
 import { ProjectProvider } from "./core/project";
+import ProjectBar from "./components/ProjectBar";
 import NotMigrated from "./pages/NotMigrated";
 
 type Page = "workspace" | "optics" | "view3d" | "terrain" | "library" | "spec" | "reports";
@@ -50,9 +52,10 @@ function Shell() {
         <Video size={16} className="text-primary" aria-hidden />
         <span className="text-xs font-semibold">CCTV Simülatör Pro</span>
         <span className="font-mono text-[11px] text-text-3">—</span>
-        <span className="font-mono text-[11px] text-secondary">{current.label}</span>
+        <span className="font-mono text-[11px] text-text-2">{current.label}</span>
         <div className="flex-1" />
-        <span className="font-mono text-[10px] text-text-3">EN 62676-4:2015</span>
+        <ProjectBar />
+        <span className="ml-2 font-mono text-[10px] text-text-3">EN 62676-4:2015</span>
       </header>
 
       <div className="flex min-h-0 flex-1">
@@ -85,7 +88,8 @@ function Shell() {
           {page === "terrain" && <Terrain />}
           {page === "optics" && <Optics />}
           {page === "view3d" && <View3D />}
-          {!["workspace", "library", "terrain", "optics", "view3d"].includes(page) && <NotMigrated title={current.label} />}
+          {page === "spec" && <Spec />}
+          {!["workspace", "library", "terrain", "optics", "view3d", "spec"].includes(page) && <NotMigrated title={current.label} />}
         </main>
       </div>
 

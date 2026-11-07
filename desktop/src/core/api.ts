@@ -114,6 +114,10 @@ export function api(rpc: RpcClient) {
         ...(base ? { base } : {}),
         with_mounting: withMounting,
       }),
+    loadProject: (path: string) =>
+      rpc.call<{ path: string; project: { cameras: CameraConfig[]; project_name: string; lens_mode: string } & Record<string, unknown> }>("project.load", { path }),
+    saveProject: (path: string, project: { cameras: CameraConfig[]; project_name: string; lens_mode?: string }) =>
+      rpc.call<{ path: string }>("project.save", { path, project }),
     optics: (
       camera: Partial<CameraConfig>,
       sel: { mode?: "min" | "max"; focal_mm?: number; levels?: PPMLevel[] } = {},

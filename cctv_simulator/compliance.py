@@ -1,13 +1,10 @@
 import base64
 import json
-import os
 import re
 import threading
 import time
 import urllib.error
 import urllib.request
-import tkinter as tk
-from tkinter import ttk, messagebox
 from typing import Dict, Any, List, Tuple, Optional
 from .database import camera_db_extended_field_specs, has_camera_db_value
 from .compliance_optics import evaluate_dori_requirement, extract_dori_requirements
@@ -173,13 +170,124 @@ def analyze_with_ollama(spec_text: str, camera_library: Dict[str, Any],
         return None
 
 
+class GeminiCancelled(Exception):
+    pass
+
+
+def gemini_request(spec_text: str, camera_library: Dict[str, Any], api_key: str,
+                   model: str = "gemini-2.0-flash", pdf_bytes: Optional[bytes] = None) -> urllib.request.Request:
+    """The generateContent request for a spec (optionally with the PDF inline)."""
+    prompt = build_compliance_prompt(spec_text, camera_library)
+    endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    parts: List[Dict[str, Any]] = [{"text": prompt}]
+    if pdf_bytes:
+        parts.append({"inline_data": {"mime_type": "application/pdf",
+                                      "data": base64.b64encode(pdf_bytes).decode("ascii")}})
+    payload = {"contents": [{"role": "user", "parts": parts}], "generationConfig": {"temperature": 0.1}}
+    return urllib.request.Request(
+        endpoint, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={"Content-Type": "application/json", "x-goog-api-key": api_key}, method="POST")
+
+
+_RETRY_WAITS = [15, 30, 60]
+
+
+def call_gemini(api_request: urllib.request.Request, *, on_status=None, is_cancelled=None) -> Dict[str, Any]:
+    """Blocking Gemini call with 429 back-off; returns the parsed JSON result.
+
+    Raises GeminiCancelled when ``is_cancelled()`` turns true, or an Exception
+    with a Turkish message (404 model, 403 key, quota)."""
+    status = on_status or (lambda _msg: None)
+    cancelled = is_cancelled or (lambda: False)
+    for attempt in range(len(_RETRY_WAITS) + 1):
+        if cancelled():
+            raise GeminiCancelled()
+        try:
+            with urllib.request.urlopen(api_request, timeout=90) as response:
+                response_data = json.loads(response.read().decode("utf-8"))
+            return json.loads(extract_json_object(gemini_response_text(response_data)))
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise Exception(
+                    "Model bulunamadı (HTTP 404).\n\n"
+                    "Girdiğiniz model adı Google API'sinde mevcut değil.\n"
+                    "Geçerli modeller: gemini-2.0-flash, gemini-1.5-flash, "
+                    "gemini-1.5-pro, gemini-2.0-flash-lite\n\n"
+                    "Lütfen model adını kontrol edin.") from None
+            if exc.code == 403:
+                raise Exception(
+                    "API key geçersiz veya yetkisiz (HTTP 403).\n\n"
+                    "API anahtarınızı kontrol edin veya\n"
+                    "https://aistudio.google.com/apikey adresinden yeni bir key oluşturun.") from None
+            if exc.code == 429 and attempt < len(_RETRY_WAITS):
+                for remaining in range(_RETRY_WAITS[attempt], 0, -1):
+                    if cancelled():
+                        raise GeminiCancelled() from None
+                    status(f"API kota limiti (429) — Deneme {attempt + 1}/{len(_RETRY_WAITS)}. "
+                           f"{remaining} saniye sonra tekrar denenecek...")
+                    time.sleep(1)
+                status(f"Tekrar deneniyor ({attempt + 2}/{len(_RETRY_WAITS) + 1})...")
+                continue
+            raise
+    raise Exception(
+        f"API kota limiti ({len(_RETRY_WAITS)} denemede de 429 hatası aldı). "
+        "Birkaç dakika bekleyip tekrar deneyin veya API kotanızı kontrol edin.")
+
+
+def evaluate_template(tpl: Dict[str, Any], camera_library: Dict[str, Any]) -> Dict[str, Any]:
+    """A saved requirement template re-evaluated against the current camera
+    library: same result shape as rule_based_compliance (DORI rows through the
+    optic engine, the rest against the brochure fields)."""
+    requirements = tpl.get("requirements", [])
+    items = [(n, m) for n, m in camera_library.items() if m]
+    real = [(n, m) for n, m in items if m.get("stock_code")] or items
+    matrix, rows = [], []
+    for model_name, model in real:
+        passed = total = 0.0
+        for req in requirements:
+            w = max(float(req.get("weight", 1)), 0.1)
+            total += w
+            if req.get("category") == "dori":
+                status, ev = evaluate_dori_requirement(model_name, model, req)
+                kind = "optik motor"
+            else:
+                status, ev = evaluate_rule_requirement(model_name, model, req)
+                kind = "broşür"
+            if status == "Uyumlu":
+                passed += w
+            elif status == "Kısmi":
+                passed += w * 0.5
+            matrix.append({
+                "profile_name": req.get("profile_name", tpl.get("name", "Şablon")),
+                "requirement_id": req.get("id", ""), "requirement": req.get("requirement", ""),
+                "camera_model": model_name, "status": status, "evidence": ev,
+                "evidence_kind": kind, "standard_clause": req.get("standard_clause", ""),
+                "confidence": req.get("confidence", 0.7), "spec_quote": req.get("spec_quote", ""),
+            })
+        score = round(passed / max(total, 1) * 100)
+        rows.append({"profile_name": tpl.get("name", "Şablon"), "camera_model": model_name,
+                     "score": score, "verdict": "Uyumlu" if score >= 82 else "Kısmi" if score >= 50 else "Uyumsuz",
+                     "notes": f"{passed:g}/{total:g} ağırlık"})
+    rows.sort(key=lambda r: r["score"], reverse=True)
+    return {
+        "profiles": [{"id": "T1", "name": tpl.get("name", "Şablon"), "description": ""}],
+        "requirements": requirements, "matrix": matrix, "camera_scores": rows,
+        "recommendation": f"Şablon “{tpl.get('name', '')}” — en yüksek: "
+                          + (f"{rows[0]['camera_model']} ({rows[0]['score']}/100)" if rows else "model yok"),
+        "ambiguities": [], "clarification_questions": [],
+    }
+
+
 def run_gemini_in_thread(
-    parent_win: tk.Widget,
+    parent_win: Any,          # tk.Widget; Tk is imported lazily so the core stays Tk-free
     api_request: urllib.request.Request,
     on_success: Any,
     on_failure: Any
 ):
     """Gemini API çağrısını arka plan thread'inde çalıştırır; ilerleme ve 429 retry yönetimi sunar."""
+    import tkinter as tk
+    from tkinter import messagebox, ttk
+
     progress_win = tk.Toplevel(parent_win)
     progress_win.title("Gemini Analizi")
     progress_win.geometry("400x150")
@@ -204,65 +312,19 @@ def run_gemini_in_thread(
     ttk.Button(progress_win, text="İptal", command=cancel).pack()
     progress_win.protocol("WM_DELETE_WINDOW", cancel)
 
-    _RETRY_WAITS = [15, 30, 60]
-    _MAX_RETRIES = len(_RETRY_WAITS)
-
     def worker():
-        for attempt in range(_MAX_RETRIES + 1):
-            if cancelled[0]:
-                return
+        def post_status(msg):
             try:
-                with urllib.request.urlopen(api_request, timeout=90) as response:
-                    response_data = json.loads(response.read().decode("utf-8"))
-                text = gemini_response_text(response_data)
-                result_container[0] = json.loads(extract_json_object(text))
-                return
-            except urllib.error.HTTPError as exc:
-                if exc.code == 404:
-                    error_container[0] = Exception(
-                        "Model bulunamadı (HTTP 404).\n\n"
-                        "Girdiğiniz model adı Google API'sinde mevcut değil.\n"
-                        "Geçerli modeller: gemini-2.0-flash, gemini-1.5-flash, "
-                        "gemini-1.5-pro, gemini-2.0-flash-lite\n\n"
-                        "Lütfen model adını kontrol edin."
-                    )
-                    return
-                if exc.code == 403:
-                    error_container[0] = Exception(
-                        "API key geçersiz veya yetkisiz (HTTP 403).\n\n"
-                        "API anahtarınızı kontrol edin veya\n"
-                        "https://aistudio.google.com/apikey adresinden yeni bir key oluşturun."
-                    )
-                    return
-                if exc.code == 429 and attempt < _MAX_RETRIES:
-                    wait_secs = _RETRY_WAITS[attempt]
-                    for remaining in range(wait_secs, 0, -1):
-                        if cancelled[0]:
-                            return
-                        progress_win.after(
-                            0,
-                            lambda r=remaining, a=attempt: status_var.set(
-                                f"API kota limiti (429) — Deneme {a + 1}/{_MAX_RETRIES}. "
-                                f"{r} saniye sonra tekrar denenecek..."
-                            ),
-                        )
-                        time.sleep(1)
-                    progress_win.after(
-                        0,
-                        lambda a=attempt: status_var.set(
-                            f"Tekrar deneniyor ({a + 2}/{_MAX_RETRIES + 1})..."
-                        ),
-                    )
-                else:
-                    error_container[0] = exc
-                    return
-            except Exception as exc:
-                error_container[0] = exc
-                return
-        error_container[0] = Exception(
-            f"API kota limiti ({_MAX_RETRIES} denemede de 429 hatası aldı). "
-            "Birkaç dakika bekleyip tekrar deneyin veya API kotanızı kontrol edin."
-        )
+                progress_win.after(0, lambda m=msg: status_var.set(m))
+            except Exception:
+                pass
+        try:
+            result_container[0] = call_gemini(api_request, on_status=post_status,
+                                              is_cancelled=lambda: cancelled[0])
+        except GeminiCancelled:
+            return
+        except Exception as exc:
+            error_container[0] = exc
 
     def poll():
         if cancelled[0]:

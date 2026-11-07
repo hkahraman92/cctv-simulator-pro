@@ -225,3 +225,6 @@ METHODS.update(_TERRAIN_METHODS)
 from .bench_methods import METHODS as _BENCH_METHODS  # noqa: E402
 
 METHODS.update(_BENCH_METHODS)
+from .spec_methods import METHODS as _SPEC_METHODS  # noqa: E402
+
+METHODS.update(_SPEC_METHODS)
