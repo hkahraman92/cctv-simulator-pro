@@ -23,8 +23,22 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
 - **API v1** (`cctv_simulator/service/__init__.py: API_VERSION`). Yöntem
   eklemek / isteğe bağlı alan eklemek küçük sürüm; yeniden adlandırma ya da
   silme büyük sürüm. `system.describe` güncel listeyi verir.
-- Yöntemler: `system.info|ping|describe`, `catalog.get`, `library.list|get|camera`,
-  `optics.calculate`, `project.load|save`.
+- Yöntemler (45; modül başına):
+  - `methods.py`: `system.info|ping|describe`, `catalog.get`,
+    `library.list|get|camera`, `optics.calculate`, `project.load|save`
+  - `terrain_methods.py`: `terrain.catalog|procedural|geotiff|download|image`,
+    `regions.list|open|save|delete`, `surface.osm|raster`, `viewshed.single`,
+    `perimeter.plan|coverage|minimize_poles`, `focal.sweep`
+  - `ptz_methods.py`: `ptz.sweep|cue`, `perimeter.mixed`
+  - `bench_methods.py`: `optics.bench`, `iq.measure`, `scene.render`
+  - `spec_methods.py`: `spec.read_file|engines|analyze|override|templates|
+    template_save|template_run|template_delete|statement`, `training.export`
+  - `report_methods.py`: `report.optics|engineering|open`
+- Izgaralar çekirdek oturumunda (`session.py`, en fazla 4 arazi) kalır; kabuğa
+  özet + base64 resim gider. Resimler kuzey-yukarı, tam `width_m × height_m`.
+- Motor modülleri tkinter almaz (`test_every_engine_module_imports_without_tk`):
+  `cctv-core.exe` Tk'siz paketlenir, üst düzey bir `import tkinter` paketli
+  çekirdeği o yöntemde düşürür.
 - TypeScript tipleri `desktop/src/core/api.ts` — Python dataclass alanlarıyla
   bire bir. Sonsuz değerler (`max_geom_dist_m` vb.) JSON'da `null`.
 - Hatalar JSON-RPC kodlarıyla: −32602 geçersiz parametre (alan adıyla),
@@ -41,7 +55,12 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
   sıcak renk yalnız uyarı/alarm.
 - Yazı tipleri (Inter, JetBrains Mono) ve simgeler (Lucide) pakete gömülü;
   çalışırken ağdan hiçbir şey indirilmez. CSP yalnız `self` + IPC.
-- Henüz taşınmamış modüller "taşınmadı" der; uydurma veri gösterilmez.
+- Uzun işler `useJob` + `JobBar`: ilerleme (`$/progress`) ve İptal.
+- Sayfalar ilk ziyarette kurulur, sonra gizlenerek canlı tutulur; gizli sayfa
+  canlı önizleme istemez (`usePageActive`).
+- Ortak durum: `ProjectProvider` (kameralar + seçim + kayıt durumu),
+  `ActiveTerrainProvider` (Arazi'de çalışan analizler → Raporlar).
+- Uydurma veri gösterilmez; ölçülmemiş arazi her yerde uyarılır.
 
 ## Geliştirme
 
@@ -84,7 +103,20 @@ konsol alt sistemi, onedir → `src-tauri\core\`) → tip denetimi + testler →
 
 ## Sıradaki adımlar
 
-1. Arazi / viewshed API'si: uzun işler `$/progress` + iptal; raster sonuçları
-   ikili (PNG/npz) dosya yoluyla, JSON'da değil.
-3. Optik laboratuvarı, şartname, raporlar ekranları.
-4. İmza: sertifika gelince `signCommand`.
+- İmza: sertifika gelince `bundle.windows.signCommand` (+ `cctv-core.exe`'yi de
+  imzala; Norton imzasız PyInstaller önyükleyicisini engelleyebilir).
+- Otomatik güncelleme (Tauri updater, imzalı sürüm gerektirir).
+- Kamera veritabanı düzenleme ekranı (klasikte yönetici parolalı).
+- CAD'de vaziyet planı resmi + sürükle-bırak kamera yerleşimi.
+- Proje dosyasına arazi / çit durumu (şema `project_io` ile birlikte).
+- İngilizce arayüz (`i18n` anahtarlarıyla).
+
+## Kurulum yolu sınırı
+
+Çekirdek klasöründeki en derin dosya `core\` altında ~102 karakter. NSIS,
+Windows'un 260 karakter sınırını aşan dosyaları **hatasız atlar**; çok derin bir
+klasöre kurulursa numpy DLL'i eksik kalır ve çekirdek açılmaz (ölçüldü: 190
+karakterlik kökte 126 dosyanın 101'i kuruldu). Kabuk başlatmadan önce yolu
+ölçer ve "Kurulum klasörü çok derin" der; varsayılan kurulum yolu
+(`%LOCALAPPDATA%\CCTV Simülatör Pro`) güvenlidir. Çekirdek kapanırsa durum
+çubuğu son günlük satırını da gösterir.

@@ -16,6 +16,9 @@ use std::thread;
 
 use tauri::{AppHandle, Emitter, Manager, RunEvent, State};
 
+/// Longest path inside the bundled core\ folder (measured: 102) plus margin.
+const CORE_MAX_REL_PATH: usize = 112;
+
 #[derive(Default)]
 struct Core {
     inner: Mutex<Option<Running>>,
@@ -50,6 +53,16 @@ fn core_command(app: &AppHandle) -> Result<Command, String> {
         let exe = dir.join(if cfg!(windows) { "cctv-core.exe" } else { "cctv-core" });
         if !exe.is_file() {
             return Err(format!("Çekirdek bulunamadı: {}", exe.display()));
+        }
+        // The installer silently drops files past Windows' 260-character
+        // MAX_PATH; the deepest core file is ~110 characters below core\.
+        // A too-deep install then dies on a missing DLL with no clue why.
+        let depth = dir.to_string_lossy().chars().count();
+        if cfg!(windows) && depth + CORE_MAX_REL_PATH > 259 {
+            return Err(format!(
+                "Kurulum klasörü çok derin ({depth} karakter): çekirdek dosyaları Windows yol sınırını \
+                 aşıyor. Uygulamayı daha kısa bir klasöre kurun (ör. varsayılan konum)."
+            ));
         }
         let mut cmd = Command::new(exe);
         cmd.current_dir(dir);

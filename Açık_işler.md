@@ -1,3 +1,42 @@
+## -36. Yeni masaüstü uygulaması: Tauri 2 + React/TS + Python çekirdek servisi — ✅ (2026-11-07)
+
+- Mimari: `desktop/` (Rust kabuk + WebView2 arayüzü) Python çekirdeğini
+  (`cctv_simulator/service`, stdio JSON-RPC 2.0, API v1, 45 yöntem) alt süreç
+  olarak çalıştırır. Ekran fizik türetmez; her sayı motordan. Klasik Tk
+  uygulaması değişmeden çalışır.
+- Ekranlar: CAD Çalışma Alanı, Optik Laboratuvarı, 3B Kamera Görüşü, Arazi &
+  Görüş Alanı (kaynaklar, OSM/nDSM yüzey, tek kamera + kesit + varifokal,
+  çit planı, birleşik kapsama, en az direk, PTZ tarama / tespit→teşhis,
+  karma sabit+PTZ), Kamera Kütüphanesi, Şartname & Uyum (kurallı / Ollama /
+  Gemini, elle düzeltme, şablon, beyan), Raporlar (optik + mühendislik).
+  Proje aç/kaydet klasik şemayla; sayfalar ziyaret sonrası canlı tutulur.
+- Ortaklaştırılan (Tk'siz) mantık: `map_render` (24 kombinasyonda bit-aynı),
+  `optics_bench.evaluate_requirement`, `focal_optimizer.apply_layout /
+  band_area`, `compliance.call_gemini / evaluate_template`. Klasik arayüz
+  aynı fonksiyonları kullanıyor.
+- Bulunan ve düzeltilen hatalar:
+  - Direk araması sonucu plana optimize lensleri uygulamıyordu; çit boşluk
+    analizi de eski lensleri anlatıyordu (80 direk: "%49,6, 76 boşluk" yerine
+    %100). Klasik arayüzde de düzeltildi.
+  - Birleşik kapsama direği hedef px/m menzilinde kesip Algılama bandını
+    eksik ölçüyordu (%38,8 → %71,9).
+  - `compliance.py` ve `exporters.py` en üstte tkinter alıyordu; Tk'siz
+    paketli çekirdekte şartname analizi ve rapor PDF'i açılmazdı.
+    `test_every_engine_module_imports_without_tk` artık bunu denetler.
+- Paket: `desktop\packaging\build_release.bat` → `cctv-core.exe` (Tk'siz,
+  onedir) + duman testi (14 ağır yol paketli çekirdekte) → NSIS kurulum
+  27 MB. Kurulu sürüm uçtan uca sürüldü; derin klasöre kurulunca (MAX_PATH)
+  açık hata verir, kaldırma temiz.
+- Testler: `test_service*.py` (motorla birebir eşlik), `test_map_render.py`,
+  arayüzde `rpc.test.ts`.
+
+Kalan: kod imzalama (sertifika yok — Norton/SmartScreen uyarabilir);
+otomatik güncelleme yok; arayüzün İngilizce çevirisi yok (yeni kabuk
+yalnız Türkçe); kamera veritabanı düzenleme (yönetici parolalı ekran) yeni
+arayüze taşınmadı, kütüphane salt okunur; CAD'de vaziyet planı resmi ve
+sürükle-bırak kamera yerleşimi yok (yalnız optik); proje dosyası arazi/çit
+durumunu taşımıyor.
+
 ## -35. Yerel yüzey modeli: LiDAR nDSM / DSM GeoTIFF — ✅ (2026-11-07)
 
 - `geotiff_reader.py` (bağımlılıksız): georeferans etiketlerden; WGS84,

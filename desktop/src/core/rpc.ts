@@ -63,6 +63,7 @@ export class RpcClient {
   state: CoreState = "connecting";
   /** Reason shown when the state is "down". */
   lastError = "";
+  private lastLog = "";
 
   constructor(private transport: Transport, private defaultTimeoutMs = 120_000) {}
 
@@ -70,7 +71,7 @@ export class RpcClient {
     this.unlisten = await this.transport.listen({
       frame: (line) => this.onFrame(line),
       exit: () => this.onExit(),
-      log: (line) => this.logListeners.forEach((f) => f(line)),
+      log: (line) => { this.lastLog = line; this.logListeners.forEach((f) => f(line)); },
     });
     await this.handshake();
   }
@@ -175,7 +176,8 @@ export class RpcClient {
   }
 
   private onExit() {
-    this.lastError = "Çekirdek süreci kapandı.";
+    // the core's last stderr line usually says why (missing DLL, traceback tail)
+    this.lastError = this.lastLog ? `Çekirdek süreci kapandı — ${this.lastLog}` : "Çekirdek süreci kapandı.";
     this.setState("down");
     for (const entry of [...this.pending.values()]) {
       entry.cleanup();

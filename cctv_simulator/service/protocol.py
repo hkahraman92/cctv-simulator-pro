@@ -122,7 +122,7 @@ class Server:
 
     # ── dispatch ──────────────────────────────────────────────────────────
     def handle_line(self, line: str) -> None:
-        line = line.strip()
+        line = line.strip().lstrip("﻿")      # a BOM some pipes (PowerShell) prepend
         if not line:
             return
         try:
@@ -189,6 +189,12 @@ class Server:
 
 def serve_stdio(methods: Dict[str, Method]) -> None:
     """Run until stdin closes (the shell exiting closes our stdin)."""
+    # The log channel is UTF-8 too, whoever started us (a frozen exe otherwise
+    # writes stderr in the console code page and the shell shows mojibake).
+    try:
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
     stdin = open(sys.stdin.fileno(), "r", encoding="utf-8", closefd=False)
     stdout = open(sys.stdout.fileno(), "w", encoding="utf-8", newline="\n", closefd=False)
     sys.stdout = sys.stderr          # keep the protocol channel clean

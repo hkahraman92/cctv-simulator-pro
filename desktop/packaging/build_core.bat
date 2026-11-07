@@ -9,9 +9,10 @@ if errorlevel 1 (
     echo [HATA] cctv-core derlenemedi.
     exit /b 1
 )
-echo {"jsonrpc":"2.0","id":1,"method":"system.info"} | ..\src-tauri\core\cctv-core.exe
+REM Every heavy path once through the FROZEN core (numpy, PIL, reportlab, openpyxl, spec engine).
+%PY% smoke_core.py ..\src-tauri\core\cctv-core.exe
 if errorlevel 1 (
-    echo [HATA] cctv-core calismadi.
+    echo [HATA] cctv-core duman testi basarisiz.
     exit /b 1
 )
 echo cctv-core hazir: desktop\src-tauri\core\cctv-core.exe
