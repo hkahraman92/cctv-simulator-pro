@@ -28,9 +28,9 @@ function CoreBadge() {
       type="button"
       onClick={() => void rpc.restart()}
       className="inline-flex items-center gap-1 text-danger hover:underline"
-      title="Python çekirdek sürecini yeniden başlat"
+      title={`Python çekirdek sürecini yeniden başlat — ${rpc.lastError}`}
     >
-      ■ ÇEKİRDEK YOK <RefreshCw size={11} /> yeniden başlat
+      ■ ÇEKİRDEK YOK{rpc.lastError && `: ${rpc.lastError}`} <RefreshCw size={11} /> yeniden başlat
     </button>
   );
 }

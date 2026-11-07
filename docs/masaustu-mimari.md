@@ -55,13 +55,36 @@ py -3.13 -m pytest tests/test_service.py
 ```
 
 Çekirdek komutu sırası: `CCTV_CORE` ortam değişkeni (tam komut satırı) →
-uygulamanın yanındaki `cctv-core.exe` → kaynak ağacında `py -3.13 -m
-cctv_simulator.service`.
+yayın derlemesinde kurulumun `core\cctv-core.exe` kaynağı, geliştirme
+derlemesinde kaynak ağacındaki `py -3.13 -m cctv_simulator.service` (yani
+`tauri dev` her zaman düzenlenen kodu koşturur). Başlatma hatası Rust'ta
+saklanır (`core_status`), durum çubuğu "ÇEKİRDEK YOK: <neden>" yazar.
+
+## Yayın paketi
+
+`desktop\packaging\build_release.bat` → çekirdek (`cctv_core.spec`: Tk'siz,
+konsol alt sistemi, onedir → `src-tauri\core\`) → tip denetimi + testler →
+`tauri build` → `src-tauri\target\release\bundle\nsis\CCTV Simülatör Pro_<sürüm>_x64-setup.exe`.
+
+- `core/` kurulumda bir kaynak klasördür (`bundle.resources`), onefile değil:
+  her açılışta açma yok, kurulum dosya ağacını kendisi yazdığı için zip
+  kopyasında dosya kaybı (klasik arıza 5) yok.
+- Konsol alt sistemi bilerek: kabuk `CREATE_NO_WINDOW` ile başlatır; pencere
+  modlu önyükleyici Python'a kullanılabilir stdin/stdout vermeyebilir.
+- `collect_submodules` alt yorumlayıcıda çalışır ve `pathex`'i değil
+  `PYTHONPATH`'i görür; spec kökü ikisine de ekler ve 30'dan az modül
+  bulursa derlemeyi durdurur (ilk denemede sessizce 0 modül toplamıştı).
+- Spec `desktop/packaging` altında — kökte yalnız klasik iki spec kalır.
+- Ölçüldü: kurulum 26,9 MB, çekirdek açık hâlde 72 MB; sessiz kurulum
+  (`/S /D=<klasör>`) → çalıştır → çekirdek bağlandı, değerler geliştirme
+  sürümüyle aynı → pencere kapanınca `cctv-core.exe` de kapandı → kaldırma
+  temiz. Norton bu derlemede `cctv-core.exe`'ye dokunmadı.
+- Simge: `packaging\make_icon.py` (Lucide "cctv" + DORI yelpazesi) →
+  `npx tauri icon packaging/app-icon.png`.
 
 ## Sıradaki adımlar
 
-1. `cctv-core.exe` (PyInstaller, Tk'siz) + Tauri `externalBin` ile NSIS kurulum.
-2. Arazi / viewshed API'si: uzun işler `$/progress` + iptal; raster sonuçları
+1. Arazi / viewshed API'si: uzun işler `$/progress` + iptal; raster sonuçları
    ikili (PNG/npz) dosya yoluyla, JSON'da değil.
 3. Optik laboratuvarı, şartname, raporlar ekranları.
 4. İmza: sertifika gelince `signCommand`.

@@ -6,6 +6,7 @@ import type { Transport } from "./rpc";
 export const tauriTransport: Transport = {
   send: (line) => invoke<void>("core_send", { line }),
   restart: () => invoke<void>("core_restart"),
+  status: () => invoke<string | null>("core_status"),
   async listen({ frame, exit, log }) {
     const offs = await Promise.all([
       listen<string>("core://frame", (e) => frame(e.payload)),

@@ -28,6 +28,10 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "resources": { "core/": "core/" },
+    "publisher": "hkahraman92",
+    "shortDescription": "CCTV tasarım ve EN 62676-4 optik simülatörü",
+    "copyright": "© 2026 hkahraman92",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

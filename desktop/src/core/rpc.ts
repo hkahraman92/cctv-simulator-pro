@@ -13,6 +13,8 @@ export interface Transport {
     log?: (line: string) => void;
   }): Promise<() => void>;
   restart(): Promise<void>;
+  /** Why the core is not running (start failure), if the transport knows. */
+  status?(): Promise<string | null>;
 }
 
 export class RpcError extends Error {
@@ -59,6 +61,8 @@ export class RpcClient {
   private stateListeners = new Set<(s: CoreState) => void>();
   private logListeners = new Set<(l: string) => void>();
   state: CoreState = "connecting";
+  /** Reason shown when the state is "down". */
+  lastError = "";
 
   constructor(private transport: Transport, private defaultTimeoutMs = 120_000) {}
 
@@ -135,8 +139,11 @@ export class RpcClient {
   private async handshake(): Promise<void> {
     try {
       await this.call("system.ping", {}, { timeoutMs: 15_000 });
+      this.lastError = "";
       this.setState("ready");
-    } catch {
+    } catch (e) {
+      const reason = await this.transport.status?.().catch(() => null);
+      this.lastError = reason || (e instanceof Error ? e.message : String(e));
       this.setState("down");
     }
   }
@@ -168,6 +175,7 @@ export class RpcClient {
   }
 
   private onExit() {
+    this.lastError = "Çekirdek süreci kapandı.";
     this.setState("down");
     for (const entry of [...this.pending.values()]) {
       entry.cleanup();
