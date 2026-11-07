@@ -1128,9 +1128,12 @@ def _surface_line(terrain) -> str:
     """Buildings / trees merged into the terrain (surface_obstacles), or ""."""
     if getattr(terrain, "ground_z_grid", None) is None:
         return ""
-    return (" Engelleme yüzey modeliyle hesaplandı (DEM + bina/ağaç): "
-            f"{getattr(terrain, 'obstacle_note', '') or 'OpenStreetMap'}. OSM yükseklikleri "
-            "çoğunlukla etiket / kat sayısı / varsayılandan gelir; ölçülmüş yüzey (LiDAR) değildir.")
+    note = getattr(terrain, "obstacle_note", "") or "OpenStreetMap"
+    line = f" Engelleme yüzey modeliyle hesaplandı (DEM + bina/ağaç): {note}."
+    if "Ölçülmüş yüzey" not in note or "kapsam dışı" in note:
+        line += (" OSM yükseklikleri çoğunlukla etiket / kat sayısı / varsayılandan gelir; "
+                 "o kısım ölçülmüş yüzey (LiDAR) değildir.")
+    return line
 
 
 def _provenance_line(terrain) -> str:

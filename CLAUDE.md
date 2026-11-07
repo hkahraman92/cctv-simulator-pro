@@ -27,9 +27,11 @@ cctv_dual_view_simulator.py          giriş noktası
   perimeter_planner.py               çevre çiti kamera dizilimi, BOM
   online_map_loader.py               karo indirme, ortofoto mozaik, GERÇEK DEM
   region_library.py                  kayıtlı bölgeler: DEM + ortofoto diskte, çevrimdışı aç
-  surface_obstacles.py               OSM bina/ağaç → yüzey modeli (DEM + engel), Overpass
+  surface_obstacles.py               OSM bina/ağaç → yüzey modeli (DEM + engel), Overpass; yerel nDSM/DSM
+  geotiff_reader.py                  rasterio'suz GeoTIFF: etiketlerden georeferans, UTM/TUREF TM/WebMerc
   ptz_animation.py                   PTZ görsel tarama: anlık bakış + iz + gölge, kesit
   focal_optimizer.py                 varifokal/PTZ: tüm odak taraması, zarf, sabit+PTZ dizilim optimizasyonu
+  pole_optimizer.py                  çit hedefini tutan en az direk: aralık araması + direk başına odak
   raster_smooth.py                   sınıf bindirmelerini yalnız görüntüde yumuşatır, FOV kamasına kırpar
   compliance.py                      Gemini/Ollama + kural tabanlı şartname analizi
   compliance_optics.py               şartname DORI/menzil isteri → optik motorla doğrula
@@ -49,6 +51,7 @@ cctv_dual_view_simulator.py          giriş noktası
   status_summary.py                  durum paneli: gösterge kutuları + önem sıralı alarmlar (Tk'siz)
   ui/main_window.py                  DualViewCCTVDesignApp - klasik arayüz
     ui/components.py                 tasarım sistemi widget'ları: KpiTile, AlarmList, StatusChip, BarButton, glass_under
+    ui/icons.py                      Lucide simge seti (gömülü TTF) → PhotoImage; emoji → simge / ● ▲ ■
     ui/canvas_drawer.py              yan kesit + kuş bakışı plan
     ui/view_3d_window.py             3B kamera görüşü
     ui/modern_window.py              EN 62676-4 optik tezgâhı (customtkinter)
@@ -225,6 +228,22 @@ zeminden ölçeklenir (76 m'lik bir kule rampayı germiş, zemini tek renge
 Yerel frame: güneybatı 0,0, `calculate_bbox` ile aynı doğrusal enlem/boylam.
 Ölçüldü (Kızılay 1 km², 5 m hücre): 956 özellik, Overpass ~38 sn; 12 m direkte
 görünür alan 11 375 → 175 m².
+
+**Yerel yüzey modeli (LiDAR nDSM / DSM GeoTIFF).** "Yerel Yüzey Modeli (nDSM /
+DSM)" → `geotiff_reader.read_geotiff` (Pillow + GeoTIFF etiketleri 33550/33922/
+34264/34735/42113; PixelIsPoint yarım piksel kaydırılır) → `surface_obstacles.
+layer_from_raster`: her ızgara düğümü hücresi içindeki ≤6×6 alt örneğin
+**en yükseğini** alır (ince LiDAR'daki dar bina kaba hücrede kaybolmasın),
+yerel metre → enlem/boylam (`_Projector`, `calculate_bbox` ile aynı doğrusal
+çerçeve) → raster CRS. Desteklenen EPSG: 4326/4258/5252, 3857, UTM 326xx/
+327xx/258xx, TUREF TM27–TM45 (5253–5259, k0 = 1, Türkiye'nin 3° dilimleri);
+Transverse Mercator kapalı formül (Snyder), WGS84 ≈ GRS80 ≈ ETRS89 ≈ ITRF96.
+**ED50 reddedilir** (~100 m kayık; sessizce kaydırma yok). DSM'de DEM
+çıkarılır, dikey referans farkı = kapsanan alanda (DSM − DEM)'in %10'luk
+dilimi (açık zemin) → çıkarılır ve not edilir; tür otomatik tahmin edilemezse
+arayüz sorar. <1 m gürültü atılır. Veri olan yerde OSM katmanının yerine
+geçer (`KIND_SURFACE`), dışında OSM kalır. rasterio/pyproj/GDAL yok; döşemeli
+/ sıkıştırılmış TIFF'i Pillow okuyamazsa hata, şeritli yazmayı önerir.
 
 **Kırpma global Mercator piksel uzayında.** Enlemde doğrusal interpolasyon yanlış;
 Mercator Y = `asinh(tan(lat))`.
@@ -437,6 +456,15 @@ sayısıyla ağırlıklı, DORI metrikleri yalnız parse edilenler üzerinden). 
   yön araması tepenin açık tarafını bulur, zarf her tekil bakışı kapsar (PTZ
   zarfı sabitinkini), dizilim başlangıçtan kötü olamaz ve kötü başlangıcı
   düzeltir, PTZ talep üzerine birleşime eklenir, çit bandı.
+- `test_pole_optimizer.py` — `spacing_m` geçersizleştirmesi (None bit-aynı),
+  ulaşılabilir hedefte planlayıcıdan az direk, planlayıcı üstü hedefte
+  sıklaşma ve en seyrek geçen deneme, imkânsız hedefte en iyi çaba + not.
+- `test_icons.py` — yazı tipi + lisans gömülü, her simge çizilebilir, emoji
+  eşlemesi yalnız bilinen simgelere, `split_emoji`/`plain`, kaynakta emoji yok.
+- `test_geotiff_surface.py` — TM meridyen yayı + UTM merkez meridyen, ED50 /
+  bilinmeyen CRS reddi, nDSM bloğu WGS84 / UTM 36N / TUREF TM30'da doğru
+  hücrede, DSM zemin çıkarma + dikey referans düzeltmesi, ölçülmüş yüzey
+  yalnız veri olan yerde OSM'nin yerine geçer, georeferanssız TIFF hatası.
 - `test_raster_smooth.py` — yumuşatma alanı ve rengi korur, merdiven çizgiye
   döner, iki sınıf arasında boşluk yok, rampa/boş durum, kırpılan içerik yerine
   oturur, FOV kaması.
@@ -547,6 +575,23 @@ karşılaştırması (Kural 1 — motorla aynı yapı taşları).
   Ölçüldü (124 direk, 2×2 km tepelik, 10 m): optimizasyon 2,7 sn, doğrulama
   1,3 sn; bantta Algılama 15,40 → 20,71 ha (motor) / 15,42 → 20,72 (tahmin).
 
+**En az direk (`pole_optimizer.minimize_poles`).** Planlayıcı aralığı tek
+direğin lens UCUNA göre, komşuları bilmeden ve güvenlik payıyla verir.
+`generate_perimeter_plan(spacing_m=)` (None = bit-aynı) ile aralık aranır:
+deneme 0 planlayıcının aralığı; hedefi tutuyorsa aralık ×1,45 büyür, ilk
+başarısızlıktan sonra log uzayında ikiye bölünür; tutmuyorsa ×0,7 sıklaşır.
+Her denemede `optimize_layout` direk başına odak/eğimi seçer; puan = çit
+bandının (±40 m) hedef seviyedeki sürekli kapsama oranı. Hedefi tutan en
+az direkli deneme kazanır; aynı direk sayısı önbellekten gelir (`trials`
+farklı direk sayılarıdır, `steps` döngüyü ayrıca sınırlar). Hedef hiç
+tutmazsa arayüz planı DEĞİŞTİRMEZ, yalnız raporlar. Kazanan plan arayüzde
+`_apply_layout_result` ile otoriter motorla doğrulanır. Ölçüldü (2,4 km kare
+çit, 2,8–12 mm 4 MP, 12 m direk, 124 direklik plan): %70 → 20 direk (motor
+%77,8), %95 → 68 direk (motor %95,5); 6–7 sn. Planlayıcının kendi aralığında
+bant kapsaması odak optimizasyonu sonrası bile ≤%97: kameralar çit boyunca
+baktığından bandın dış kenarına yetişmez. `_plan_kwargs` / `_refresh_plan_stats`
+"Otomatik Diz" ile aramanın aynı ayarla planlamasını sağlar.
+
 **Sürekli PTZ taraması (`ptz_schedule.py`).** `SectorPatrol` (a→b→a, hız,
 uçlarda bekleme) ve `Rotation360`; `evaluate_sweep(...)` → `SweepResult`.
 Hücre başına revizit (bir periyotta en uzun izlenmeyen süre) ve tek bakış
@@ -645,6 +690,14 @@ yazılır (`write_pref`) — eskiden dil kaydı dosyayı tümden eziyordu.
   `"Barlow Semi Condensed SemiBold"` (düz `"Barlow Semi Condensed"` Arial'a
   düşer). `theme.FONT_UI/FONT_DISPLAY/FONT_MONO`; yüklenemezse Segoe UI /
   Consolas. Barlow'da ■▲●◆ yok — Windows yedek fontundan çizilir.
+- **Emoji yok, simge var.** Düğmeler `StyledButton(..., icon="save")` ile
+  Lucide (ISC, `fonts/lucide/`) simgesi taşır; renk düğmenin yazı rengi
+  (`_icon_colour`: dolu birincil → on-accent, çerçeveli → stil rengi). Diğer
+  metinlerde emoji yok, durum işaretleri ● ▲ ■ ◆. `StyledButton` metnin
+  başındaki emojiyi yine ayıklar (güvenlik ağı). `test_icons.py` kaynakta
+  emoji kalmadığını denetler; yeni simge `icons.CODEPOINTS`'e eklenir
+  (Lucide `font/info.json`, sürüm 0.460.0). Görünen etiket ≠ iç kod olan
+  açılır kutular aynı değişkene bağlanmaz (3B hedef kutusu "human" yazıyordu).
 - `test_design_tokens.py` iki temada her metin/zemin çiftinin kontrastını
   (4.5:1, kontrol kenarı 3:1) denetler; ilk koşuda açık temanın kenar rengini
   (2.97:1) yakaladı.

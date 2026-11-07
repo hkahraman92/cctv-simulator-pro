@@ -30,6 +30,7 @@ No Tk. Network only in :func:`fetch_osm_obstacles` (injectable ``fetch``).
 from __future__ import annotations
 
 import gzip
+from pathlib import Path
 import hashlib
 import json
 import math
@@ -56,7 +57,7 @@ DEFAULT_CANOPY_M = 12.0
 TREE_ROW_WIDTH_M = 5.0
 MAX_AREA_KM2 = 36.0          # Overpass courtesy: a 6 x 6 km box is plenty for a site
 
-KIND_NONE, KIND_BUILDING, KIND_VEGETATION = 0, 1, 2
+KIND_NONE, KIND_BUILDING, KIND_VEGETATION, KIND_SURFACE = 0, 1, 2, 3   # 3 = measured, unclassified
 
 _NUM = re.compile(r"[-+]?\d+(?:[.,]\d+)?")
 
@@ -84,17 +85,24 @@ class ObstacleLayer:
     def covered_fraction(self) -> float:
         return float((self.height_grid > 0).mean()) if self.height_grid.size else 0.0
 
+    measured_note: str = ""       # set when a local nDSM / DSM covers part of the grid
+
     @property
     def estimated_share(self) -> float:
-        """Share of features whose height is a class default (no tag at all)."""
+        """Share of features whose height is a class default (no tag at all);
+        cells covered by a measured surface are not features and not counted."""
         n = self.counts.get("tagged", 0) + self.counts.get("levels", 0) + self.counts.get("default", 0)
         return self.counts.get("default", 0) / n if n else 0.0
 
     def summary(self) -> str:
         c = self.counts
-        return (f"{c.get('buildings', 0)} bina, {c.get('trees', 0)} ağaç, "
-                f"{c.get('woods', 0)} orman/koru alanı · yükseklik: {c.get('tagged', 0)} etiketli, "
-                f"{c.get('levels', 0)} kat sayısından, {c.get('default', 0)} varsayılan")
+        osm = (f"{c.get('buildings', 0)} bina, {c.get('trees', 0)} ağaç, "
+               f"{c.get('woods', 0)} orman/koru alanı · yükseklik: {c.get('tagged', 0)} etiketli, "
+               f"{c.get('levels', 0)} kat sayısından, {c.get('default', 0)} varsayılan")
+        if self.measured_note:
+            return self.measured_note + ("" if not any(c.get(k) for k in ("buildings", "trees", "woods"))
+                                         else " · kapsam dışı OSM: " + osm)
+        return osm
 
 
 # ── tags -> height ───────────────────────────────────────────────────────────
@@ -315,6 +323,76 @@ def rasterize(terrain: TerrainData, features: Sequence[Feature]) -> ObstacleLaye
     return ObstacleLayer(height_grid=height, kind_grid=kind, counts=counts)
 
 
+def layer_from_raster(terrain: TerrainData, raster, *, mode: str = "auto",
+                      base: Optional[ObstacleLayer] = None, noise_floor_m: float = 1.0,
+                      max_subsamples: int = 6) -> Tuple[ObstacleLayer, Dict[str, object]]:
+    """A measured surface (``geotiff_reader.GeoRaster``) on the terrain grid.
+
+    ``mode``: "ndsm" (heights above ground), "dsm" (absolute surface; the
+    bare DEM is subtracted) or "auto" (guess; ValueError if undecidable).
+    Each grid node takes the MAX of up to ``max_subsamples``^2 raster samples
+    over its cell, so a narrow building in fine LiDAR is not lost on a
+    coarse grid (same conservative rule as the OSM raster). A DSM's vertical
+    datum may differ from the DEM's: the 10th percentile of DSM - DEM over
+    the covered area (open ground) is taken as the offset and removed.
+    Heights under ``noise_floor_m`` (cars, kerbs, LiDAR noise) are dropped.
+    Where the raster has data it REPLACES ``base`` (OSM); elsewhere ``base``
+    is kept. Returns the layer and an info dict for the UI / report."""
+    from .geotiff_reader import guess_is_ndsm
+    ground = terrain.ground_z_grid if terrain.ground_z_grid is not None else terrain.z_grid
+    proj = _Projector(terrain)
+    rows, cols, cell = terrain.rows, terrain.cols, terrain.cell_size_m
+    k = int(max(1, min(max_subsamples, math.ceil(cell / max(raster.pixel_size_m, 1e-3)))))
+    offs = (np.arange(k) + 0.5) / k - 0.5
+    gx = terrain.origin_x + np.arange(cols) * cell
+    gy = terrain.origin_y + np.arange(rows) * cell
+    best = np.full((rows, cols), np.nan, np.float32)
+    for oy in offs:
+        for ox in offs:
+            mx, my = np.meshgrid(gx + ox * cell, gy + oy * cell)
+            lat = proj.s + my / proj.m_lat
+            lon = proj.w + mx / proj.m_lon
+            px, py = raster.projection.forward(lat, lon)
+            v = raster.sample(px, py)
+            best = np.where(np.isnan(best), v, np.where(np.isnan(v), best, np.maximum(best, v)))
+    covered = np.isfinite(best)
+    if not covered.any():
+        raise ValueError("Yüzey modeli bu arazinin hiçbir yerine düşmüyor (kapsam / koordinat sistemi?).")
+    if mode == "auto":
+        guess = guess_is_ndsm(best[covered], ground[covered].astype(np.float32))
+        if guess is None:
+            raise ValueError("Dosyanın nDSM (zemin üstü yükseklik) mi DSM (mutlak yüzey) mi olduğu "
+                             "anlaşılamadı; türü elle seçin.")
+        mode = "ndsm" if guess else "dsm"
+    offset = 0.0
+    if mode == "dsm":
+        diff = best[covered] - ground[covered]
+        offset = float(np.percentile(diff, 10))
+        heights = best - ground - offset
+    else:
+        heights = best
+    heights = np.where(covered & (heights >= noise_floor_m), heights, 0.0).astype(np.float32)
+
+    if base is not None and base.height_grid.shape == heights.shape:
+        h = np.where(covered, heights, base.height_grid).astype(np.float32)
+        kind = np.where(covered, np.where(heights > 0, KIND_SURFACE, KIND_NONE), base.kind_grid).astype(np.uint8)
+        counts = dict(base.counts)
+    else:
+        h = heights
+        kind = np.where(heights > 0, KIND_SURFACE, KIND_NONE).astype(np.uint8)
+        counts = {"buildings": 0, "trees": 0, "woods": 0, "tagged": 0, "levels": 0, "default": 0}
+    cover_frac = float(covered.mean())
+    name = Path(getattr(raster, "path", "") or "yüzey").name
+    info = {"mode": mode, "coverage_frac": cover_frac, "datum_offset_m": offset,
+            "subsamples": k * k, "raster_px_m": raster.pixel_size_m, "file": name}
+    note = (f"Ölçülmüş yüzey ({'nDSM' if mode == 'ndsm' else 'DSM − DEM'}, {name}, EPSG:"
+            f"{raster.projection.epsg}) alanın %{cover_frac * 100:.0f}'ini kapsıyor"
+            + (f"; dikey referans farkı {offset:+.1f} m düzeltildi" if mode == "dsm" and abs(offset) >= 0.5 else ""))
+    layer = ObstacleLayer(height_grid=h, kind_grid=kind, counts=counts,
+                          attribution=(base.attribution if base is not None else ""), measured_note=note)
+    return layer, info
+
+
 def with_obstacles(terrain: TerrainData, layer: ObstacleLayer) -> TerrainData:
     """A new TerrainData whose z_grid is the surface (ground + obstacles).
     The input stays untouched (bare earth), so the UI can switch back."""
@@ -322,7 +400,7 @@ def with_obstacles(terrain: TerrainData, layer: ObstacleLayer) -> TerrainData:
     if layer.height_grid.shape != ground.shape:
         raise ValueError("Engel ızgarası arazi ızgarasıyla aynı boyutta değil.")
     surface = (ground.astype(np.float64) + layer.height_grid).astype(ground.dtype)
-    note = f"{ATTRIBUTION} · {layer.summary()}"
+    note = layer.summary() if layer.measured_note else f"{ATTRIBUTION} · {layer.summary()}"
     return replace(terrain, z_grid=surface, ground_z_grid=ground.copy(),
                    obstacle_grid=layer.height_grid.copy(), obstacle_kind=layer.kind_grid.copy(),
                    obstacle_note=note)

@@ -56,6 +56,7 @@ from ..terrain_loader import TerrainData, generate_procedural_terrain, load_geot
 from ..i18n import t as _t
 from ..design_tokens import rgba as _rgba, tok as _tok
 from .components import glass_under, stack_lines
+from .icons import icon_image
 from ..ptz_animation import SweepPlayback, sight_profile
 from .. import surface_obstacles as _obs
 from ..raster_smooth import clip_to_wedge, smooth_overlay
@@ -213,7 +214,7 @@ class TerrainViewshedWindow:
         else:
             self.window = tk.Tk()
 
-        self.window.title(_t("🗺️ 3D Arazi, HD Uydu Haritası, Görüş Hattı & Çevre Çiti Planlayıcı"))
+        self.window.title(_t("3D Arazi, HD Uydu Haritası, Görüş Hattı & Çevre Çiti Planlayıcı"))
         fit_and_center_window(self.window, default_w=1520, default_h=920, min_w=1080, min_h=700, maximize=False)
 
         # State & Data (Default: 2000m x 2000m terrain grid)
@@ -292,11 +293,13 @@ class TerrainViewshedWindow:
         self.layout_level_var = tk.StringVar(value="Algılama (25 px/m)")
         self.layout_obj_var = tk.StringVar(value="Hedef seviyede en geniş alan")
         self.layout_stat_var = tk.StringVar(value="-")
+        self.pole_goal_var = tk.DoubleVar(value=95.0)
+        self._pole_search = None
         self._anim_frame = None
         self._anim_params = None
         self._anim_glass = []
         self.anim_speed_var = tk.StringVar(value="×1")
-        self.anim_btn_var = tk.StringVar(value="▶ Görsel Tarama (canlı)")
+        self.anim_btn_var = tk.StringVar(value="Görsel Tarama (canlı)")
 
         # Multi-camera unified viewshed + PTZ tour (tab 3)
         self._multi_vs = None            # MultiViewshedResult
@@ -358,7 +361,7 @@ class TerrainViewshedWindow:
         self.stat_occ_area_var = tk.StringVar(value="-")
         self.stat_coverage_var = tk.StringVar(value="-")
         self.stat_max_reach_var = tk.StringVar(value="-")
-        self.lbl_zoom_readout_var = tk.StringVar(value="🔍 %100")
+        self.lbl_zoom_readout_var = tk.StringVar(value="%100")
 
         # Perimeter BOM Vars
         self.bom_cam_count_var = tk.StringVar(value="-")
@@ -645,8 +648,8 @@ class TerrainViewshedWindow:
         self._page_single, self.tab_single = make_scrollable(self.mode_notebook, padding=6)
         self._page_perimeter, self.tab_perimeter = make_scrollable(self.mode_notebook, padding=6)
 
-        self.mode_notebook.add(self._page_single, text="⛰️ Tekil Kamera & Viewshed")
-        self.mode_notebook.add(self._page_perimeter, text="🛡️ Çevre Çiti / Sınır / Otoyol")
+        self.mode_notebook.add(self._page_single, text="Tekil Kamera & Viewshed")
+        self.mode_notebook.add(self._page_perimeter, text="Çevre Çiti / Sınır / Otoyol")
         self.mode_notebook.bind("<<NotebookTabChanged>>", self._on_mode_tab_changed)
 
         # ── TAB 1: SINGLE CAMERA VIEWSHED (+ inline PTZ tour when a PTZ model) ──
@@ -677,21 +680,29 @@ class TerrainViewshedWindow:
         map_header.pack_propagate(True)
         tools = tk.Frame(map_header, bg=PANEL_DARK)
         tools.pack(fill=tk.X)
+        def ico(name, colour=None):
+            img = icon_image(name, tools, color=colour or TEXT_DIM)
+            self._toolbar_icons.append(img)          # keep the PhotoImages alive
+            return dict(image=img, compound="left") if img is not None else {}
+
+        self._toolbar_icons = []
         tool_widgets = [
-            tk.Label(tools, text="🗺️ TOPOĞRAFYA & HD UYDU HARİTASI", font=(FONT_UI, 9, "bold"),
+            tk.Label(tools, text="TOPOĞRAFYA & HD UYDU HARİTASI", font=(FONT_UI, 9, "bold"),
                      fg=TEXT_WHITE, bg=PANEL_DARK, padx=8, pady=4),
-            tk.Button(tools, text="➕ Yakınlaş", font=(FONT_UI, 8, "bold"), fg=ACCENT_CYAN, bg=FIELD_BG,
-                      relief="flat", padx=6, pady=2, command=self._zoom_in),
-            tk.Button(tools, text="➖ Uzaklaş", font=(FONT_UI, 8, "bold"), fg=ACCENT_CYAN, bg=FIELD_BG,
-                      relief="flat", padx=6, pady=2, command=self._zoom_out),
-            tk.Button(tools, text="🔍 Sıfırla (%100)", font=(FONT_UI, 8), fg=TEXT_WHITE, bg=FIELD_BG,
-                      relief="flat", padx=6, pady=2, command=self._reset_zoom),
-            tk.Label(tools, textvariable=self.lbl_zoom_readout_var, font=(FONT_UI, 8, "bold"),
-                     fg=ACCENT_AMBER, bg=PANEL_DARK, padx=4),
-            tk.Radiobutton(tools, text="📍 Yerleştir", variable=self.mouse_nav_tool_var, value="place",
-                           bg=PANEL_DARK, fg=TEXT_WHITE, selectcolor=FIELD_BG, activebackground=PANEL_DARK),
-            tk.Radiobutton(tools, text="✋ Kaydır (Pan)", variable=self.mouse_nav_tool_var, value="pan",
-                           bg=PANEL_DARK, fg=TEXT_WHITE, selectcolor=FIELD_BG, activebackground=PANEL_DARK),
+            tk.Button(tools, text=" Yakınlaş", font=(FONT_UI, 8, "bold"), fg=TEXT_WHITE, bg=FIELD_BG,
+                      relief="flat", padx=6, pady=2, command=self._zoom_in, **ico("zoom-in")),
+            tk.Button(tools, text=" Uzaklaş", font=(FONT_UI, 8, "bold"), fg=TEXT_WHITE, bg=FIELD_BG,
+                      relief="flat", padx=6, pady=2, command=self._zoom_out, **ico("zoom-out")),
+            tk.Button(tools, text=" Sıfırla (%100)", font=(FONT_UI, 8), fg=TEXT_WHITE, bg=FIELD_BG,
+                      relief="flat", padx=6, pady=2, command=self._reset_zoom, **ico("locate")),
+            tk.Label(tools, textvariable=self.lbl_zoom_readout_var, font=(FONT_MONO, 8),
+                     fg=TEXT_DIM, bg=PANEL_DARK, padx=4),
+            tk.Radiobutton(tools, text=" Yerleştir", variable=self.mouse_nav_tool_var, value="place",
+                           bg=PANEL_DARK, fg=TEXT_WHITE, selectcolor=FIELD_BG, activebackground=PANEL_DARK,
+                           **ico("map-pin")),
+            tk.Radiobutton(tools, text=" Kaydır (Pan)", variable=self.mouse_nav_tool_var, value="pan",
+                           bg=PANEL_DARK, fg=TEXT_WHITE, selectcolor=FIELD_BG, activebackground=PANEL_DARK,
+                           **ico("hand")),
         ]
         flow_layout(tools, tool_widgets, padx=2, pady=1)
 
@@ -730,7 +741,7 @@ class TerrainViewshedWindow:
         prof_header = tk.Frame(profile_container, bg=PANEL_DARK, height=24)
         prof_header.pack(fill=tk.X)
         self.lbl_bottom_title = wrap_label(tk.Label(
-            prof_header, text="📐 OPTİK EKSEN ZEMİN & IŞIN KESİT PROFİLİ (ELEVATION PROFILE)",
+            prof_header, text="OPTİK EKSEN ZEMİN & IŞIN KESİT PROFİLİ (ELEVATION PROFILE)",
             font=(FONT_UI, 8, "bold"), fg=TEXT_MUTED, bg=PANEL_DARK, anchor="w", justify="left"), pad=20)
         self.lbl_bottom_title.pack(fill=tk.X, padx=10, pady=2)
 
@@ -741,24 +752,26 @@ class TerrainViewshedWindow:
 
     def _build_single_camera_tab(self, parent):
         # Satellite & Layer Settings
-        grp_layer = ttk.LabelFrame(parent, text="🛰️ Harita Katmanı & Uydu Görüntüsü", padding=6)
+        grp_layer = ttk.LabelFrame(parent, text="Harita Katmanı & Uydu Görüntüsü", padding=6)
         grp_layer.pack(fill=tk.X, pady=(0, 6))
 
         frame_mode = ttk.Frame(grp_layer)
         frame_mode.pack(fill=tk.X, pady=2)
         ttk.Label(frame_mode, text="Harita Tipi:").pack(side=tk.LEFT)
-        ttk.Radiobutton(frame_mode, text="🌓 Hibrit", variable=self.map_layer_mode_var, value="hybrid", command=self.schedule_recalculate).pack(side=tk.LEFT, padx=4)
-        ttk.Radiobutton(frame_mode, text="🛰️ Uydu", variable=self.map_layer_mode_var, value="satellite", command=self.schedule_recalculate).pack(side=tk.LEFT, padx=4)
-        ttk.Radiobutton(frame_mode, text="⛰️ Yükselti", variable=self.map_layer_mode_var, value="elevation", command=self.schedule_recalculate).pack(side=tk.LEFT)
+        ttk.Radiobutton(frame_mode, text="Hibrit", variable=self.map_layer_mode_var, value="hybrid", command=self.schedule_recalculate).pack(side=tk.LEFT, padx=4)
+        ttk.Radiobutton(frame_mode, text="Uydu", variable=self.map_layer_mode_var, value="satellite", command=self.schedule_recalculate).pack(side=tk.LEFT, padx=4)
+        ttk.Radiobutton(frame_mode, text="Yükselti", variable=self.map_layer_mode_var, value="elevation", command=self.schedule_recalculate).pack(side=tk.LEFT)
 
-        StyledButton(grp_layer, text="🌐 Çevrimiçi Uydu İndir (Koordinat/Bölge)", command=self._open_online_map_downloader_dialog, bootstyle="success").pack(fill=tk.X, pady=(4, 2))
-        StyledButton(grp_layer, text="📂 Kayıtlı Bölgeler (indirmeden aç / kaydet)", command=self._open_saved_regions_dialog, bootstyle="secondary-outline").pack(fill=tk.X, pady=(0, 2))
-        StyledButton(grp_layer, text="📁 Yerel Uydu / Ortofoto Yükle (.png/.jpg/.tif)", command=self._load_local_satellite, bootstyle="info-outline").pack(fill=tk.X, pady=(0, 2))
+        StyledButton(grp_layer, icon="globe", text="Çevrimiçi Uydu İndir (Koordinat/Bölge)", command=self._open_online_map_downloader_dialog, bootstyle="success").pack(fill=tk.X, pady=(4, 2))
+        StyledButton(grp_layer, icon="folder-open", text="Kayıtlı Bölgeler (indirmeden aç / kaydet)", command=self._open_saved_regions_dialog, bootstyle="secondary-outline").pack(fill=tk.X, pady=(0, 2))
+        StyledButton(grp_layer, icon="folder", text="Yerel Uydu / Ortofoto Yükle (.png/.jpg/.tif)", command=self._load_local_satellite, bootstyle="info-outline").pack(fill=tk.X, pady=(0, 2))
 
         frame_obs = ttk.Frame(grp_layer)
         frame_obs.pack(fill=tk.X, pady=(4, 2))
-        StyledButton(frame_obs, text="Bina & Ağaç Yüksekliklerini İndir (OSM)",
+        StyledButton(frame_obs, icon="building-2", text="Bina & Ağaç Yüksekliklerini İndir (OSM)",
                      command=self._download_obstacles, bootstyle="secondary-outline").pack(fill=tk.X)
+        StyledButton(frame_obs, icon="layers", text="Yerel Yüzey Modeli (nDSM / DSM)",
+                     command=self._load_surface_model, bootstyle="secondary-outline").pack(fill=tk.X, pady=(2, 0))
         ttk.Checkbutton(frame_obs, text="Binalar / ağaçlar görüşü engellesin",
                         variable=self.use_obstacles_var,
                         command=self._apply_obstacle_toggle).pack(anchor="w", pady=(2, 0))
@@ -772,7 +785,7 @@ class TerrainViewshedWindow:
         # the button's text. Wrap the button below it instead.
         flow_layout(frame_cache, [
             self.lbl_tile_cache,
-            StyledButton(frame_cache, text="🗑️ Önbelleği Temizle", command=self._clear_tile_cache,
+            StyledButton(frame_cache, icon="trash-2", text="Önbelleği Temizle", command=self._clear_tile_cache,
                          bootstyle="secondary-outline"),
         ], padx=0)
         self._refresh_tile_cache_label()
@@ -800,7 +813,7 @@ class TerrainViewshedWindow:
         combo_terrain.pack(fill=tk.X, pady=(2, 4))
         combo_terrain.bind("<<ComboboxSelected>>", self._on_terrain_preset_changed)
 
-        StyledButton(grp_terrain, text="📁 Yerel GeoTIFF / DEM Yükle", command=self._load_local_dem, bootstyle="secondary-outline").pack(fill=tk.X, pady=(0, 4))
+        StyledButton(grp_terrain, icon="folder", text="Yerel GeoTIFF / DEM Yükle", command=self._load_local_dem, bootstyle="secondary-outline").pack(fill=tk.X, pady=(0, 4))
 
         frame_scale = ttk.Frame(grp_terrain)
         frame_scale.pack(fill=tk.X, pady=2)
@@ -880,7 +893,7 @@ class TerrainViewshedWindow:
         self._build_ptz_panel(parent)
 
         self._single_tab_report_btn = StyledButton(
-            parent, text=_t("📄 Mühendislik Raporu (PDF / CSV — ASELSAN)"),
+            parent, icon="file-text", text=_t("Mühendislik Raporu (PDF / CSV — ASELSAN)"),
             command=self._export_engineering_report, bootstyle="primary-outline")
         self._single_tab_report_btn.pack(fill=tk.X, pady=(6, 0))
         self._update_ptz_panel_visibility()
@@ -889,21 +902,21 @@ class TerrainViewshedWindow:
         grp_tools = ttk.LabelFrame(parent, text="Çit & Sınır Çizim Araçları", padding=6)
         grp_tools.pack(fill=tk.X, pady=(0, 6))
 
-        btn_draw = StyledButton(grp_tools, text="✏️ Çit Noktaları Ekle / Çiz (Haritaya Tıkla)", command=self._toggle_fence_drawing, bootstyle="info")
+        btn_draw = StyledButton(grp_tools, icon="pencil", text="Çit Noktaları Ekle / Çiz (Haritaya Tıkla)", command=self._toggle_fence_drawing, bootstyle="info")
         btn_draw.pack(fill=tk.X, pady=(0, 4))
         self.btn_draw_fence = btn_draw
 
         row_actions = ttk.Frame(grp_tools)
         row_actions.pack(fill=tk.X, pady=2)
-        StyledButton(row_actions, text="⚡ Otomatik Diz", command=self.distribute_perimeter_cameras, bootstyle="success").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
-        StyledButton(row_actions, text="🗑️ Temizle", command=self._clear_fence, bootstyle="danger-outline").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
+        StyledButton(row_actions, icon="zap", text="Otomatik Diz", command=self.distribute_perimeter_cameras, bootstyle="success").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+        StyledButton(row_actions, icon="trash-2", text="Temizle", command=self._clear_fence, bootstyle="danger-outline").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
 
         # Hat modu: tesis çevre çiti (kapalı halka, kamera hat boyunca komşu
         # direğe bakar) vs. sınır hattı / otoyol (her zaman açık çizgi, kamera
         # yönü hatta dik ya da çizim yönüne ters). Bu üç durumun kamera
         # yönlendirmesi köklü biçimde farklı olduğu için ayrı bir grup olarak
         # gösteriliyor — bkz. perimeter_planner.generate_perimeter_plan.
-        grp_line = ttk.LabelFrame(parent, text="🧭 Hat Modu (Tesis / Sınır / Otoyol)", padding=6)
+        grp_line = ttk.LabelFrame(parent, text="Hat Modu (Tesis / Sınır / Otoyol)", padding=6)
         grp_line.pack(fill=tk.X, pady=(0, 6))
 
         ttk.Checkbutton(grp_line, text="Kapalı halka (tesis çevresini tamamen sarar)",
@@ -960,24 +973,24 @@ class TerrainViewshedWindow:
 
         self._build_mixed_ptz_group(parent)
 
-        grp_cov = ttk.LabelFrame(parent, text="🗺️ Birleşik Kapsama (çok kameralı)", padding=6)
+        grp_cov = ttk.LabelFrame(parent, text="Birleşik Kapsama (çok kameralı)", padding=6)
         grp_cov.pack(fill=tk.X, pady=(0, 6))
         ttk.Checkbutton(grp_cov, text="Kapsama ısı haritasını göster",
                         variable=self.show_coverage_var,
                         command=self._on_coverage_toggled).pack(anchor="w")
         self._create_stat_row(grp_cov, "Koruma bandında (±40 m):", self.stat_coverage_map_var, ACCENT_GREEN)
 
-        grp_sun = ttk.LabelFrame(parent, text="☀️ Güneş / Parlama (Arkadan Işık)", padding=6)
+        grp_sun = ttk.LabelFrame(parent, text="Güneş / Parlama (Arkadan Işık)", padding=6)
         grp_sun.pack(fill=tk.X, pady=(0, 6))
         frame_date = ttk.Frame(grp_sun)
         frame_date.pack(fill=tk.X, pady=2)
         ttk.Label(frame_date, text="Tarih (YYYY-AA-GG):").pack(side=tk.LEFT)
         ttk.Entry(frame_date, textvariable=self.glare_date_var, width=12).pack(side=tk.RIGHT)
-        StyledButton(grp_sun, text="☀️ Direk Bazında Parlama Analizi",
+        StyledButton(grp_sun, icon="sun", text="Direk Bazında Parlama Analizi",
                      command=self._run_glare_analysis, bootstyle="secondary-outline").pack(fill=tk.X, pady=(2, 2))
         self._create_stat_row(grp_sun, "Sonuç:", self.stat_glare_var, ACCENT_AMBER)
 
-        grp_bom = ttk.LabelFrame(parent, text="📊 Keşif & Malzeme Listesi (BOM)", padding=6)
+        grp_bom = ttk.LabelFrame(parent, text="Keşif & Malzeme Listesi (BOM)", padding=6)
         grp_bom.pack(fill=tk.X, pady=(0, 6))
 
         self._create_stat_row(grp_bom, "Toplam Kamera / Direk:", self.bom_cam_count_var, ACCENT_CYAN)
@@ -987,7 +1000,7 @@ class TerrainViewshedWindow:
         self._create_stat_row(grp_bom, "Tahmini Ağ Trafiği:", self.bom_bandwidth_var, ACCENT_AMBER)
         self._create_stat_row(grp_bom, "30 Günlük RAID Depolama:", self.bom_storage_var, ACCENT_PURPLE)
 
-        StyledButton(parent, text="💾 Kamera Listesi & BOM İndir (.xlsx / .csv)", command=self._export_perimeter_bom, bootstyle="primary-outline").pack(fill=tk.X, pady=(4, 0))
+        StyledButton(parent, icon="save", text="Kamera Listesi & BOM İndir (.xlsx / .csv)", command=self._export_perimeter_bom, bootstyle="primary-outline").pack(fill=tk.X, pady=(4, 0))
         self._build_combined_panel(parent)
 
     # ── mixed perimeter: PTZ co-mounted on every Nth fixed pole ──
@@ -1011,7 +1024,7 @@ class TerrainViewshedWindow:
         return cam
 
     def _build_mixed_ptz_group(self, parent):
-        grp = ttk.LabelFrame(parent, text="🔄 Karma Dizilim: Sabit + PTZ", padding=6)
+        grp = ttk.LabelFrame(parent, text="Karma Dizilim: Sabit + PTZ", padding=6)
         grp.pack(fill=tk.X, pady=(0, 6))
         ttk.Label(grp, text="PTZ modeli:").pack(anchor="w")
         combo = ttk.Combobox(grp, textvariable=self.mix_ptz_model_var, state="readonly",
@@ -1032,7 +1045,7 @@ class TerrainViewshedWindow:
             "PTZ aynı direğe takılır. Çit kapsaması ve boşluklar yalnız sabit kameralardan "
             "(PTZ bir yeri ancak zaman zaman görür); PTZ'nin katkısı aşağıdaki hesapta.")),
             ).pack(fill=tk.X, pady=(0, 4))
-        StyledButton(grp, text="🔄 Karma Kapsamayı Hesapla (devriye + tespit→teşhis)",
+        StyledButton(grp, icon="refresh-cw", text="Karma Kapsamayı Hesapla (devriye + tespit→teşhis)",
                      command=self._run_mixed_perimeter, bootstyle="success").pack(fill=tk.X, pady=(0, 4))
         self._mix_stat_label = wrap_label(ttk.Label(grp, textvariable=self.mix_stat_var,
                                                     foreground=ACCENT_CYAN))
@@ -1085,7 +1098,7 @@ class TerrainViewshedWindow:
 
     # ── inline PTZ preset-tour panel (single-camera tab; shown only for PTZ) ──
     def _build_ptz_panel(self, parent):
-        grp = ttk.LabelFrame(parent, text="🔄 PTZ — tur, tarama, tespit→teşhis", padding=6)
+        grp = ttk.LabelFrame(parent, text="PTZ — tur, tarama, tespit→teşhis", padding=6)
         self.grp_ptz = grp
         mode_row = ttk.Frame(grp)
         mode_row.pack(fill=tk.X, pady=(0, 4))
@@ -1108,7 +1121,7 @@ class TerrainViewshedWindow:
         # ── preset tour ──
         tour = ttk.Frame(grp)
         note(tour, "Yukarıdaki pan / tilt / zoom kaydırıcılarını istediğin "
-                   "bakışa getir, sonra “＋ Bu bakışı preset ekle”.")
+                   "bakışa getir, sonra “Bu bakışı preset ekle”.")
         self.ptz_tree = ttk.Treeview(tour, columns=("pan", "tilt", "lens", "dwell"),
                                      show="headings", height=4)
         for c, txt, wd in (("pan", "Pan°", 45), ("tilt", "Tilt°", 45),
@@ -1120,7 +1133,7 @@ class TerrainViewshedWindow:
         row.pack(fill=tk.X)
         ttk.Label(row, text="Bekle:").pack(side=tk.LEFT)
         ttk.Spinbox(row, from_=1, to=60, textvariable=self.ptz_dwell_var, width=5).pack(side=tk.LEFT, padx=(2, 6))
-        StyledButton(row, text="＋ Bu bakışı preset ekle", command=self._ptz_add_preset,
+        StyledButton(row, icon="plus", text="Bu bakışı preset ekle", command=self._ptz_add_preset,
                      bootstyle="info-outline").pack(side=tk.LEFT, fill=tk.X, expand=True)
         row2 = ttk.Frame(tour)
         row2.pack(fill=tk.X, pady=(3, 0))
@@ -1128,7 +1141,7 @@ class TerrainViewshedWindow:
                      bootstyle="danger-outline").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
         StyledButton(row2, text="Tümünü temizle", command=self._ptz_clear_presets,
                      bootstyle="secondary-outline").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(2, 0))
-        StyledButton(tour, text="🔄 Turu Çöz (birleşik kapsama + revizit ısı haritası)",
+        StyledButton(tour, icon="refresh-cw", text="Turu Çöz (birleşik kapsama + revizit ısı haritası)",
                      command=self._run_ptz_tour, bootstyle="success").pack(fill=tk.X, pady=(4, 0))
 
         # ── sector patrol / 360° rotation (share speed + min dwell) ──
@@ -1144,12 +1157,12 @@ class TerrainViewshedWindow:
         self._sweep_common.pack(fill=tk.X)
         spin(self._sweep_common, "Tarama hızı (°/sn):", self.sweep_speed_var, 1, 360, 5)
         spin(self._sweep_common, "En kısa bakış (sn):", self.min_dwell_var, 0, 10, 0.1)
-        StyledButton(self._sweep_common, text="▶ Taramayı Hesapla (revizit + bakış süresi)",
+        StyledButton(self._sweep_common, icon="play", text="Taramayı Hesapla (revizit + bakış süresi)",
                      command=self._run_ptz_sweep, bootstyle="success").pack(fill=tk.X, pady=(4, 0))
         anim_row = ttk.Frame(self._sweep_common)
         anim_row.pack(fill=tk.X, pady=(4, 0))
         flow_layout(anim_row, [
-            StyledButton(anim_row, textvariable=self.anim_btn_var, command=self._toggle_sweep_animation,
+            StyledButton(anim_row, icon="radar", textvariable=self.anim_btn_var, command=self._toggle_sweep_animation,
                          bootstyle="secondary-outline"),
             (ttk.Label(anim_row, text="Zaman:"),
              ttk.Combobox(anim_row, textvariable=self.anim_speed_var, values=["×1", "×2", "×5", "×10"],
@@ -1171,7 +1184,7 @@ class TerrainViewshedWindow:
         spin(cue, "Oturma süresi (sn):", self.cue_settle_var, 0, 10, 0.5)
         ttk.Checkbutton(cue, text="Yalnız çit kameralarının tespit ettiği alan",
                         variable=self.cue_only_detected_var).pack(anchor="w", pady=(2, 0))
-        StyledButton(cue, text="⏱ Tespit → Teşhis Süresi Haritası",
+        StyledButton(cue, icon="target", text="Tespit → Teşhis Süresi Haritası",
                      command=self._run_cue, bootstyle="success").pack(fill=tk.X, pady=(4, 0))
 
         self._ptz_mode_frames = {_PTZ_MODES[0]: tour, _PTZ_MODES[1]: sweep,
@@ -1213,10 +1226,10 @@ class TerrainViewshedWindow:
 
     # ── combined multi-camera viewshed panel (perimeter tab) ──
     def _build_combined_panel(self, parent):
-        grp = ttk.LabelFrame(parent, text="🎯 Birleşik Viewshed (tüm çit kameraları, otoriter motor)", padding=6)
+        grp = ttk.LabelFrame(parent, text="Birleşik Viewshed (tüm çit kameraları, otoriter motor)", padding=6)
         grp.pack(fill=tk.X, pady=(6, 0))
         self._build_layout_opt_panel(parent)
-        StyledButton(grp, text="🎯 Çit Kameralarını Birleştir",
+        StyledButton(grp, icon="crosshair", text="Çit Kameralarını Birleştir",
                      command=self._run_multi_viewshed, bootstyle="success").pack(fill=tk.X, pady=(0, 4))
         self._create_stat_row(grp, "Birleşik kapsama:", self.mc_stat_var, ACCENT_GREEN)
         self._create_stat_row(grp, "Örtüşen / yedeksiz:", self.mc_overlap_var, ACCENT_AMBER)
@@ -1310,7 +1323,7 @@ class TerrainViewshedWindow:
     def _run_ptz_tour(self):
         from ..ptz_tour import PTZPreset, PTZTour, evaluate_ptz_tour
         if len(self._ptz_presets) < 2:
-            messagebox.showinfo("PTZ Tur", "En az 2 preset ekleyin (mevcut pan/tilt/zoom'u '＋ Bu bakışı ekle' ile kaydedin).",
+            messagebox.showinfo("PTZ Tur", "En az 2 preset ekleyin (mevcut pan/tilt/zoom'u 'Bu bakışı preset ekle' ile kaydedin).",
                                 parent=self.window)
             return
         weather = self.weather_var.get()
@@ -1339,20 +1352,12 @@ class TerrainViewshedWindow:
 
     # ── varifocal: whole focal range (focal_optimizer) ──
     def _build_focal_panel(self, parent):
-        grp = ttk.LabelFrame(parent, text="🔭 Varifokal — tüm odak uzunluklarını tara", padding=6)
+        grp = ttk.LabelFrame(parent, text="Varifokal — tüm odak uzunluklarını tara", padding=6)
         grp.pack(fill=tk.X, pady=(0, 6))
-        row = ttk.Frame(grp)
-        row.pack(fill=tk.X, pady=(0, 2))
-        flow_layout(row, [
-            (ttk.Label(row, text="Hedef:"),
-             ttk.Combobox(row, textvariable=self.focal_level_var, values=list(_FOCAL_LEVELS),
-                          state="readonly", width=20)),
-            (ttk.Label(row, text="Amaç:"),
-             ttk.Combobox(row, textvariable=self.focal_obj_var, values=list(_FOCAL_OBJECTIVES),
-                          state="readonly", width=24)),
-        ], padx=2, pady=1)
+        self._labeled_combo(grp, "Hedef:", self.focal_level_var, list(_FOCAL_LEVELS))
+        self._labeled_combo(grp, "Amaç:", self.focal_obj_var, list(_FOCAL_OBJECTIVES))
         ttk.Checkbutton(grp, text="Yönü de ara (±45°)", variable=self.focal_pan_search_var).pack(anchor="w")
-        StyledButton(grp, text="Tüm Odakları Tara", command=self._run_focal_sweep,
+        StyledButton(grp, icon="telescope", text="Tüm Odakları Tara", command=self._run_focal_sweep,
                      bootstyle="secondary-outline").pack(fill=tk.X, pady=(4, 2))
         self.focal_chart = tk.Canvas(grp, height=int(130 * dpi_scale(grp)), bg=PANEL_DARK,
                                      highlightthickness=0)
@@ -1363,13 +1368,25 @@ class TerrainViewshedWindow:
         btns = ttk.Frame(grp)
         btns.pack(fill=tk.X, pady=(4, 0))
         flow_layout(btns, [
-            StyledButton(btns, text="Optimumu Uygula", command=self._apply_focal_optimum,
+            StyledButton(btns, icon="check", text="Optimumu Uygula", command=self._apply_focal_optimum,
                          bootstyle="primary"),
-            StyledButton(btns, text="Zarfı Göster", command=self._show_focal_envelope,
+            StyledButton(btns, icon="layers", text="Zarfı Göster", command=self._show_focal_envelope,
                          bootstyle="secondary-outline"),
             StyledButton(btns, text="Uç Odaklara Dön", command=self._reset_focal_override,
                          bootstyle="secondary-outline"),
         ], padx=2, pady=1, expand=True)
+
+    @staticmethod
+    def _labeled_combo(parent, label, var, values):
+        """Caption + read-only combobox that takes the row's remaining width
+        (a fixed width=24 pair side by side widened the whole rail and cut
+        its right edge -- Kural 8)."""
+        row = ttk.Frame(parent)
+        row.pack(fill=tk.X, pady=1)
+        ttk.Label(row, text=label, width=7).pack(side=tk.LEFT)
+        ttk.Combobox(row, textvariable=var, values=values, state="readonly", width=8).pack(
+            side=tk.LEFT, fill=tk.X, expand=True)
+        return row
 
     def _focal_target(self):
         from ..focal_optimizer import LEVELS
@@ -1513,18 +1530,10 @@ class TerrainViewshedWindow:
 
     # ── perimeter: fixed + PTZ layout optimisation ──
     def _build_layout_opt_panel(self, parent):
-        grp = ttk.LabelFrame(parent, text="⚙ Odak optimizasyonu — sabit + PTZ (tüm odaklar)", padding=6)
+        grp = ttk.LabelFrame(parent, text="Odak optimizasyonu — sabit + PTZ (tüm odaklar)", padding=6)
         grp.pack(fill=tk.X, pady=(6, 0))
-        row = ttk.Frame(grp)
-        row.pack(fill=tk.X)
-        flow_layout(row, [
-            (ttk.Label(row, text="Hedef:"),
-             ttk.Combobox(row, textvariable=self.layout_level_var, values=list(_FOCAL_LEVELS),
-                          state="readonly", width=20)),
-            (ttk.Label(row, text="Amaç:"),
-             ttk.Combobox(row, textvariable=self.layout_obj_var, values=list(_FOCAL_OBJECTIVES),
-                          state="readonly", width=24)),
-        ], padx=2, pady=1)
+        self._labeled_combo(grp, "Hedef:", self.layout_level_var, list(_FOCAL_LEVELS))
+        self._labeled_combo(grp, "Amaç:", self.layout_obj_var, list(_FOCAL_OBJECTIVES))
         wrap_label(ttk.Label(grp, foreground=TEXT_MUTED, font=(FONT_UI, 8), justify="left", text=(
             "Her sabit direğin odağı ve eğimi, çitin ±40 m bandındaki BİRLEŞİK kapsamayı en çok "
             "artıracak şekilde seçilir (açgözlü, başlangıç planından kötü olamaz). PTZ'ler talep "
@@ -1532,11 +1541,22 @@ class TerrainViewshedWindow:
         bar = ttk.Frame(grp)
         bar.pack(fill=tk.X)
         flow_layout(bar, [
-            StyledButton(bar, text="Çiti Optimize Et", command=self._run_layout_optimize,
+            StyledButton(bar, icon="settings", text="Çiti Optimize Et", command=self._run_layout_optimize,
                          bootstyle="secondary-outline"),
-            StyledButton(bar, text="Sonucu Plana Uygula", command=self._apply_layout_result,
+            StyledButton(bar, icon="check", text="Sonucu Plana Uygula", command=self._apply_layout_result,
                          bootstyle="secondary-outline"),
         ], padx=2, pady=1, expand=True)
+        goal = ttk.Frame(grp)
+        goal.pack(fill=tk.X, pady=(6, 0))
+        flow_layout(goal, [
+            (ttk.Label(goal, text="Bant kapsama hedefi (%):"),
+             ttk.Spinbox(goal, from_=50, to=100, increment=1, textvariable=self.pole_goal_var, width=5)),
+            StyledButton(goal, icon="fence", text="En Az Direği Bul", command=self._run_pole_search,
+                         bootstyle="secondary-outline"),
+        ], padx=2, pady=1)
+        wrap_label(ttk.Label(grp, foreground=TEXT_MUTED, font=(FONT_UI, 8), justify="left", text=(
+            "Direk aralığını değiştirerek (her denemede odak/eğim optimize edilir) hedefi tutan en "
+            "seyrek dizilimi arar. Sonuç plana uygulanır ve otoriter motorla doğrulanır."))).pack(fill=tk.X)
         self._create_stat_row(grp, "Sonuç:", self.layout_stat_var, TEXT_WHITE)
 
     def _layout_mounts(self):
@@ -1587,6 +1607,50 @@ class TerrainViewshedWindow:
 
         self.layout_stat_var.set(f"{n} kamera için tüm odaklar taranıyor…")
         self._run_in_background("Odak optimizasyonu", compute, done, stat_var=self.layout_stat_var)
+
+    def _run_pole_search(self):
+        from ..pole_optimizer import minimize_poles
+        if len(self.fence_points) < 2:
+            messagebox.showinfo("En az direk", "Önce çiti çizin.", parent=self.window)
+            return
+        try:
+            goal = self._read_num(self.pole_goal_var, "Kapsama hedefi", 10, 100) / 100.0
+        except ValueError as exc:
+            messagebox.showerror("En az direk", str(exc), parent=self.window)
+            return
+        level = _FOCAL_LEVELS.get(self.layout_level_var.get(), 2)
+        objective = _FOCAL_OBJECTIVES.get(self.layout_obj_var.get(), "area")
+        terrain, fence, cam, kw = self.terrain, list(self.fence_points), self.current_camera, self._plan_kwargs()
+        old_poles = len(self.perimeter_plan.placed_cameras) if self.perimeter_plan else 0
+
+        def compute():
+            return minimize_poles(terrain, fence, cam, plan_kwargs=kw, goal_frac=goal, level=level,
+                                  objective=objective, n_focals=6)
+
+        def done(r):
+            from ..focal_optimizer import LEVEL_NAME
+            self._pole_search = r
+            tried = " · ".join(f"{t.fixed_poles} direk %{t.optimised_frac * 100:.0f}{'●' if t.meets else ''}"
+                               for t in sorted(r.trials, key=lambda t: t.fixed_poles))
+            b = r.best
+            head = (f"● {b.fixed_poles} direk (planlayıcı {r.base.fixed_poles}"
+                    + (f", mevcut plan {old_poles}" if old_poles else "") + f") · aralık {b.spacing_m:.0f} m · "
+                    f"bantta {LEVEL_NAME[level]} %{b.optimised_frac * 100:.1f} (hedef %{goal * 100:.0f})"
+                    if r.met else f"▲ Hedef tutmadı — en iyi {b.fixed_poles} direk %{b.optimised_frac * 100:.1f}")
+            self._pending_prefix = head + f". Denemeler: {tried}. " + " ".join(r.notes) + " "
+            self.layout_stat_var.set(self._pending_prefix + "Plan uygulanıyor, otoriter motorla doğrulanıyor…")
+            if not r.met:                     # keep the user's plan; just report
+                self.layout_stat_var.set(self._pending_prefix + "Plan değiştirilmedi.")
+                self._pending_prefix = ""
+                return
+            # adopt the winning plan, then verify it like any layout result
+            self.perimeter_plan = r.best_plan
+            self._refresh_plan_stats()
+            self._layout_result = r.best_layout
+            self._layout_plan = self.perimeter_plan
+            self.window.after(50, self._apply_layout_result)
+
+        self._run_in_background("En az direk", compute, done, stat_var=self.layout_stat_var)
 
     def _apply_layout_result(self):
         """Apply the optimised settings and re-score BOTH plans with the
@@ -1653,8 +1717,9 @@ class TerrainViewshedWindow:
             self.mc_stat_var.set(f"%{mv1.coverage_pct:.1f} ({len(new_cams)} kamera)")
             self.show_multi_var.set(True)
             self.multi_overlay_var.set("dori")
+            prefix, self._pending_prefix = getattr(self, "_pending_prefix", ""), ""
             self.layout_stat_var.set(
-                f"● Uygulandı. Otoriter motor, çit bandında {LEVEL_NAME[level]}: "
+                prefix + f"● Uygulandı. Otoriter motor, çit bandında {LEVEL_NAME[level]}: "
                 f"{a0 / 1e4:.2f} → {a1 / 1e4:.2f} ha (+{(a1 - a0) / 1e4:.2f} ha; "
                 f"optimizasyon tahmini {res.before_m2[level] / 1e4:.2f} → {res.after_m2[level] / 1e4:.2f} ha).")
             self._render_map_canvas()
@@ -1716,6 +1781,58 @@ class TerrainViewshedWindow:
 
         self._run_in_background("Bina & ağaç", compute, done, stat_var=self.obstacle_stat_var)
 
+    def _load_surface_model(self):
+        """A measured surface (LiDAR nDSM / DSM GeoTIFF) on top of the DEM;
+        where it has data it replaces the OSM estimate."""
+        from ..geotiff_reader import read_geotiff
+        self._sync_obstacle_state()
+        bare = self._bare_terrain or self.terrain
+        if bare.lat_center is None:
+            messagebox.showinfo("Yüzey modeli", "Yüzey modeli yalnız konumu bilinen bir araziye (çevrimiçi "
+                                "indirilen ya da kayıtlı bölge) oturtulabilir.", parent=self.window)
+            return
+        path = filedialog.askopenfilename(
+            parent=self.window, title="Yüzey modeli (nDSM / DSM GeoTIFF)",
+            filetypes=[("GeoTIFF", "*.tif *.tiff"), ("Tüm dosyalar", "*.*")])
+        if not path:
+            return
+        surf = self._surface_terrain
+        base = (_obs.ObstacleLayer(height_grid=surf.obstacle_grid, kind_grid=surf.obstacle_kind,
+                                   counts={}) if surf is not None and surf.obstacle_grid is not None else None)
+        old_note = surf.obstacle_note if surf is not None else ""
+
+        def run(mode):
+            def compute():
+                ras = read_geotiff(path)
+                try:
+                    return _obs.layer_from_raster(bare, ras, mode=mode, base=base)
+                except ValueError as exc:
+                    if mode == "auto" and "anlaşılamadı" in str(exc):
+                        return None                      # ask the user, then retry
+                    raise
+
+            def done(res):
+                if bare is not self._bare_terrain:
+                    return
+                if res is None:
+                    is_ndsm = messagebox.askyesno(
+                        "Yüzey modeli türü",
+                        "Dosyadaki değerler ZEMİN ÜSTÜ yükseklik mi (nDSM: bina 0–60 m)?\n\n"
+                        "Evet = nDSM · Hayır = DSM (mutlak yüzey kotu; DEM çıkarılır)", parent=self.window)
+                    run("ndsm" if is_ndsm else "dsm")
+                    return
+                layer, info = res
+                if old_note and info["coverage_frac"] < 0.999:
+                    layer.measured_note += " · kapsam dışı: " + old_note
+                self._surface_terrain = _obs.with_obstacles(bare, layer)
+                self.obstacle_stat_var.set(layer.summary())
+                self.use_obstacles_var.set(True)
+                self._apply_obstacle_toggle()
+
+            self._run_in_background("Yüzey modeli", compute, done, stat_var=self.obstacle_stat_var)
+
+        run("auto")
+
     def _apply_obstacle_toggle(self):
         self._sync_obstacle_state()
         if self._surface_terrain is None:
@@ -1752,7 +1869,7 @@ class TerrainViewshedWindow:
         h = np.flipud(t.obstacle_grid)
         k = np.flipud(t.obstacle_kind) if t.obstacle_kind is not None else (h > 0).astype(np.uint8)
         ov = np.zeros(h.shape + (4,), np.uint8)
-        bld = (k == _obs.KIND_BUILDING) & (h > 0)
+        bld = ((k == _obs.KIND_BUILDING) | (k == _obs.KIND_SURFACE)) & (h > 0)
         veg = (k == _obs.KIND_VEGETATION) & (h > 0)
         ov[bld] = _rgba("building", 0)
         if photo:
@@ -1806,7 +1923,7 @@ class TerrainViewshedWindow:
                 return
             self._anim, self._anim_params = pb, key
             self._anim_t, self._anim_last, self._anim_frame_no = 0.0, time.perf_counter(), 0
-            self.anim_btn_var.set("■ Görsel Taramayı Durdur")
+            self.anim_btn_var.set("Görsel Taramayı Durdur")
             self.ptz_stat_var.set(f"Görsel tarama: tur {pb.period_s:.1f} sn · FOV {pb.hfov_deg:.1f}° · "
                                   f"menzil {pb.reach_m:.0f} m")
             self._render_map_canvas()          # drops the static fan, draws frame 0
@@ -1824,7 +1941,7 @@ class TerrainViewshedWindow:
         was = self._anim is not None
         self._anim = None
         self._anim_frame = None
-        self.anim_btn_var.set("▶ Görsel Tarama (canlı)")
+        self.anim_btn_var.set("Görsel Tarama (canlı)")
         if was and redraw:
             try:
                 self._render_map_canvas()
@@ -2080,7 +2197,7 @@ class TerrainViewshedWindow:
             self.ptz_stat_var.set(
                 f"periyot {r.period_s:.0f} sn · görülen {r.seen_area_m2 / 1e4:.2f} ha · yalnız bakış "
                 f"atılan {r.glimpse_area_m2 / 1e4:.2f} ha (gri) · {rev}"
-                + (" · ⚠ menzil analiz menzilini aşıyor" if r.truncated else ""))
+                + (" · ▲ menzil analiz menzilini aşıyor" if r.truncated else ""))
             self.show_multi_var.set(True)
             self.multi_overlay_var.set("revisit")
             self._render_map_canvas()
@@ -2100,7 +2217,7 @@ class TerrainViewshedWindow:
         static = self._multi_vs
         if only_detected and static is None:
             messagebox.showinfo("Tespit → Teşhis",
-                                "Önce “Çevre Çiti” sekmesinde “🎯 Çit Kameralarını Birleştir” ile "
+                                "Önce “Çevre Çiti” sekmesinde “Çit Kameralarını Birleştir” ile "
                                 "sabit kameraların görüş alanını hesaplayın.", parent=self.window)
             return
         target_ppm = _CUE_PPM_BY_LABEL.get(self.cue_level_var.get(), 250.0)
@@ -2364,7 +2481,7 @@ class TerrainViewshedWindow:
         finally:
             self.window.config(cursor="")
         size = f" · {info.image_size[0]}x{info.image_size[1]}px" if info.image_file else ""
-        self._apply_area(terr, img, f"💾 {info.name} ({info.width_m / 1000:.1f} km{size})",
+        self._apply_area(terr, img, f"{info.name} ({info.width_m / 1000:.1f} km{size})",
                          region_id=info.region_id)
         if not terr.is_measured:
             # Never let synthetic relief pass as a measurement (also offline).
@@ -2404,7 +2521,7 @@ class TerrainViewshedWindow:
     def _open_saved_regions_dialog(self):
         from ..region_library import delete_region, list_regions, regions_dir
         dlg = tk.Toplevel(self.window)
-        dlg.title("📂 Kayıtlı Bölgeler")
+        dlg.title("Kayıtlı Bölgeler")
         fit_and_center_window(dlg, default_w=900, default_h=460, min_w=620, min_h=320, maximize=False,
                               scale_to_dpi=True)
         dlg.transient(self.window)
@@ -2506,9 +2623,9 @@ class TerrainViewshedWindow:
 
         tree.bind("<Double-1>", lambda _e: _open())
         flow_layout(bar, [
-            StyledButton(bar, text="📂 Aç", command=_open, bootstyle="success"),
-            StyledButton(bar, text="🗑️ Sil", command=_delete, bootstyle="danger-outline"),
-            StyledButton(bar, text="💾 Mevcut Haritayı Kaydet", command=_save_current, bootstyle="info-outline"),
+            StyledButton(bar, icon="folder-open", text="Aç", command=_open, bootstyle="success"),
+            StyledButton(bar, icon="trash-2", text="Sil", command=_delete, bootstyle="danger-outline"),
+            StyledButton(bar, icon="save", text="Mevcut Haritayı Kaydet", command=_save_current, bootstyle="info-outline"),
             StyledButton(bar, text="Kapat", command=dlg.destroy, bootstyle="secondary-outline"),
         ], padx=4)
         _refresh()
@@ -2516,7 +2633,7 @@ class TerrainViewshedWindow:
     # ── ONLINE SATELLITE & DEM DOWNLOADER DIALOG ──
     def _open_online_map_downloader_dialog(self):
         dlg = tk.Toplevel(self.window)
-        dlg.title("🌐 Çevrimiçi HD Uydu Haritası & Yükselti İndirici")
+        dlg.title("Çevrimiçi HD Uydu Haritası & Yükselti İndirici")
         # BUGFIX: maximize=False like every other dialog -- the default
         # maximized this small form to the whole screen (on 4K a 3840 px
         # window with the form in its top-left corner).
@@ -2553,11 +2670,11 @@ class TerrainViewshedWindow:
             except tk.TclError:
                 pass
 
-        btn_cancel = StyledButton(btn_row, text="✖️ Vazgeç", command=_close_dialog, bootstyle="secondary-outline")
+        btn_cancel = StyledButton(btn_row, icon="x", text="Vazgeç", command=_close_dialog, bootstyle="secondary-outline")
         btn_cancel.pack(side=tk.LEFT, padx=(0, 8))
         dlg.protocol("WM_DELETE_WINDOW", _close_dialog)
 
-        btn_download = StyledButton(btn_row, text="⬇️ HD UYDU VE YÜKSELTİ VERİSİNİ İNDİR & UYGULA", bootstyle="success")
+        btn_download = StyledButton(btn_row, icon="download", text="HD UYDU VE YÜKSELTİ VERİSİNİ İNDİR & UYGULA", bootstyle="success")
         btn_download.pack(side=tk.RIGHT, fill=tk.X, expand=True)
 
         # 2. CONTENT BODY -- scrollable (Kural 8): with the offline-save
@@ -2565,7 +2682,7 @@ class TerrainViewshedWindow:
         body_outer, frm = make_scrollable(dlg, padding=(16, 12, 16, 6))
         body_outer.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        ttk.Label(frm, text="🌐 Çevrimiçi HD Uydu & Sayısal Yükselti İndirici", font=(FONT_UI, 12, "bold"), foreground=TEXT_WHITE).pack(anchor="w", pady=(0, 4))
+        ttk.Label(frm, text="Çevrimiçi HD Uydu & Sayısal Yükselti İndirici", font=(FONT_UI, 12, "bold"), foreground=TEXT_WHITE).pack(anchor="w", pady=(0, 4))
         ttk.Label(frm, text="Esri World Imagery ve OpenStreetMap üzerinden yüksek çözünürlüklü gerçek uydu ortofotosunu ve 3D arazi modelini doğrudan indirin.", wraplength=570).pack(anchor="w", pady=(0, 10))
 
         # Location & Coordinates Box
@@ -2616,9 +2733,9 @@ class TerrainViewshedWindow:
         row_qual.pack(fill=tk.X, pady=(0, 6))
         ttk.Label(row_qual, text="Detay Kalitesi (hedef):").pack(anchor="w", pady=(0, 2))
         qual_var = tk.StringVar(value="hd")
-        ttk.Radiobutton(row_qual, text="💎 Yüksek (HD — hedef ~1 m/px)", variable=qual_var, value="hd").pack(anchor="w", pady=1)
-        ttk.Radiobutton(row_qual, text="🔍 Ultra HD (hedef ~0.5 m/px — en net)", variable=qual_var, value="ultra_hd").pack(anchor="w", pady=1)
-        ttk.Radiobutton(row_qual, text="⚡ Hızlı (Standart — hedef ~2 m/px)", variable=qual_var, value="standard").pack(anchor="w", pady=1)
+        ttk.Radiobutton(row_qual, text="Yüksek (HD — hedef ~1 m/px)", variable=qual_var, value="hd").pack(anchor="w", pady=1)
+        ttk.Radiobutton(row_qual, text="Ultra HD (hedef ~0.5 m/px — en net)", variable=qual_var, value="ultra_hd").pack(anchor="w", pady=1)
+        ttk.Radiobutton(row_qual, text="Hızlı (Standart — hedef ~2 m/px)", variable=qual_var, value="standard").pack(anchor="w", pady=1)
 
         # Analysis grid: the DEM source is ~30 m, so a finer grid adds no
         # relief -- it sharpens buildings, trees and shadow edges. Cost grows
@@ -2634,9 +2751,9 @@ class TerrainViewshedWindow:
         row_src.pack(fill=tk.X, pady=2)
         ttk.Label(row_src, text="Harita / Uydu Kaynağı:").pack(anchor="w", pady=(0, 2))
         src_var = tk.StringVar(value="esri")
-        ttk.Radiobutton(row_src, text="🛰️ Esri World Imagery (Yüksek Çözünürlüklü Gerçek Uydu Fotoğrafı)", variable=src_var, value="esri").pack(anchor="w", pady=2)
-        ttk.Radiobutton(row_src, text="🗺️ OpenStreetMap (Cadde, Tesis, Bina ve Yol Planı)", variable=src_var, value="osm").pack(anchor="w", pady=2)
-        ttk.Radiobutton(row_src, text="⛰️ OpenTopoMap (Eşyükselti Eğrileri ve Topoğrafik Kabartma)", variable=src_var, value="opentopo").pack(anchor="w", pady=2)
+        ttk.Radiobutton(row_src, text="Esri World Imagery (Yüksek Çözünürlüklü Gerçek Uydu Fotoğrafı)", variable=src_var, value="esri").pack(anchor="w", pady=2)
+        ttk.Radiobutton(row_src, text="OpenStreetMap (Cadde, Tesis, Bina ve Yol Planı)", variable=src_var, value="osm").pack(anchor="w", pady=2)
+        ttk.Radiobutton(row_src, text="OpenTopoMap (Eşyükselti Eğrileri ve Topoğrafik Kabartma)", variable=src_var, value="opentopo").pack(anchor="w", pady=2)
 
         # The quality labels above are a request, not a promise: at 10 km the
         # server simply does not serve 0.5 m/px. Show what will actually arrive.
@@ -2672,7 +2789,7 @@ class TerrainViewshedWindow:
         grp_save = ttk.LabelFrame(frm, text="3. Çevrimdışı Kayıt", padding=10)
         grp_save.pack(fill=tk.X, pady=(6, 0))
         save_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(grp_save, text="💾 İndirilen bölgeyi bu bilgisayara kaydet (sonra indirmeden aç)",
+        ttk.Checkbutton(grp_save, text="İndirilen bölgeyi bu bilgisayara kaydet (sonra indirmeden aç)",
                         variable=save_var).pack(anchor="w")
         row_name = ttk.Frame(grp_save)
         row_name.pack(fill=tk.X, pady=(4, 0))
@@ -2681,7 +2798,7 @@ class TerrainViewshedWindow:
         ttk.Entry(row_name, textvariable=save_name_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
         existing_lbl = wrap_label(ttk.Label(grp_save, text="", foreground=ACCENT_AMBER,
                                             font=(FONT_UI, 9)))
-        btn_open_saved = StyledButton(grp_save, text="📂 Kayıtlı Olanı İndirmeden Aç",
+        btn_open_saved = StyledButton(grp_save, icon="folder-open", text="Kayıtlı Olanı İndirmeden Aç",
                                       bootstyle="secondary-outline")
         match_state = {"region": None}
         name_state = {"auto": save_name_var.get()}
@@ -2752,20 +2869,20 @@ class TerrainViewshedWindow:
 
             dl_state["running"] = True
             btn_download.configure(state="disabled")
-            status_lbl.configure(text="🛰️ Uydu kareleri indiriliyor, lütfen bekleyin...")
+            status_lbl.configure(text="Uydu kareleri indiriliyor, lütfen bekleyin...")
 
             def _thread_worker():
                 def _on_progress(done, total):
                     pct = (done / max(total, 1)) * 100.0
                     _post(lambda: progress_var.set(pct))
                     _post(lambda d=done, t=total, p=pct: status_lbl.configure(
-                        text=f"🛰️ Uydu kareleri: {d}/{t} (%{p:.0f})"))
+                        text=f"Uydu kareleri: {d}/{t} (%{p:.0f})"))
 
                 def _on_dem_progress(done, total):
                     pct = (done / max(total, 1)) * 100.0
                     _post(lambda: progress_var.set(pct))
                     _post(lambda d=done, t=total: status_lbl.configure(
-                        text=f"⛰️ Yükselti (DEM) kareleri: {d}/{t}"))
+                        text=f"Yükselti (DEM) kareleri: {d}/{t}"))
 
                 try:
                     sat_img = download_satellite_mosaic(
@@ -2779,7 +2896,7 @@ class TerrainViewshedWindow:
                     )
                     meta = dict(sat_img.info)
                     _post(lambda: status_lbl.configure(
-                        text="⛰️ Gerçek yükselti modeli (DEM) indiriliyor..."))
+                        text="Gerçek yükselti modeli (DEM) indiriliyor..."))
                     terr = fetch_online_elevation_grid(
                         center_lat=clat,
                         center_lon=clon,
@@ -2793,7 +2910,7 @@ class TerrainViewshedWindow:
                     # save never fails the download -- it is reported.
                     saved, save_err = None, ""
                     if want_save:
-                        _post(lambda: status_lbl.configure(text="💾 Bölge diske kaydediliyor..."))
+                        _post(lambda: status_lbl.configure(text="Bölge diske kaydediliyor..."))
                         try:
                             from ..region_library import save_region
                             saved = save_region(
@@ -2834,7 +2951,7 @@ class TerrainViewshedWindow:
 
                     if saved is not None:
                         kept = (f"Kaydedildi: '{saved.name}' ({saved.size_bytes / 1e6:.1f} MB) — "
-                                "'📂 Kayıtlı Bölgeler'den indirmeden açılır.")
+                                "'Kayıtlı Bölgeler'den indirmeden açılır.")
                     elif save_err:
                         kept = f"Bölge kaydedilemedi: {save_err}"
                     else:
@@ -2908,12 +3025,12 @@ class TerrainViewshedWindow:
         self.zoom_level = 1.0
         self.view_center_x = self.terrain.width_m * 0.5
         self.view_center_y = self.terrain.height_m * 0.5
-        self.lbl_zoom_readout_var.set("🔍 %100")
+        self.lbl_zoom_readout_var.set("%100")
         self.schedule_recalculate()
 
     def _zoom_at_center(self, factor: float):
         self.zoom_level = max(0.25, min(10.0, self.zoom_level * factor))
-        self.lbl_zoom_readout_var.set(f"🔍 %{self.zoom_level * 100:.0f}")
+        self.lbl_zoom_readout_var.set(f"%{self.zoom_level * 100:.0f}")
         self.schedule_recalculate()
 
     def _zoom_at_point(self, mouse_screen_x: float, mouse_screen_y: float, factor: float):
@@ -2925,7 +3042,7 @@ class TerrainViewshedWindow:
             self.zoom_level = new_zoom
             self.view_center_x = world_x + (self.view_center_x - world_x) * (old_zoom / new_zoom)
             self.view_center_y = world_y + (self.view_center_y - world_y) * (old_zoom / new_zoom)
-            self.lbl_zoom_readout_var.set(f"🔍 %{self.zoom_level * 100:.0f}")
+            self.lbl_zoom_readout_var.set(f"%{self.zoom_level * 100:.0f}")
             self.schedule_recalculate()
 
     def _on_canvas_mousewheel(self, event):
@@ -2992,20 +3109,20 @@ class TerrainViewshedWindow:
         selected_idx = self.mode_notebook.index(self.mode_notebook.select())
         self.planner_mode_var.set("single" if selected_idx == 0 else "perimeter")
         if self.planner_mode_var.get() == "perimeter":
-            self.lbl_bottom_title.configure(text="📊 50-100 KAMERALIK ÇEVRE ÇİTİ DİZİLİMİ & KULE MATRİSİ (PERIMETER SCHEDULE)")
+            self.lbl_bottom_title.configure(text="50-100 KAMERALIK ÇEVRE ÇİTİ DİZİLİMİ & KULE MATRİSİ (PERIMETER SCHEDULE)")
             if self.perimeter_plan is None:
                 self.distribute_perimeter_cameras()
         else:
-            self.lbl_bottom_title.configure(text="📐 OPTİK EKSEN ZEMİN & IŞIN KESİT PROFİLİ (ELEVATION PROFILE)")
+            self.lbl_bottom_title.configure(text="OPTİK EKSEN ZEMİN & IŞIN KESİT PROFİLİ (ELEVATION PROFILE)")
         self.recalculate_viewshed()
 
     def _toggle_fence_drawing(self):
         self.is_drawing_fence = not self.is_drawing_fence
         if self.is_drawing_fence:
-            self.btn_draw_fence.configure(text="🛑 Çizimi Bitir / Kilitle", bootstyle="primary")
+            self.btn_draw_fence.configure(text="Çizimi Bitir / Kilitle", bootstyle="primary")
             self.telemetry_var.set("Harita üzerinde sırayla tıklayarak çevre çiti köşe noktalarını belirleyin.")
         else:
-            self.btn_draw_fence.configure(text="✏️ Çit Noktaları Ekle / Çiz (Haritaya Tıkla)", bootstyle="info")
+            self.btn_draw_fence.configure(text="Çit Noktaları Ekle / Çiz (Haritaya Tıkla)", bootstyle="info")
             self.distribute_perimeter_cameras()
 
     def _clear_fence(self):
@@ -3138,32 +3255,32 @@ class TerrainViewshedWindow:
         if len(self.fence_points) < 2:
             return
 
-        target_ppm = _PERIMETER_PPM_BY_LABEL.get(self.target_ppm_var.get(), 40.0)
-
-        overlap_frac = self.overlap_pct_var.get() / 100.0
-        mast_h = self.mast_height_var.get()
-
-        weather = self.weather_var.get()
-        vis_km = WEATHER_PRESETS.get(weather, 40.0)
-        line_mode = _LINE_MODE_BY_LABEL.get(self.line_mode_var.get(), "facility")
-        watch_side = _WATCH_SIDE_BY_LABEL.get(self.watch_side_var.get(), "right")
         self.perimeter_plan = generate_perimeter_plan(
-            terrain=self.terrain,
-            fence_points=self.fence_points,
-            camera=self.current_camera,
-            target_ppm=target_ppm,
-            overlap_pct=overlap_frac,
-            mast_height_m=mast_h,
+            terrain=self.terrain, fence_points=self.fence_points, camera=self.current_camera,
+            **self._plan_kwargs())
+        self._refresh_plan_stats()
+
+    def _plan_kwargs(self) -> dict:
+        """generate_perimeter_plan settings from the perimeter tab (one place,
+        so the pole search plans exactly what "Otomatik Diz" would)."""
+        weather = self.weather_var.get()
+        return dict(
+            target_ppm=_PERIMETER_PPM_BY_LABEL.get(self.target_ppm_var.get(), 40.0),
+            overlap_pct=self.overlap_pct_var.get() / 100.0,
+            mast_height_m=self.mast_height_var.get(),
             lens_mode=self.lens_mode_var.get(),
             is_closed_loop=self.fence_closed_var.get(),
-            visibility_km=vis_km,
+            visibility_km=WEATHER_PRESETS.get(weather, 40.0),
             weather=weather,
-            line_mode=line_mode,
-            watch_side=watch_side,
+            line_mode=_LINE_MODE_BY_LABEL.get(self.line_mode_var.get(), "facility"),
+            watch_side=_WATCH_SIDE_BY_LABEL.get(self.watch_side_var.get(), "right"),
             ptz_camera=self._mixed_ptz_camera(),
             ptz_every_n=max(1, int(self._read_int_safe(self.mix_every_n_var, 4))),
             ptz_patrol_span_deg=_PATROL_SPAN_BY_LABEL.get(self.mix_patrol_var.get(), 180.0),
         )
+
+    def _refresh_plan_stats(self):
+        """BOM read-outs, coverage grid and viewshed for self.perimeter_plan."""
         self._mixed = None
         self.mix_stat_var.set("Henüz hesaplanmadı." if self.perimeter_plan.ptz_cameras else "PTZ yok.")
         self._recompute_coverage_grid()
@@ -3243,7 +3360,7 @@ class TerrainViewshedWindow:
             return
 
         note = "" if getattr(self.terrain, "is_measured", False) else (
-            "\n\n⚠ Arazi yükseltisi TEMSİLİ (ölçülmüş DEM değil). "
+            "\n\n▲ Arazi yükseltisi TEMSİLİ (ölçülmüş DEM değil). "
             "Görüş alanı ve kapsama değerleri bağlayıcı değildir.")
         messagebox.showinfo("Rapor Kaydedildi", f"Mühendislik raporu kaydedildi:\n{file_path}{note}")
 
@@ -3330,7 +3447,7 @@ class TerrainViewshedWindow:
                         row += ["— (PTZ devriye)", "—"]
                     writer.writerow(row)
             note = "" if measured else (
-                "\n\n⚠ Arazi yükseltisi TEMSİLİ (ölçülmüş DEM değil). "
+                "\n\n▲ Arazi yükseltisi TEMSİLİ (ölçülmüş DEM değil). "
                 "Zemin rakımı, toplam irtifa ve kör nokta değerleri bağlayıcı değildir."
             )
             messagebox.showinfo("BOM Aktarıldı", f"Toplam {self.perimeter_plan.camera_count} kameralık perimetre listesi başarıyla kaydedildi:\n{file_path}{note}")
@@ -3448,7 +3565,7 @@ class TerrainViewshedWindow:
                 for cam in self.perimeter_plan.placed_cameras:
                     if math.hypot(cam.x_m - world_x, cam.y_m - world_y) < (self.terrain.width_m * 0.04 / self.zoom_level):
                         self.selected_pole_id = cam.pole_id
-                        self.telemetry_var.set(f"📍 Seçilen Direk #{cam.pole_id}: ({cam.x_m:.0f}m, {cam.y_m:.0f}m) · Z: {cam.total_z_m:.1f}m · Yön: {cam.pan_deg:.0f}° · Menzil: {cam.effective_range_m:.0f}m")
+                        self.telemetry_var.set(f"Seçilen Direk #{cam.pole_id}: ({cam.x_m:.0f}m, {cam.y_m:.0f}m) · Z: {cam.total_z_m:.1f}m · Yön: {cam.pan_deg:.0f}° · Menzil: {cam.effective_range_m:.0f}m")
                         self.recalculate_viewshed()
                         return
             else:
@@ -3492,13 +3609,13 @@ class TerrainViewshedWindow:
                             status_text = (" · ■ KÖR NOKTA (arazi / bina engeli)" if self.terrain.has_obstacles
                                            else " · ■ KÖR NOKTA (tepe arkası)")
                         elif code == ZONE_IDENT:
-                            status_text = f" · 🟢 Teşhis ({ppm:.0f} px/m)"
+                            status_text = f" · ● Teşhis ({ppm:.0f} px/m)"
                         elif code == ZONE_RECOG:
-                            status_text = f" · 🟡 Tanıma ({ppm:.0f} px/m)"
+                            status_text = f" · ▲ Tanıma ({ppm:.0f} px/m)"
                         elif code == ZONE_OBSERVE:
-                            status_text = f" · 🟠 Gözlem ({ppm:.0f} px/m)"
+                            status_text = f" · ▲ Gözlem ({ppm:.0f} px/m)"
                         elif code == ZONE_DETECT:
-                            status_text = f" · 🔴 Algılama ({ppm:.0f} px/m)"
+                            status_text = f" · ■ Algılama ({ppm:.0f} px/m)"
 
                 self.telemetry_var.set(
                     f"Konum: ({world_x:.0f}m, {world_y:.0f}m) · Rakım: {elev:.1f} m · Mesafe: {dist:.1f} m{status_text}"
@@ -3885,8 +4002,13 @@ class TerrainViewshedWindow:
                 rows = ([(txt, rgba) for _, _, rgba, txt in _LAYER_BANDS["dori"][1]]
                         if self.show_dori_var.get() else [])
                 if self.terrain.has_obstacles:
-                    rows += [("Bina (OSM)", _rgba("building", 255)),
-                             ("Ağaç / orman (OSM)", _rgba("vegetation", 255))]
+                    kinds = self.terrain.obstacle_kind
+                    if kinds is not None and (kinds == _obs.KIND_SURFACE).any():
+                        rows += [("Ölçülmüş yüzey (nDSM/DSM)", _rgba("building", 255))]
+                    if kinds is None or (kinds == _obs.KIND_BUILDING).any():
+                        rows += [("Bina (OSM)", _rgba("building", 255))]
+                    if kinds is None or (kinds == _obs.KIND_VEGETATION).any():
+                        rows += [("Ağaç / orman (OSM)", _rgba("vegetation", 255))]
                 self._draw_band_legend(cv, "DORI & görüş", rows, 30, h - 20, "sw", "legend")
 
         self._draw_layer_legend(cv)

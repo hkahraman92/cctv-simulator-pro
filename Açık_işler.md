@@ -1,3 +1,41 @@
+## -35. Yerel yüzey modeli: LiDAR nDSM / DSM GeoTIFF — ✅ (2026-11-07)
+
+- `geotiff_reader.py` (bağımlılıksız): georeferans etiketlerden; WGS84,
+  UTM, TUREF TM27–TM45, Web Mercator; ED50 reddedilir.
+- `surface_obstacles.layer_from_raster`: hücre içi en yüksek alt örnek,
+  DSM'de DEM çıkarma + dikey referans düzeltmesi, OSM'yi yalnız veri olan
+  yerde değiştirir. Arayüzde "Yerel Yüzey Modeli (nDSM / DSM)"; rapor
+  ölçülmüş yüzeyi OSM tahmininden ayırır.
+- Doğrulama: 8 test; Kızılay DEM + TM30 nDSM (0,5 m) uçtan uca: blok tam
+  yerinde, görünür alan 11 700 → 1 000 m².
+
+Kalan: döşemeli/sıkıştırılmış (COG) TIFF için tifffile/rasterio yolu yok;
+ED50 için datum dönüşümü yok (bilinçli ret); proje dosyası yüzeyi yalnız
+kayıtlı bölge üzerinden taşır.
+
+## -34. Emoji → Lucide simge seti — ✅ (2026-11-07)
+
+- Lucide 0.460.0 (ISC) gömülü; `ui/icons.py` PIL ile tema renginde çizer.
+- 120 emojili satır dönüştürüldü: düğmeler `icon=` + sade metin, diğerleri
+  emoji yok / ● ▲ ■; `en.json` anahtarları aynı dönüşümle (çeviriler korundu).
+- Harita araç çubuğu simgeli; zum göstergesi uyarı renginden çıktı.
+- 3B görünümde açılır kutular iç kodu ("human", "auto") gösteriyordu — düzeltildi.
+- `test_icons.py`: kaynağa emoji geri girerse test düşer.
+
+Kalan: customtkinter tezgâhındaki "Eğik kenar fotoğrafı → k ölç" düğmesi
+simgesiz (CTkImage gerekir).
+
+## -33. Çit hedefini tutan en az direk — ✅ (2026-11-07)
+
+- `pole_optimizer.py` + planlayıcıda `spacing_m`: aralık araması, her
+  denemede direk başına odak/eğim optimizasyonu, hedefi tutan en seyrek plan.
+- Çit sekmesi: "Bant kapsama hedefi (%)" + "En Az Direği Bul" → plan
+  değişir, otoriter motorla doğrulanır; hedef tutmazsa plan korunur.
+- Ölçüm (2,4 km kare çit, 124 direklik plan): %70 → 20 direk, %95 → 68 direk.
+
+Kalan: direk yerleri hâlâ eşit aralıklı (arazi/kör noktaya göre kaydırma
+yok); kamera modeli seçimi (hangi model en az direk) aranmıyor.
+
 ## -32. Varifokal: tüm odak uzunluklarıyla tarama + sabit + PTZ dizilim optimizasyonu — ✅ (2026-11-06)
 
 İstek: viewshed kapsamayı tüm focal length'lere göre tarasın; PTZ + sabit
@@ -11,8 +49,7 @@ kamerayla maksimum kapsama üretecek akıllı yapı.
 - Ölçüm (124 direk, tepelik 2×2 km): Algılama bant içi 15,40 → 20,71 ha
   (otoriter motor), bant 21,28 ha; süre 2,7 + 1,3 sn.
 
-Kalan: direk sayısı/aralığı optimizasyonu yok (yalnız mevcut direklerin
-ayarı); PTZ devriye parametreleri (yön aralığı, hız) optimize edilmiyor —
+Kalan: ~~direk sayısı/aralığı~~ (-33); PTZ devriye parametreleri (yön aralığı, hız) optimize edilmiyor —
 zarf yalnız erişimi gösterir; 10 m prosedürel ızgarada yüksek seviyeler
 (Tanıma/Teşhis) 100 m²'lik basamaklarla ölçülür — ince ızgara önerilir.
 
