@@ -135,7 +135,76 @@ def scene_render(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     }
 
 
+def optics_project(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """Every camera of a site plan at once: DORI distances, dead zones and which
+    other cameras cover each dead zone, plus the check point verdict per camera."""
+    from ..calculations import analyze_dead_zone_coverage, calculate_for_camera, target_analysis_for_result
+    from ..models import DEFAULT_LEVELS, TargetPoint
+
+    raw = params.get("cameras")
+    if not isinstance(raw, list) or not raw:
+        raise RpcError(INVALID_PARAMS, "'cameras' en az bir kamera içermeli.")
+    cams = [_camera_from(c) for c in raw]
+    names = [c.name for c in cams]
+    if len(set(names)) != len(names):
+        raise RpcError(INVALID_PARAMS, "Kamera adları benzersiz olmalı (kör nokta örtüşmesi ada göre eşleşir).")
+    focals = params.get("focals")          # optional per-camera focal (the slider), else lens end
+    mode = params.get("mode", "min")
+    if mode not in ("min", "max"):
+        raise RpcError(INVALID_PARAMS, "'mode' 'min' veya 'max' olmalı.")
+    import dataclasses
+    results = {}
+    for i, c in enumerate(cams):
+        f = focals[i] if isinstance(focals, list) and i < len(focals) and isinstance(focals[i], (int, float)) else None
+        if f is not None and c.focal_min_mm <= f <= c.focal_max_mm:
+            c = dataclasses.replace(c, focal_min_mm=float(f), focal_max_mm=float(f))
+            results[c.name] = [calculate_for_camera(c, "min", list(DEFAULT_LEVELS), with_recommendations=False)]
+        else:
+            results[c.name] = [calculate_for_camera(c, mode, list(DEFAULT_LEVELS), with_recommendations=False)]
+    analyze_dead_zone_coverage(results, [r[0].camera for r in results.values()])
+
+    tp = params.get("target")
+    level_key = str(params.get("level_key", "Characterize"))
+    level = next((lv for lv in DEFAULT_LEVELS if lv.key == level_key), None)
+    if tp is not None and level is None:
+        raise RpcError(INVALID_PARAMS, f"Bilinmeyen seviye: {level_key}")
+    target = None
+    if isinstance(tp, dict):
+        target = TargetPoint(active=True, x_m=float(tp.get("x_m", 0.0)), y_m=float(tp.get("y_m", 0.0)),
+                             required_level_key=level_key)
+    out = []
+    for name, (r,) in results.items():
+        out.append({
+            "name": name, "focal_mm": r.focal_mm, "hfov_deg": r.hfov_deg, "dead_zone_m": r.dead_zone_m,
+            "max_geom_dist_m": r.max_geom_dist_m if math.isfinite(r.max_geom_dist_m) else None,
+            "ground_distances": {k: (v if math.isfinite(v) else None) for k, v in r.ground_distances.items()},
+            "dead_zone_covered_by": r.dead_zone_covered_by or [],
+            "target": target_analysis_for_result(target, r, level) if target else None,
+        })
+    return {"cameras": out, "level": dataclasses.asdict(level) if level else None}
+
+
+def plan_image(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """Site plan picture (PNG / JPG / BMP / TIFF) for the CAD workspace background."""
+    from PIL import Image, UnidentifiedImageError
+
+    path = _require(params, "path", str)
+    try:
+        with Image.open(path) as im:
+            im.load()
+            w, h = im.size
+            img = im.convert("RGB")
+    except FileNotFoundError:
+        raise RpcError(APP_ERROR, f"Dosya bulunamadı: {path}") from None
+    except (UnidentifiedImageError, OSError) as exc:
+        raise RpcError(APP_ERROR, f"Plan resmi okunamadı: {exc}") from None
+    return {**_image(img, max_px=int(_num(params, "max_px", 2400, lo=200, hi=6000)), fmt="JPEG"),
+            "source_width_px": w, "source_height_px": h, "aspect": h / w if w else 1.0}
+
+
 METHODS = {
+    "optics.project": optics_project,
+    "plan.image": plan_image,
     "optics.bench": optics_bench,
     "iq.measure": iq_measure,
     "scene.render": scene_render,

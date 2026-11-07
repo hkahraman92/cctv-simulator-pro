@@ -1,17 +1,39 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Camera, Plus, Trash2 } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { isTauri } from "@tauri-apps/api/core";
+import { AlertTriangle, Camera, Crosshair, ImagePlus, Move, Plus, Trash2, X } from "lucide-react";
 import { DORI, type ModelSummary } from "../core/api";
 import { useProject } from "../core/project";
 import { useCoalesced, useCore } from "../core/CoreProvider";
 import { usePageActive } from "../core/pageActive";
 import { Button, Panel, Slider, Tile, fmt } from "../components/ui";
 import PlanView, { atGeomLimit } from "../components/PlanView";
+import SitePlan from "../components/SitePlan";
 
 export default function Workspace({ onStatus }: { onStatus: (s: string) => void }) {
   const active = usePageActive();
-  const { api, state } = useCore();
-  const { sites, selected: sel, site, select: setSel, add, remove, update, replaceCamera } = useProject();
+  const { api, bench, state } = useCore();
+  const { sites, selected: sel, site, select: setSel, add, remove, update, updateAt, replaceCamera, plan, setPlan } = useProject();
   const [models, setModels] = useState<ModelSummary[]>([]);
+  const [view, setView] = useState<"site" | "single">("site");
+  const [tool, setTool] = useState<"move" | "target">("move");
+  const [planImg, setPlanImg] = useState<{ data: string; aspect: number } | null>(null);
+  const [planErr, setPlanErr] = useState("");
+
+  // background picture follows the project's plan_path
+  useEffect(() => {
+    if (!plan.plan_path || state !== "ready") { setPlanImg(null); return; }
+    bench.planImage(plan.plan_path).then((r) => { setPlanImg({ data: r.data, aspect: r.aspect }); setPlanErr(""); })
+      .catch((e) => { setPlanImg(null); setPlanErr(String(e.message ?? e)); });
+  }, [bench, plan.plan_path, state]);
+
+  // every camera at once: DORI wedges, dead-zone overlap, check point
+  const projInput = useMemo(() => ({
+    cameras: sites.map((x) => x.camera), focals: sites.map((x) => x.focal),
+    target: plan.target.active ? { x_m: plan.target.x_m, y_m: plan.target.y_m } : undefined, level_key: plan.level_key,
+  }), [sites, plan.target, plan.level_key]);
+  const dupNames = new Set(sites.map((x) => x.camera.name)).size !== sites.length;
+  const proj = useCoalesced(projInput, (i) => bench.project(i), state === "ready" && active && !dupNames);
 
   useEffect(() => {
     if (state !== "ready") return;
@@ -33,6 +55,14 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
 
   const c = site.camera;
   const varifocal = c.focal_max_mm > c.focal_min_mm;
+  const planW = Math.max(plan.plan_width_m, 5);
+  const planH = planImg ? planW * planImg.aspect : planW * 0.62;
+  const mine = proj.value?.cameras.find((x) => x.name === c.name);
+
+  const pickPlan = async () => {
+    const f = await open({ title: "Vaziyet planı resmi", filters: [{ name: "Resim", extensions: ["png", "jpg", "jpeg", "bmp", "tif", "tiff"] }] });
+    if (typeof f === "string") setPlan({ plan_path: f });
+  };
   const identify = r?.ground_distances.Characterize;
 
   return (
@@ -60,11 +90,66 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
             <Trash2 size={14} /> Seçiliyi Sil
           </Button>
         )}
+        <div className="label mt-4 mb-1">Plan</div>
+        <div className="flex gap-1.5">
+          <Button className="flex-1" disabled={!isTauri()} onClick={pickPlan}><ImagePlus size={14} /> Resim</Button>
+          {plan.plan_path && <Button title="Plan resmini kaldır" onClick={() => setPlan({ plan_path: "" })}><X size={14} /></Button>}
+        </div>
+        {plan.plan_path && <div className="mt-1 truncate font-mono text-[10px] text-text-3" title={plan.plan_path}>{plan.plan_path.split(/[\\/]/).pop()}</div>}
+        {planErr && <div className="mt-1 text-[11px] text-danger">■ {planErr}</div>}
+        <label className="mt-2 block"><span className="label">Plan genişliği (m)</span>
+          <input type="number" min={5} step={1} value={plan.plan_width_m} onChange={(e) => { const v = Number(e.target.value); if (v >= 5) setPlan({ plan_width_m: v }); }}
+            className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 font-mono text-[12px]" /></label>
+        <div className="label mt-4 mb-1">Kontrol noktası</div>
+        <label className="flex items-center gap-2 text-[12px]">
+          <input type="checkbox" checked={plan.target.active} onChange={(e) => setPlan({ target: { ...plan.target, active: e.target.checked } })} /> Etkin
+        </label>
+        {plan.target.active && (
+          <>
+            <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-1 text-[12px]" value={plan.level_key} aria-label="Gereken seviye"
+              onChange={(e) => setPlan({ level_key: e.target.value })}>
+              {[["Characterize", "Teşhis 250"], ["ANPR_Alg", "Plaka 143"], ["Perceive", "Tanıma 125"], ["Discern", "Gözlem 62,5"], ["Outline", "Algılama 25"]].map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+            <div className="mt-1 font-mono text-[10px] text-text-3">({fmt(plan.target.x_m)}, {fmt(plan.target.y_m)}) m · ⌖ ile haritaya tıklayın</div>
+            <ul className="mt-2 flex flex-col gap-1 text-[11px]">
+              {proj.value?.cameras.map((pc) => pc.target && (
+                <li key={pc.name} className={pc.target.status === "uygun" ? "text-primary" : "text-text-2"}>
+                  {pc.target.status === "uygun" ? "●" : "○"} {pc.name}: {fmt(pc.target.ppm, 0)} px/m · {fmt(pc.target.distance)} m{pc.target.status !== "uygun" ? ` — ${pc.target.status}` : ""}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
       </Panel>
 
-      <Panel title="Kuş Bakışı Plan" className="min-w-[380px] flex-[3_1_420px]"
-        right={<span className="font-mono text-[10px] text-text-3">{res.busy ? "hesaplanıyor…" : r ? `${fmt(r.focal_mm)} mm` : ""}</span>}>
-        {r ? <PlanView r={r} /> : <Empty state={state} error={res.error} />}
+      <Panel title={view === "site" ? "Vaziyet Planı" : "Seçili kamera"} className="min-w-[380px] flex-[3_1_420px]"
+        right={
+          <div className="flex items-center gap-1">
+            {view === "site" && (
+              <>
+                <button type="button" title="Taşı / döndür" onClick={() => setTool("move")} className={`rounded p-1 ${tool === "move" ? "bg-bg-6 text-primary" : "text-text-2"}`}><Move size={15} /></button>
+                <button type="button" title="Kontrol noktası koy" onClick={() => { setTool("target"); setPlan({ target: { ...plan.target, active: true } }); }}
+                  className={`rounded p-1 ${tool === "target" ? "bg-bg-6 text-secondary" : "text-text-2"}`}><Crosshair size={15} /></button>
+              </>
+            )}
+            {([["site", "Plan"], ["single", "Tek kamera"]] as const).map(([id, l]) => (
+              <button key={id} type="button" onClick={() => setView(id)}
+                className={`h-7 rounded-full px-3 text-[11px] font-semibold ${view === id ? "bg-secondary text-on-secondary" : "bg-bg-5 text-text-2"}`}>{l}</button>
+            ))}
+          </div>
+        }>
+        {view === "site" ? (
+          <div className="h-[420px]">
+            {dupNames ? <Empty state={state} error="Kamera adları benzersiz olmalı — İnceleme'den yeniden adlandırın." /> : (
+              <SitePlan sites={sites} results={proj.value?.cameras} selected={sel} widthM={planW} heightM={planH} image={planImg?.data}
+                target={plan.target} tool={tool} onSelect={setSel}
+                onMove={(i, x, y) => updateAt(i, { pos_x_m: x, pos_y_m: y })}
+                onHeading={(i, h) => updateAt(i, { heading_deg: h })}
+                onTarget={(x, y) => setPlan({ target: { x_m: x, y_m: y, active: true } })}
+                onDragEnd={() => undefined} />
+            )}
+          </div>
+        ) : r ? <PlanView r={r} /> : <Empty state={state} error={res.error} />}
         <div className="mt-2 grid grid-cols-4 gap-1.5">
           {DORI.map((d) => (
             <div key={d.key} className="rounded bg-bg-1 p-2">
@@ -109,7 +194,21 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
           <Slider label="Eğim (aşağı)" unit="°" value={c.tilt_deg} min={0} max={60} step={0.5} onChange={(v) => update({ tilt_deg: v })} />
           <Slider label="Direk yüksekliği" unit="m" value={c.pole_height_m} min={2} max={30} step={0.5} onChange={(v) => update({ pole_height_m: v })} />
           <Slider label="Hedef yüksekliği" unit="m" value={c.target_height_m} min={0.5} max={2.5} step={0.1} onChange={(v) => update({ target_height_m: v })} />
+          <Slider label="Yön (0° = doğu, saat tersi)" unit="°" value={c.heading_deg} min={0} max={359} step={1} onChange={(v) => update({ heading_deg: v })} />
+          <div className="grid grid-cols-2 gap-2">
+            <label><span className="label">X (m)</span><input type="number" step={0.5} value={c.pos_x_m} onChange={(e) => update({ pos_x_m: Number(e.target.value) || 0 })}
+              className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 font-mono text-[12px]" /></label>
+            <label><span className="label">Y (m)</span><input type="number" step={0.5} value={c.pos_y_m} onChange={(e) => update({ pos_y_m: Number(e.target.value) || 0 })}
+              className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 font-mono text-[12px]" /></label>
+          </div>
         </div>
+        {mine && mine.dead_zone_m > 0.5 && sites.length > 1 && (
+          <div className={`mt-3 rounded p-2 text-[11px] ${mine.dead_zone_covered_by.length ? "bg-ok-bg text-primary" : "bg-warn-bg text-warn"}`}>
+            {mine.dead_zone_covered_by.length
+              ? `● Kör nokta (${fmt(mine.dead_zone_m)} m) şu kameralarca kapatılıyor: ${mine.dead_zone_covered_by.join(", ")}`
+              : `▲ Kör nokta (${fmt(mine.dead_zone_m)} m) başka hiçbir kamerayla kapatılmıyor.`}
+          </div>
+        )}
         <div className="mt-3 grid grid-cols-2 gap-1.5">
           <Tile label="Yatay FOV" value={r ? fmt(r.hfov_deg) : "—"} unit="°" tone="text-secondary" />
           <Tile label="Dikey FOV" value={r ? fmt(r.vfov_deg) : "—"} unit="°" />

@@ -22,7 +22,12 @@ export default function ProjectBar() {
     }
     const name = proj.name === "Yeni proje" ? (path.split(/[\\/]/).pop() ?? "").replace(/\.json$/, "") : proj.name;
     try {
-      await api.saveProject(path, { cameras: proj.sites.map((s) => s.camera), project_name: name });
+      await api.saveProject(path, {
+        cameras: proj.sites.map((s) => s.camera), project_name: name,
+        plan_path: proj.plan.plan_path, plan_width_m: proj.plan.plan_width_m,
+        target_point: { active: proj.plan.target.active, name: "Kontrol Noktası", x_m: proj.plan.target.x_m,
+          y_m: proj.plan.target.y_m, required_level_key: proj.plan.level_key },
+      });
       proj.markSaved(path, name);
       setMsg("");
     } catch (e) {
@@ -37,7 +42,11 @@ export default function ProjectBar() {
     try {
       const r = await api.loadProject(p);
       const sites = r.project.cameras.map((c) => ({ camera: c, focal: r.project.lens_mode === "max" ? c.focal_max_mm : c.focal_min_mm }));
-      proj.load(sites, p, r.project.project_name || (p.split(/[\\/]/).pop() ?? "").replace(/\.json$/, ""));
+      const tp = (r.project.target_point ?? {}) as { active?: boolean; x_m?: number; y_m?: number; required_level_key?: string };
+      proj.load(sites, p, r.project.project_name || (p.split(/[\\/]/).pop() ?? "").replace(/\.json$/, ""), {
+        plan_path: String(r.project.plan_path ?? ""), plan_width_m: Number(r.project.plan_width_m ?? 45) || 45,
+        target: { active: !!tp.active, x_m: tp.x_m ?? 12, y_m: tp.y_m ?? 0 }, level_key: tp.required_level_key || "Characterize",
+      });
       setMsg("");
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));

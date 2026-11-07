@@ -7,10 +7,19 @@ export interface Site {
   focal: number;
 }
 
+/** Site plan settings, saved in the project file (same fields as the classic app). */
+export interface PlanSettings {
+  plan_path: string;       // "" = no background picture
+  plan_width_m: number;    // real width the picture spans
+  target: { x_m: number; y_m: number; active: boolean };
+  level_key: string;       // required level at the check point (models.DEFAULT_LEVELS key)
+}
+
 interface ProjectCtx {
   sites: Site[];
   selected: number;
   site: Site;
+  plan: PlanSettings;
   path: string;            // "" = never saved
   name: string;
   dirty: boolean;
@@ -19,23 +28,39 @@ interface ProjectCtx {
   remove: (i: number) => void;
   /** patch the selected camera; focal is clamped into the (new) lens range */
   update: (patch: Partial<CameraConfig>, focal?: number) => void;
+  /** patch any camera by index (dragging on the plan) */
+  updateAt: (i: number, patch: Partial<CameraConfig>) => void;
   replaceCamera: (camera: CameraConfig) => void;
-  load: (sites: Site[], path: string, name: string) => void;
+  setPlan: (patch: Partial<PlanSettings>) => void;
+  load: (sites: Site[], path: string, name: string, plan?: Partial<PlanSettings>) => void;
   markSaved: (path: string, name: string) => void;
 }
 
 const Ctx = createContext<ProjectCtx | null>(null);
 
-export const newSite = (n: number): Site => ({
-  camera: { ...DEFAULT_CAMERA, name: `Kamera ${n}` },
+export const DEFAULT_PLAN: PlanSettings = {
+  plan_path: "", plan_width_m: 45, target: { x_m: 12, y_m: 0, active: false }, level_key: "Characterize",
+};
+
+export const newSite = (n: number, at?: { x: number; y: number }): Site => ({
+  camera: { ...DEFAULT_CAMERA, name: `Kamera ${n}`, pos_x_m: at?.x ?? 0, pos_y_m: at?.y ?? 0 },
   focal: DEFAULT_CAMERA.focal_min_mm,
 });
 
 const clamp = (f: number, c: CameraConfig) => Math.min(Math.max(f, c.focal_min_mm), c.focal_max_mm);
 
+/** First "Kamera N" name not taken (names key the reports and the overlap analysis). */
+const freeName = (sites: Site[]) => {
+  const taken = new Set(sites.map((s) => s.camera.name));
+  let n = sites.length + 1;
+  while (taken.has(`Kamera ${n}`)) n++;
+  return n;
+};
+
 export function ProjectProvider({ children }: { children: ReactNode }) {
   const [sites, setSites] = useState<Site[]>([newSite(1)]);
   const [selected, setSelected] = useState(0);
+  const [plan, setPlanState] = useState<PlanSettings>(DEFAULT_PLAN);
   const [path, setPath] = useState("");
   const [name, setName] = useState("Yeni proje");
   const [dirty, setDirty] = useState(false);
@@ -44,19 +69,29 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const touch = useCallback((fn: (s: Site[]) => Site[]) => { setSites(fn); setDirty(true); }, []);
 
   const value = useMemo<ProjectCtx>(() => ({
-    sites, selected: sel, site: sites[sel], path, name, dirty,
+    sites, selected: sel, site: sites[sel], plan, path, name, dirty,
     select: setSelected,
-    add: () => { touch((a) => [...a, newSite(a.length + 1)]); setSelected(sites.length); },
+    add: () => {
+      const n = freeName(sites);
+      const last = sites[sites.length - 1]?.camera;
+      touch((a) => [...a, newSite(n, last ? { x: last.pos_x_m + 5, y: last.pos_y_m } : undefined)]);
+      setSelected(sites.length);
+    },
     remove: (i) => { touch((a) => (a.length > 1 ? a.filter((_, j) => j !== i) : a)); setSelected(0); },
     update: (patch, focal) => touch((a) => a.map((s, i) => {
       if (i !== sel) return s;
       const camera = { ...s.camera, ...patch };
       return { camera, focal: clamp(focal ?? s.focal, camera) };
     })),
+    updateAt: (idx, patch) => touch((a) => a.map((s, i) => (i === idx ? { ...s, camera: { ...s.camera, ...patch } } : s))),
     replaceCamera: (camera) => touch((a) => a.map((s, i) => (i === sel ? { camera, focal: camera.focal_min_mm } : s))),
-    load: (next, p, n) => { setSites(next.length ? next : [newSite(1)]); setSelected(0); setPath(p); setName(n); setDirty(false); },
+    setPlan: (patch) => { setPlanState((p) => ({ ...p, ...patch })); setDirty(true); },
+    load: (next, p, n, pl) => {
+      setSites(next.length ? next : [newSite(1)]); setSelected(0); setPath(p); setName(n);
+      setPlanState({ ...DEFAULT_PLAN, ...pl }); setDirty(false);
+    },
     markSaved: (p, n) => { setPath(p); setName(n); setDirty(false); },
-  }), [sites, sel, path, name, dirty, touch]);
+  }), [sites, sel, plan, path, name, dirty, touch]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

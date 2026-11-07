@@ -46,6 +46,31 @@ def test_bench_names_why_it_fails():
     assert r["dori_reach_m"]["identify"] < r["dori_reach_m"]["detect"]
 
 
+def test_project_overlap_matches_the_engine():
+    """Two cameras back to back: each dead zone is covered by the other (the
+    classic plan's "kör nokta kapatılıyor" rule), and the check point verdict."""
+    from cctv_simulator.calculations import analyze_dead_zone_coverage, target_analysis_for_result
+    from cctv_simulator.models import DEFAULT_LEVELS, TargetPoint
+
+    a = CameraConfig(name="A", pos_x_m=0, pos_y_m=0, heading_deg=0, tilt_deg=20, pole_height_m=5)
+    b = CameraConfig(name="B", pos_x_m=6, pos_y_m=0, heading_deg=180, tilt_deg=20, pole_height_m=5)
+    r = ok("optics.project", cameras=[dataclasses.asdict(a), dataclasses.asdict(b)], target={"x_m": 4, "y_m": 0.5})
+    res = {c.name: [calculate_for_camera(c, "min", DEFAULT_LEVELS, with_recommendations=False)] for c in (a, b)}
+    analyze_dead_zone_coverage(res, [a, b])
+    for cam in r["cameras"]:
+        assert cam["dead_zone_covered_by"] == res[cam["name"]][0].dead_zone_covered_by
+        want = target_analysis_for_result(TargetPoint(x_m=4, y_m=0.5), res[cam["name"]][0], DEFAULT_LEVELS[11])
+        assert cam["target"]["ppm"] == want["ppm"] and cam["target"]["status"] == want["status"]
+    assert r["cameras"][0]["dead_zone_covered_by"] == ["B"]
+
+
+def test_plan_image_reads_a_picture(tmp_path):
+    p = tmp_path / "plan.png"
+    Image.new("RGB", (800, 400), "white").save(p)
+    r = ok("plan.image", path=str(p), max_px=400)
+    assert r["source_width_px"] == 800 and r["aspect"] == 0.5 and r["width"] == 400
+
+
 def test_iq_measures_a_known_edge(tmp_path):
     p = tmp_path / "edge.png"
     Image.fromarray(synthetic_edge(160, blur_px=1.5).astype(np.uint8)).save(p)

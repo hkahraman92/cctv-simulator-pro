@@ -55,8 +55,23 @@ export interface SceneFrame {
   weather: string;
 }
 
+export interface ProjectCamera {
+  name: string;
+  focal_mm: number;
+  hfov_deg: number;
+  dead_zone_m: number;
+  max_geom_dist_m: number | null;
+  ground_distances: Record<string, number | null>;
+  dead_zone_covered_by: string[];
+  target: { distance: number; ppm: number; angle_diff: number; status: string; inside_angle: boolean; ppm_ok: boolean } | null;
+}
+
 export function benchApi(rpc: RpcClient) {
   return {
+    project: (p: { cameras: CameraConfig[]; focals: number[]; target?: { x_m: number; y_m: number }; level_key?: string }, opts?: CallOptions) =>
+      rpc.call<{ cameras: ProjectCamera[]; level: { key: string; name: string; ppm: number } | null }>("optics.project", p, opts),
+    planImage: (path: string) =>
+      rpc.call<Picture & { source_width_px: number; source_height_px: number; aspect: number }>("plan.image", { path }),
     bench: (p: { camera: CameraConfig; mode: "min" | "max"; req_ppm: number; distance_m: number; weather?: string }, opts?: CallOptions) =>
       rpc.call<BenchResult>("optics.bench", p, opts),
     measureEdge: (path: string, nominal_mp?: number) => rpc.call<EdgeMeasure>("iq.measure", { path, nominal_mp }),

@@ -116,7 +116,7 @@ export function api(rpc: RpcClient) {
       }),
     loadProject: (path: string) =>
       rpc.call<{ path: string; project: { cameras: CameraConfig[]; project_name: string; lens_mode: string } & Record<string, unknown> }>("project.load", { path }),
-    saveProject: (path: string, project: { cameras: CameraConfig[]; project_name: string; lens_mode?: string }) =>
+    saveProject: (path: string, project: { cameras: CameraConfig[]; project_name: string; lens_mode?: string; plan_path?: string; plan_width_m?: number; target_point?: Record<string, unknown> }) =>
       rpc.call<{ path: string }>("project.save", { path, project }),
     optics: (
       camera: Partial<CameraConfig>,
