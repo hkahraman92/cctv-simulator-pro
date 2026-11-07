@@ -3,6 +3,7 @@ import { Database, Search } from "lucide-react";
 import { DORI, type ModelSummary, type OpticResult } from "../core/api";
 import { useCore } from "../core/CoreProvider";
 import { Panel, fmt } from "../components/ui";
+import LibraryEditor from "../components/LibraryEditor";
 
 type Filter = "all" | "fixed" | "ptz" | "thermal";
 
@@ -17,10 +18,11 @@ export default function Library() {
   const [sel, setSel] = useState<string>("");
   const [ends, setEnds] = useState<{ wide: OpticResult; tele: OpticResult } | null>(null);
 
+  const [rev, setRev] = useState(0);     // bumped after an edit: reload the list and the selected model
   useEffect(() => {
     if (state !== "ready") return;
     api.library().then((r) => { setModels(r.models); setError(""); }).catch((e) => setError(String(e.message ?? e)));
-  }, [api, state]);
+  }, [api, state, rev]);
 
   const shown = useMemo(() => {
     const q = query.trim().toLocaleLowerCase("tr-TR");
@@ -42,7 +44,7 @@ export default function Library() {
       if (live) setEnds({ wide, tele });
     })().catch((e) => live && setError(String(e.message ?? e)));
     return () => { live = false; };
-  }, [api, sel]);
+  }, [api, sel, rev]);
 
   const counts: Record<Filter, number> = {
     all: models.length,
@@ -102,7 +104,8 @@ export default function Library() {
         </section>
       </div>
 
-      <Panel title={current ? current.name : "Model seçin"} className="min-w-0 flex-[5_1_360px] self-start">
+      <div className="flex min-w-0 flex-[5_1_360px] flex-col gap-3 self-start">
+      <Panel title={current ? current.name : "Model seçin"}>
         {!current && <p className="text-text-3">Ayrıntı ve DORI menzilleri için tablodan bir model seçin.</p>}
         {current && !ends && <p className="text-text-3">{error || "Hesaplanıyor…"}</p>}
         {current && ends && (
@@ -127,6 +130,8 @@ export default function Library() {
           </>
         )}
       </Panel>
+      <LibraryEditor selected={sel} onSaved={(n) => { setSel(n); setRev((x) => x + 1); }} />
+      </div>
     </div>
   );
 }

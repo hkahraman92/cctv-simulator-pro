@@ -108,6 +108,13 @@ export function api(rpc: RpcClient) {
     library: () => rpc.call<{ count: number; models: ModelSummary[] }>("library.list"),
     model: (name: string) =>
       rpc.call<{ summary: ModelSummary; record: Record<string, unknown> }>("library.get", { name }),
+    libFields: () => rpc.call<{ fields: { key: string; label: string; group: string; numeric: boolean; multiline: boolean }[]; sensors: string[]; resolutions: string[] }>("library.fields"),
+    libRecord: (name: string) => rpc.call<{ name: string; record: Record<string, unknown>; missing_required: string[]; missing_important: string[]; builtin: boolean; user_entry: boolean }>("library.record", { name }),
+    libAuth: (password: string) => rpc.call<{ ok: boolean }>("library.auth", { password }),
+    libSave: (password: string, record: Record<string, unknown>, old_name?: string, overwrite = false) =>
+      rpc.call<{ name: string; renamed_from: string | null }>("library.save", { password, record, old_name, overwrite }),
+    libDelete: (password: string, name: string) => rpc.call<{ deleted: string }>("library.delete", { password, name }),
+    libSetPassword: (password: string, new_password: string) => rpc.call<{ ok: boolean }>("library.set_password", { password, new_password }),
     cameraFor: (name: string, base?: CameraConfig, withMounting = false) =>
       rpc.call<{ camera: CameraConfig; is_ptz: boolean }>("library.camera", {
         name,

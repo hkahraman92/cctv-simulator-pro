@@ -1,7 +1,56 @@
 import json
+import re
 from pathlib import Path
-from typing import Dict, Any, Tuple, List
+from typing import Dict, Any, Optional, Tuple, List
 from .config import editable_camera_library_path, DEFAULT_CAMERA_LIBRARY
+
+# Camera DB fields stored as numbers (the rest are text). Shared by the Tk
+# database window and the core service so both write the same JSON.
+CAMERA_DB_NUMERIC_KEYS = frozenset({
+    "max_fps", "focal_min_mm", "focal_max_mm", "ir_range_m", "min_lux", "effective_px_ratio",
+    "horizontal_fov_deg", "vertical_fov_deg", "diagonal_fov_deg", "dori_detect_m", "dori_observe_m",
+    "dori_recognize_m", "dori_identify_m", "sn_ratio_db", "white_light_range_m",
+    "illuminator_wavelength_nm", "live_view_users", "temperature_min_c", "temperature_max_c",
+})
+_TR_THOUSANDS_ONLY = re.compile(r"^\d{1,3}(?:\.\d{3})+$")
+
+
+def parse_tr_number(raw: str) -> float:
+    """A number typed in Turkish conventions: "1.500" is 1500, "2,8" is 2.8.
+
+    (A plain ``float(raw.replace(",", "."))`` turned "1.500 m" into 1.5.)"""
+    raw = raw.strip()
+    if _TR_THOUSANDS_ONLY.match(raw):
+        return float(raw.replace(".", ""))
+    if "," in raw:
+        return float(raw.replace(".", "").replace(",", "."))
+    return float(raw)
+
+
+def save_library_model(model_name: str, model: Dict[str, Any], old_name: Optional[str] = None) -> None:
+    """Write one model into the user JSON overlay (renames included).
+
+    Renaming a BUILT-IN model writes a tombstone (``None``) for the old name:
+    there is nothing to delete in the overlay, and without it the untouched
+    default and the renamed copy both showed up."""
+    data = read_camera_library_json()
+    if old_name and old_name != model_name:
+        if old_name in data:
+            del data[old_name]
+        elif old_name in DEFAULT_CAMERA_LIBRARY:
+            data[old_name] = None
+    data[model_name] = model
+    write_camera_library_json(data)
+
+
+def delete_library_model(name: str) -> bool:
+    """Remove a user-added model; built-in models are not stored here (False)."""
+    data = read_camera_library_json()
+    if name not in data or data[name] is None:
+        return False
+    del data[name]
+    write_camera_library_json(data)
+    return True
 
 
 def read_camera_library_json() -> Dict[str, Any]:

@@ -234,3 +234,6 @@ METHODS.update(_REPORT_METHODS)
 from .ptz_methods import METHODS as _PTZ_METHODS  # noqa: E402
 
 METHODS.update(_PTZ_METHODS)
+from .library_methods import METHODS as _LIBRARY_METHODS  # noqa: E402
+
+METHODS.update(_LIBRARY_METHODS)

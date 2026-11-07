@@ -1,10 +1,12 @@
-import re
 import tkinter as tk
 from tkinter import ttk, messagebox
 from typing import Dict, Any, Optional, Tuple
 
 from ..database import (
+    CAMERA_DB_NUMERIC_KEYS,
     camera_db_extended_field_specs,
+    parse_tr_number,
+    save_library_model,
     camera_db_missing_fields,
     has_camera_db_value,
     read_camera_library_json,
@@ -12,28 +14,12 @@ from ..database import (
     load_camera_library,
     model_descriptor,
 )
-from ..config import get_admin_password, set_admin_password, DEFAULT_CAMERA_LIBRARY
+from ..config import get_admin_password, set_admin_password
 from ..theme import (is_themed, COLORS, StyledButton, fit_and_center_window, set_window_icon,
                      make_scrollable, flow_layout, wrap_label)
 
 
-_TR_THOUSANDS_ONLY = re.compile(r"^\d{1,3}(?:\.\d{3})+$")
-
-
-def _parse_tr_number(raw: str) -> float:
-    """Parse a number typed in Turkish locale conventions.
-
-    BUGFIX: this used to be `float(raw.replace(",", "."))`, which only
-    swaps the decimal comma and leaves a Turkish thousands-separator dot
-    untouched -- "1.500" (meant as 1500, e.g. a white-light/DORI range in
-    metres) silently became 1.5. Same fix as compliance_optics._num.
-    """
-    raw = raw.strip()
-    if _TR_THOUSANDS_ONLY.match(raw):
-        return float(raw.replace(".", ""))
-    if "," in raw:
-        return float(raw.replace(".", "").replace(",", "."))
-    return float(raw)
+_parse_tr_number = parse_tr_number   # shared with the core service (database.py)
 
 
 class CameraDatabaseWindow:
@@ -748,19 +734,8 @@ class CameraDatabaseWindow:
                 )
                 if not overwrite:
                     return
-            data = read_camera_library_json()
-            if old_name and old_name != model_name:
-                if old_name in data:
-                    del data[old_name]
-                elif old_name in DEFAULT_CAMERA_LIBRARY:
-                    # BUGFIX: old_name lives in the built-in
-                    # DEFAULT_CAMERA_LIBRARY, not this JSON overlay, so there
-                    # was nothing here to delete -- load_camera_library()
-                    # then showed both the untouched default and the renamed
-                    # copy as two separate models. Tombstone it instead.
-                    data[old_name] = None
-            data[model_name] = model
-            write_camera_library_json(data)
+            # renaming a built-in model tombstones the old name (see database.save_library_model)
+            save_library_model(model_name, model, old_name)
             self.app.camera_library = load_camera_library()
 
             for camera in self.app.cameras:
@@ -784,27 +759,7 @@ class CameraDatabaseWindow:
         source_name = old_name or model_name
         model = dict(self.app.camera_library.get(source_name, {}) or {})
         model["model_name"] = model_name
-        numeric_keys = {
-            "max_fps",
-            "focal_min_mm",
-            "focal_max_mm",
-            "ir_range_m",
-            "min_lux",
-            "effective_px_ratio",
-            "horizontal_fov_deg",
-            "vertical_fov_deg",
-            "diagonal_fov_deg",
-            "dori_detect_m",
-            "dori_observe_m",
-            "dori_recognize_m",
-            "dori_identify_m",
-            "sn_ratio_db",
-            "white_light_range_m",
-            "illuminator_wavelength_nm",
-            "live_view_users",
-            "temperature_min_c",
-            "temperature_max_c",
-        }
+        numeric_keys = CAMERA_DB_NUMERIC_KEYS
 
         for key, widget in self.entries.items():
             if key == "model_name":
