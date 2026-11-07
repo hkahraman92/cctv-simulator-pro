@@ -129,7 +129,7 @@ def _steps_inside(terrain: TerrainData, x0: float, y0: float, ray_angles: np.nda
 
 def march_rays(terrain: TerrainData, cam_x_m: float, cam_y_m: float, cam_z: float,
                ray_angles: np.ndarray, step_dists: np.ndarray,
-               earth_curvature: bool = True) -> RayMarch:
+               earth_curvature: bool = True, occluder_crossings: bool = True) -> RayMarch:
     """Vectorised radial ray march with a running horizon -- the line-of-sight
     core shared by calculate_3d_viewshed (rays inside one FOV) and the per-mount
     360-degree raster (mount_visibility), so occlusion is decided one way.
@@ -191,7 +191,103 @@ def march_rays(terrain: TerrainData, cam_x_m: float, cam_y_m: float, cam_z: floa
     horizon_before = np.empty_like(tan_for_max)
     horizon_before[:, 0] = -1e18
     horizon_before[:, 1:] = np.maximum.accumulate(tan_for_max, axis=1)[:, :-1]
+    if occluder_crossings and tan_for_max.shape[1] > 1:
+        # BUGFIX: the bilinear surface bends only on the grid's node lines, and
+        # between two samples (<= 0.5 cell apart) a ray can cross one node line
+        # per axis whose height it never sampled: a one-cell ridge or wall read
+        # up to 25 % low on a diagonal ray. Its height ON the crossing is exact
+        # (linear between the two nodes), so add those points to the horizon.
+        # PERF: a crossing lies on an edge of one of the two cells its samples
+        # are in, so its height is at most the higher of those cells' corner
+        # maxima -- and it can only matter where that bound's angle (seen from
+        # the nearer sample, an upper bound) beats the horizon already reached.
+        cm = _cell_max(terrain)
+        cmax = cm.ravel().take(r0 * cm.shape[1] + c0) if cm.size else elev
+        bound = np.maximum(cmax[:, 1:], cmax[:, :-1]) - _CROSSING_TOL_M
+        drop_prev = curv_drop[:-1] if earth_curvature else 0.0
+        num = (bound - drop_prev) - cam_z
+        # the crossing sits between the two samples: below the eye the larger
+        # distance gives the larger angle, above it the smaller one
+        tan_ub = num / np.where(num < 0, step_dists[None, 1:], step_dists[None, :-1])
+        horizon_incl = np.maximum(horizon_before[:, 1:], tan_for_max[:, 1:])
+        need = np.zeros(valid.shape, bool)
+        need[:, 1:] = (tan_ub > horizon_incl) & valid[:, 1:]
+        cross = np.full(valid.shape, -1e18)
+        n_need = int(need.sum())
+        if n_need:
+            if n_need > 0.25 * need.size:                 # dense: cheaper than gathering
+                cross[:, 1:] = _node_line_crossings(terrain, fc[:, :-1], fc[:, 1:], fr[:, :-1], fr[:, 1:],
+                                                    step_dists[None, :-1], step_dists[None, 1:], cam_z,
+                                                    earth_curvature)
+                cross[~need] = -1e18
+            else:
+                ri, si = np.nonzero(need)
+                cross[ri, si] = _node_line_crossings(terrain, fc[ri, si - 1], fc[ri, si], fr[ri, si - 1], fr[ri, si],
+                                                     step_dists[si - 1], step_dists[si], cam_z, earth_curvature)
+        # a crossing between samples i-1 and i lies before sample i
+        horizon_before[:, 1:] = np.maximum(horizon_before[:, 1:], np.maximum.accumulate(cross, axis=1)[:, 1:])
     return RayMarch(valid, rr, cc, tan_angle, slant, tan_angle >= horizon_before)
+
+
+_CELL_MAX_CACHE: Dict[Tuple[int, Tuple[int, int]], np.ndarray] = {}
+# A crossing must rise this much above the sightline it could block to count:
+# far below any DEM's accuracy, it stops every gently curved cell from
+# triggering the exact (slower) crossing evaluation.
+_CROSSING_TOL_M = 0.05
+
+
+def _cell_max(terrain: TerrainData) -> np.ndarray:
+    """Highest of each cell's four corner nodes, (rows-1, cols-1); cached per grid."""
+    z = terrain.z_grid
+    key = (id(z), z.shape)
+    hit = _CELL_MAX_CACHE.get(key)
+    if hit is not None:
+        return hit
+    if z.shape[0] < 2 or z.shape[1] < 2:
+        cm = np.asarray(z, float)
+    else:
+        cm = np.maximum(np.maximum(z[:-1, :-1], z[:-1, 1:]), np.maximum(z[1:, :-1], z[1:, 1:]))
+    if len(_CELL_MAX_CACHE) > 8:
+        _CELL_MAX_CACHE.clear()
+    _CELL_MAX_CACHE[key] = cm
+    return cm
+
+
+def _node_line_crossings(terrain: TerrainData, c0: np.ndarray, c1: np.ndarray, r0: np.ndarray, r1: np.ndarray,
+                         d_prev, d_cur, cam_z: float, earth_curvature: bool) -> np.ndarray:
+    """Tan-angle of the highest node-line crossing on the segment from
+    (c0, r0) to (c1, r1) (fractional grid coordinates; any matching shapes;
+    -1e18 = none). x-lines are integer columns, y-lines integer rows; on such
+    a line the bilinear surface is linear between two nodes: exact heights."""
+    rows, cols = terrain.rows, terrain.cols
+    z = terrain.z_grid
+
+    def axis(a0, a1, b0, b1, line_is_col: bool):
+        k = np.floor(np.maximum(a0, a1))
+        has = (k > np.minimum(a0, a1)) & (k >= 0)
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t = np.where(has, (k - a0) / (a1 - a0), 0.0)
+        # a crossing ON a sample is that sample (already in the horizon); counting
+        # it again let a 1e-15 rounding difference hide a plane from itself
+        has &= (t > 1e-6) & (t < 1.0 - 1e-6)
+        t = np.clip(t, 0.0, 1.0)
+        other = b0 + (b1 - b0) * t
+        n_other = rows if line_is_col else cols
+        o0 = np.clip(np.floor(other), 0, max(n_other - 2, 0)).astype(np.intp)
+        fo = np.clip(other - o0, 0.0, 1.0)
+        kk = np.clip(k, 0, (cols if line_is_col else rows) - 1).astype(np.intp)
+        o1 = np.minimum(o0 + 1, n_other - 1)
+        if line_is_col:
+            h = z[o0, kk] + (z[o1, kk] - z[o0, kk]) * fo
+        else:
+            h = z[kk, o0] + (z[kk, o1] - z[kk, o0]) * fo
+        dc = d_prev + (d_cur - d_prev) * t
+        drop = dc * dc / (2.0 * _R_EARTH) * (1.0 - _K_REFRACT) if earth_curvature else 0.0
+        with np.errstate(divide="ignore", invalid="ignore"):
+            tan = np.where(has & (dc > 0), ((h - drop) - cam_z) / dc, -1e18)
+        return tan
+
+    return np.maximum(axis(c0, c1, r0, r1, True), axis(r0, r1, c0, c1, False))
 
 
 def view_focal_mm(camera: CameraConfig, lens_mode: str = "min",

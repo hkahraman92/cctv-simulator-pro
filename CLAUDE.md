@@ -830,10 +830,18 @@ Modu" satırı.
 
 - Klasik `main_window` DORI tablosu hâlâ berrak hava (bilinçli — DORI berrak-hava
   standardı; atmosfer 3B/harita/tezgâh pencerelerinde). `k` orada var.
-- Occlusion ışın örneklemesi artık ≤0.5 hücre adım (viewshed, bilinear
-  yükseklik) / ≤1 hücre (`compute_coverage_grid`, `n_samp` tavanı 90, >40
-  kamerada seyreltilir); DDA değil, çok ince çapraz sırtlar teorik olarak hâlâ
-  kaçabilir. Otorite tekil `calculate_3d_viewshed`.
+- Occlusion: `march_rays` ≤0.5 hücre adım + bilinear yükseklik **ve** iki
+  örnek arasında ışının kestiği düğüm çizgisi noktaları (`occluder_crossings`,
+  vars. açık). Bilinear yüzey yalnız düğüm çizgilerinde kırılır; orada
+  yükseklik iki düğüm arasında doğrusal = kesin. Eskiden tek hücrelik
+  sırt/duvar eğik ışında %25'e kadar alçak okunuyordu (`test_thin_ridge`:
+  duvar arkasında 219 sızan örnek → 0). Örneğin kendisiyle çakışan kesişim
+  sayılmaz (yoksa 1e-15 yuvarlama düzlemi kendinden gizliyordu). Ön eleme:
+  hücre köşe maksimumundan üst sınır açısı o ana kadarki ufku 5 cm
+  (`_CROSSING_TOL_M`) aşmıyorsa kesişim hesaplanmaz. Maliyet: tekil viewshed
+  ~+3 ms, direk raster'ı ~2× (sivri arazide). `compute_coverage_grid` (≤1
+  hücre, `n_samp` tavanı 90) bu düzeltmeyi almadı; otorite tekil
+  `calculate_3d_viewshed`.
 - `load_geotiff_or_dem` yerel GeoTIFF için `origin`'i 0,0 yapar (gerçek dünya
   koordinatını atar) — indirilen DEM'lerle tutarlı ama gerçek jeoreferans
   gerekirse dönüştürülmeli.
