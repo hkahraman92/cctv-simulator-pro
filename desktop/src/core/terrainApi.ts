@@ -185,6 +185,56 @@ export interface PlanParams {
   watch_side: "left" | "right";
   weather?: string;
   spacing_m?: number;
+  ptz_camera?: CameraConfig;
+  ptz_every_n?: number;
+  ptz_patrol_span_deg?: number;
+}
+
+export interface SweepResult {
+  period_s: number;
+  focal_mm: number;
+  hfov_deg: number;
+  min_dwell_s: number;
+  seen_area_m2: number;
+  glimpse_area_m2: number;
+  continuous_area_m2: number;
+  occluded_area_m2: number;
+  mean_revisit_s: number | null;
+  worst_revisit_s: number | null;
+  truncated: boolean;
+  zone_areas_m2: ZoneAreas;
+  overlay: Picture;
+  legend: LegendRow[];
+}
+
+export interface CueResult {
+  target_ppm: number;
+  reachable_area_m2: number;
+  mean_response_s: number | null;
+  p90_response_s: number | null;
+  worst_response_s: number | null;
+  unreachable: { reason: string; area_m2: number }[];
+  overlay: Picture;
+  legend: LegendRow[];
+}
+
+export interface MixedResult {
+  fixed_poles: number;
+  ptz_count: number;
+  continuous_detect_m2: number;
+  intermittent_detect_m2: number;
+  worst_intermittent_revisit_s: number | null;
+  detected_area_m2: number;
+  identifiable_area_m2: number;
+  identifiable_pct: number;
+  median_d2i_s: number | null;
+  p90_d2i_s: number | null;
+  worst_d2i_s: number | null;
+  cue_target_ppm: number;
+  ptz_detect_floor_ppm: number;
+  ptz_camera_name: string;
+  overlay: Picture;
+  legend: LegendRow[];
 }
 
 type T = { terrain_id: string; use_obstacles?: boolean };
@@ -223,6 +273,16 @@ export function terrainApi(rpc: RpcClient) {
       p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; pan_deg: number; level: string; pan_search_deg?: number; weather?: string; n_focals?: number },
       opts?: CallOptions,
     ) => rpc.call<FocalSweep>("focal.sweep", p, { timeoutMs: 0, ...opts }),
+    ptzSweep: (
+      p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; mode: "rotation" | "sector"; start_pan_deg?: number; end_pan_deg?: number; speed_deg_s: number; end_dwell_s?: number; tilt_deg: number; focal_mm?: number; range_m: number; weather?: string; layer?: "revisit" | "dori"; max_px?: number },
+      opts?: CallOptions,
+    ) => rpc.call<SweepResult>("ptz.sweep", p, { timeoutMs: 0, ...opts }),
+    ptzCue: (
+      p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; home_pan_deg: number; home_tilt_deg: number; target_ppm: number; range_m: number; weather?: string; max_px?: number },
+      opts?: CallOptions,
+    ) => rpc.call<CueResult>("ptz.cue", p, { timeoutMs: 0, ...opts }),
+    mixed: (p: T & { speed_deg_s: number; layer?: "fused" | "cue"; cue_target_ppm?: number; max_px?: number }, opts?: CallOptions) =>
+      rpc.call<MixedResult>("perimeter.mixed", p, { timeoutMs: 0, ...opts }),
   };
 }
 

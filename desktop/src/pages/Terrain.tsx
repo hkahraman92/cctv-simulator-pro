@@ -15,6 +15,7 @@ import { useActiveTerrain } from "../core/activeTerrain";
 import MapView from "../components/MapView";
 import JobBar from "../components/JobBar";
 import { FocalCurve, ProfileChart } from "../components/charts";
+import { MixedPanel, PtzPanel, type Layer } from "../components/PtzPanels";
 import { Button, Panel, Slider, Tile, fmt } from "../components/ui";
 
 const ha = (m2: number) => `${fmt(m2 / 1e4, 2)} ha`;
@@ -47,6 +48,10 @@ export default function Terrain() {
   const [mount, setMount] = useState({ x: 0, y: 0, mast: 8, pan: 0, tilt: -5, range: 600, lens: "max" as "min" | "max", focal: undefined as number | undefined });
   const [weather, setWeather] = useState("Berrak hava");
   const [sweep, setSweep] = useState<FocalSweep | null>(null);
+  const [isPtz, setIsPtz] = useState(false);
+  const [ptzLayer, setPtzLayer] = useState<Layer | null>(null);       // single tab: PTZ result replaces the fan
+  const [mixedLayer, setMixedLayer] = useState<Layer | null>(null);   // perimeter tab: fixed + PTZ layers
+  const [mixedPtz, setMixedPtz] = useState<{ camera: CameraConfig | null; everyN: number; span: number }>({ camera: null, everyN: 4, span: 360 });
 
   // perimeter
   const [fence, setFence] = useState<[number, number][]>([]);
@@ -94,22 +99,27 @@ export default function Terrain() {
   const single: SingleViewshed | undefined = vs.value;
 
   const applyModel = async (name: string) => {
-    const { camera: c } = await api.cameraFor(name, camera);
+    const { camera: c, is_ptz } = await api.cameraFor(name, camera);
     setCamera(c);
+    setIsPtz(is_ptz);
     setMount((m) => ({ ...m, focal: undefined }));
     setSweep(null);
+    setPtzLayer(null);
   };
 
   const pick = (x: number, y: number) => {
-    if (tab === "single") setMount((m) => ({ ...m, x, y }));
+    if (tab === "single") { setMount((m) => ({ ...m, x, y })); setPtzLayer(null); }
     else if (drawing) setFence((f) => [...f, [x, y]]);
   };
 
-  const planParams = () => ({ fence, ...plan, weather });
+  const planParams = () => ({
+    fence, ...plan, weather,
+    ...(mixedPtz.camera ? { ptz_camera: mixedPtz.camera, ptz_every_n: mixedPtz.everyN, ptz_patrol_span_deg: mixedPtz.span } : {}),
+  });
   const runPlan = async () => {
     if (!info || fence.length < 2) return;
     const r = await job.run("Çit planı", () => T.plan({ terrain_id: info.terrain_id, use_obstacles: useObstacles, camera, ...planParams() }));
-    if (r) { setPlanRes(r); setCoverage(null); setPoleRes(null); }
+    if (r) { setPlanRes(r); setCoverage(null); setPoleRes(null); setMixedLayer(null); }
   };
   const runCoverage = async () => {
     if (!info) return;
@@ -138,8 +148,10 @@ export default function Terrain() {
     } : null);
   }, [setActive, info, useObstacles, weather, camera, single, planRes, coverage]);
 
-  const overlay = tab === "single" ? single?.overlay.data : coverage?.overlay.data;
-  const legend: LegendRow[] | undefined = tab === "single" ? single?.legend : coverage?.legend;
+  // a PTZ / mixed result, when one was run, is shown instead of the plain layer
+  const extra = tab === "single" ? ptzLayer : mixedLayer;
+  const overlay = extra ? extra.overlay : tab === "single" ? single?.overlay.data : coverage?.overlay.data;
+  const legend: LegendRow[] | undefined = extra ? extra.legend : tab === "single" ? single?.legend : coverage?.legend;
 
   return (
     <div className="flex h-full min-h-0 flex-wrap gap-3 p-3 [&>*]:max-h-full">
@@ -201,7 +213,7 @@ export default function Terrain() {
               tool={tab === "single" ? "camera" : drawing ? "fence" : "none"} onPick={pick}>
               {legend && (
                 <div className="rounded border border-bg-5 bg-bg-1/85 px-3 py-2 backdrop-blur">
-                  <div className="label mb-1">{tab === "single" ? "Görüş alanı · DORI" : "Birleşik kapsama"}</div>
+                  <div className="label mb-1">{extra ? extra.title : tab === "single" ? "Görüş alanı · DORI" : "Birleşik kapsama"}</div>
                   {legend.map(([text, [r, g, b, a]]) => (
                     <div key={text} className="flex items-center gap-2 text-[11px]">
                       <span className="h-3 w-3 rounded-sm border border-line" style={{ background: `rgba(${r},${g},${b},${a / 255})` }} />{text}
@@ -279,6 +291,13 @@ export default function Terrain() {
                 {single.warnings.map((w) => <div key={w} className="mt-2 text-[11px] text-warn">▲ {w}</div>)}
               </Panel>
             )}
+            {isPtz && (
+              <>
+                <PtzPanel T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} camera={camera}
+                  mount={mount} weather={weather} onLayer={setPtzLayer} />
+                {ptzLayer && <Button className="w-full" onClick={() => setPtzLayer(null)}>Tekil görüş alanına dön</Button>}
+              </>
+            )}
             {camera.focal_max_mm > camera.focal_min_mm && (
               <Panel title="Varifokal: tüm odaklar">
                 <Button className="w-full" disabled={job.running} onClick={runSweep}><Play size={14} /> Odakları Tara (Tanıma)</Button>
@@ -343,6 +362,10 @@ export default function Terrain() {
                 )}
               </Panel>
             )}
+            <MixedPanel T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} models={models}
+              value={mixedPtz} onChange={setMixedPtz} hasPlanWithPtz={!!planRes?.ptz.length} onLayer={setMixedLayer}
+              ptzModelFor={async (n) => (await api.cameraFor(n, undefined, true)).camera} />
+            {mixedLayer && <Button className="w-full" onClick={() => setMixedLayer(null)}>Birleşik kapsamaya dön</Button>}
             <Panel title="En az direk">
               <Slider label="Algılama hedefi (bant)" unit="%" value={goal} min={50} max={99} step={1} onChange={setGoal} />
               <Button className="mt-2 w-full" disabled={job.running || fence.length < 2} onClick={runPoles}><Play size={14} /> Aramayı Başlat</Button>
