@@ -6,10 +6,12 @@ import {
 } from "lucide-react";
 import { DEFAULT_CAMERA, type CameraConfig, type ModelSummary } from "../core/api";
 import { useCoalesced, useCore } from "../core/CoreProvider";
+import { usePageActive } from "../core/pageActive";
 import type {
   CoverageResult, FocalSweep, LegendRow, PlanResult, PoleSearch, RegionInfo, SingleViewshed, TerrainCatalog, TerrainInfo,
 } from "../core/terrainApi";
 import { useJob } from "../core/useJob";
+import { useActiveTerrain } from "../core/activeTerrain";
 import MapView from "../components/MapView";
 import JobBar from "../components/JobBar";
 import { FocalCurve, ProfileChart } from "../components/charts";
@@ -27,6 +29,7 @@ const LEVELS = [
 type Tab = "single" | "perimeter";
 
 export default function Terrain() {
+  const active = usePageActive();
   const { terrain: T, api, state } = useCore();
   const job = useJob();
   const [catalog, setCatalog] = useState<TerrainCatalog | null>(null);
@@ -87,7 +90,7 @@ export default function Terrain() {
         pan_deg: mount.pan, tilt_deg: mount.tilt, range_m: mount.range, lens_mode: mount.lens, focal_mm: mount.focal,
         weather, max_px: 1200 }
     : null), [info, tab, useObstacles, camera, mount, weather]);
-  const vs = useCoalesced(vsInput, (i) => T.viewshed(i!), !!vsInput && state === "ready");
+  const vs = useCoalesced(vsInput, (i) => T.viewshed(i!), !!vsInput && state === "ready" && active);
   const single: SingleViewshed | undefined = vs.value;
 
   const applyModel = async (name: string) => {
@@ -125,6 +128,15 @@ export default function Terrain() {
       x_m: mount.x, y_m: mount.y, mast_m: mount.mast, pan_deg: mount.pan, level: "recognize", weather, n_focals: 10 }, o));
     if (r) setSweep(r);
   };
+
+  // publish what has been run on this terrain, for the Reports page
+  const { setActive } = useActiveTerrain();
+  useEffect(() => {
+    setActive(info ? {
+      terrain_id: info.terrain_id, label: info.label, is_measured: info.is_measured, use_obstacles: useObstacles,
+      weather, camera, ran: { viewshed: !!single, plan: !!planRes, coverage: !!coverage },
+    } : null);
+  }, [setActive, info, useObstacles, weather, camera, single, planRes, coverage]);
 
   const overlay = tab === "single" ? single?.overlay.data : coverage?.overlay.data;
   const legend: LegendRow[] | undefined = tab === "single" ? single?.legend : coverage?.legend;

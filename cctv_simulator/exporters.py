@@ -3,7 +3,6 @@ import io
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-from tkinter import messagebox
 from xml.sax.saxutils import escape as _xml_escape
 from .config import TURKISH_TRANSLATION
 from .calculations import mode_label
@@ -59,6 +58,7 @@ def export_png(path: str, root_win: Any, canvas_widget: Any):
     if ImageGrab is None:
         eps_path = str(Path(path).with_suffix(".eps"))
         canvas_widget.postscript(file=eps_path, colormode="color")
+        from tkinter import messagebox   # PNG export is a Tk-only path; the module stays Tk-free
         messagebox.showwarning(
             "PNG için Pillow gerekli",
             f"Pillow bulunamadığı için PNG üretilemedi. Çizim EPS olarak kaydedildi:\n{eps_path}",

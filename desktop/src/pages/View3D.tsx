@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useCoalesced, useCore } from "../core/CoreProvider";
+import { usePageActive } from "../core/pageActive";
 import { useProject } from "../core/project";
 import { Panel, Slider, fmt } from "../components/ui";
 
@@ -11,6 +12,7 @@ const TARGETS = [["human", "İnsan (1,8 m)"], ["vehicle", "Araç (2,3 m)"], ["ob
 
 /** What the camera itself would show: real FOV, sensor and MTF loss, palette, weather. */
 export default function View3D() {
+  const active = usePageActive();
   const { bench, terrain, state } = useCore();
   const { site, update } = useProject();
   const c = site.camera;
@@ -38,7 +40,7 @@ export default function View3D() {
   const res = useCoalesced(input, (i) => bench.scene({
     camera: i.c, focal_mm: i.focal, width: i.w, height: i.h, target: i.target, target_dist_m: i.dist,
     lateral_m: i.lateral, palette: i.palette, weather: i.weather, show_dori: i.dori, max_dist_m: Math.max(100, i.dist * 1.5),
-  }), state === "ready");
+  }), state === "ready" && active);
   const f = res.value;
   const atmAlarm = f && f.visibility_km < 20 && f.transmittance < 0.3;
   const varifocal = c.focal_max_mm > c.focal_min_mm;

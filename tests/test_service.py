@@ -154,6 +154,31 @@ def test_cancel_and_progress():
     assert any(m.get("method") == "$/progress" and m["params"]["id"] == 7 for m in msgs)
 
 
+def test_every_engine_module_imports_without_tk():
+    """cctv-core.exe is built without Tk: any engine module importing tkinter
+    at top level would crash the frozen core the first time it is used
+    (compliance.py and exporters.py did)."""
+    code = (
+        "import sys, pkgutil, importlib\n"
+        "sys.modules['tkinter'] = None; sys.modules['_tkinter'] = None\n"
+        "import cctv_simulator\n"
+        "bad = []\n"
+        "for m in pkgutil.walk_packages(cctv_simulator.__path__, 'cctv_simulator.'):\n"
+        "    n = m.name\n"
+        "    if '.ui' in n or n.endswith(('.theme', '.__main__')):\n"
+        "        continue\n"
+        "    try:\n"
+        "        importlib.import_module(n)\n"
+        "    except Exception as e:\n"
+        "        bad.append(f'{n}: {e}')\n"
+        "print('\\n'.join(bad))\n"
+    )
+    proc = subprocess.run([sys.executable, "-c", code], cwd=ROOT, capture_output=True, text=True,
+                          encoding="utf-8", timeout=120)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "", proc.stdout
+
+
 def test_stdio_process_keeps_stdout_clean():
     """The real sidecar: stdout carries only frames even if the engine prints."""
     lines = [json.dumps(_req(1, "system.info")),

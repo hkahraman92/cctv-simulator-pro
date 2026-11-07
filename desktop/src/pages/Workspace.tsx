@@ -3,10 +3,12 @@ import { AlertTriangle, Camera, Plus, Trash2 } from "lucide-react";
 import { DORI, type ModelSummary } from "../core/api";
 import { useProject } from "../core/project";
 import { useCoalesced, useCore } from "../core/CoreProvider";
+import { usePageActive } from "../core/pageActive";
 import { Button, Panel, Slider, Tile, fmt } from "../components/ui";
 import PlanView, { atGeomLimit } from "../components/PlanView";
 
 export default function Workspace({ onStatus }: { onStatus: (s: string) => void }) {
+  const active = usePageActive();
   const { api, state } = useCore();
   const { sites, selected: sel, site, select: setSel, add, remove, update, replaceCamera } = useProject();
   const [models, setModels] = useState<ModelSummary[]>([]);
@@ -17,7 +19,7 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
   }, [api, state]);
 
   const input = useMemo(() => ({ camera: site.camera, focal: site.focal }), [site]);
-  const res = useCoalesced(input, (i) => api.optics(i.camera, { focal_mm: i.focal }), state === "ready");
+  const res = useCoalesced(input, (i) => api.optics(i.camera, { focal_mm: i.focal }), state === "ready" && active);
   const r = res.value;
 
   useEffect(() => {
@@ -83,6 +85,12 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
       </Panel>
 
       <Panel title="İnceleme" className="flex-[2_1_300px]">
+        <label className="mb-3 block">
+          <span className="label">Kamera adı</span>
+          <input className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={c.name}
+            onChange={(e) => update({ name: e.target.value })} aria-label="Kamera adı" />
+          {sites.filter((s) => s.camera.name === c.name).length > 1 && <span className="text-[11px] text-warn">▲ Bu ad başka bir kamerada da var</span>}
+        </label>
         <label className="mb-3 block">
           <span className="label">Kütüphane modeli</span>
           <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]"

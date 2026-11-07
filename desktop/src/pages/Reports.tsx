@@ -1,0 +1,119 @@
+import { useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
+import { isTauri } from "@tauri-apps/api/core";
+import { ExternalLink, FileText, FolderOpen, Mountain, Table2 } from "lucide-react";
+import { useCore } from "../core/CoreProvider";
+import { useProject } from "../core/project";
+import { useActiveTerrain } from "../core/activeTerrain";
+import { useJob } from "../core/useJob";
+import JobBar from "../components/JobBar";
+import { Button, Panel } from "../components/ui";
+
+/** Report files from the same writers as the classic app and the headless CLI. */
+export default function Reports() {
+  const { report } = useCore();
+  const { sites, name } = useProject();
+  const { active } = useActiveTerrain();
+  const job = useJob();
+  const [dir, setDir] = useState("");
+  const [stem, setStem] = useState("");
+  const [mode, setMode] = useState<"min" | "max" | "compare">("compare");
+  const [fmts, setFmts] = useState<Record<string, boolean>>({ pdf: true, xlsx: true, csv: false });
+  const [engFmts, setEngFmts] = useState<Record<string, boolean>>({ pdf: true, csv: true });
+  const [files, setFiles] = useState<string[]>([]);
+  const [note, setNote] = useState("");
+  const base = stem || name || "cctv-rapor";
+  const dupNames = new Set(sites.map((s) => s.camera.name)).size !== sites.length;
+
+  const pickDir = async () => {
+    const d = await open({ title: "Raporların yazılacağı klasör", directory: true });
+    if (typeof d === "string") setDir(d);
+  };
+
+  const done = (r: { files: string[] } | undefined, extra = "") => {
+    if (!r) return;
+    setFiles((f) => [...r.files, ...f.filter((x) => !r.files.includes(x))]);
+    setNote(extra);
+  };
+
+  return (
+    <div className="flex min-h-full flex-wrap content-start gap-3 p-3">
+      <div className="flex w-full flex-col gap-3">
+        <JobBar job={job} onCancel={job.cancel} onDismiss={job.clearError} />
+        {note && <div className="rounded bg-warn-bg px-3 py-2 text-[12px] text-warn">▲ {note}</div>}
+      </div>
+      <Panel title="Hedef klasör" icon={<FolderOpen size={16} className="text-secondary" />} className="w-full">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button disabled={!isTauri()} onClick={pickDir}><FolderOpen size={14} /> Klasör Seç</Button>
+          <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-text-2">{dir || "seçilmedi"}</span>
+          <label className="flex items-center gap-2 text-[12px]"><span className="label">Dosya adı</span>
+            <input className="h-8 w-56 rounded border border-line bg-bg-0 px-2 font-mono text-[12px]" value={stem} placeholder={name} onChange={(e) => setStem(e.target.value)} />
+          </label>
+        </div>
+      </Panel>
+
+      <Panel title="Optik tablo raporu" icon={<Table2 size={16} className="text-primary" />} className="min-w-[340px] flex-1">
+        <p className="text-[12px] text-text-2">{sites.length} kamera · DORI mesafeleri, kör nokta, öneriler — klasik uygulama ve başsız CLI ile aynı çıktı.</p>
+        {dupNames && <p className="mt-1 text-[11px] text-warn">▲ Kamera adları benzersiz olmalı (CAD Çalışma Alanı'nda yeniden adlandırın).</p>}
+        <div className="mt-3 grid grid-cols-3 gap-1">
+          {([["min", "Geniş uç"], ["max", "Dar uç"], ["compare", "Karşılaştırma"]] as const).map(([id, l]) => (
+            <button key={id} type="button" onClick={() => setMode(id)} className={`h-8 rounded text-[11px] font-semibold ${mode === id ? "bg-bg-6 text-primary" : "bg-bg-5 text-text-2"}`}>{l}</button>
+          ))}
+        </div>
+        <Formats value={fmts} onChange={setFmts} />
+        <Button primary className="mt-3 w-full" disabled={!dir || job.running || dupNames || !Object.values(fmts).some(Boolean)}
+          onClick={() => job.run("Optik rapor yazılıyor", () => report.optics({
+            cameras: sites.map((s) => s.camera), mode, formats: Object.keys(fmts).filter((k) => fmts[k]), out_dir: dir, stem: base,
+          })).then((r) => done(r))}>
+          <FileText size={14} /> Optik Raporu Yaz
+        </Button>
+      </Panel>
+
+      <Panel title="Arazi mühendislik raporu" icon={<Mountain size={16} className="text-primary" />} className="min-w-[340px] flex-1">
+        {active ? (
+          <>
+            <p className="text-[12px] text-text-2">{active.label} · {active.is_measured ? "● ölçülmüş DEM" : "▲ prosedürel — rapor “ölçüm değil” uyarısı taşır"}</p>
+            <ul className="mt-2 text-[12px]">
+              {([["viewshed", "Tek kamera görüş alanı"], ["plan", "Çevre çiti planı + direk tablosu"], ["coverage", "Birleşik kapsama"]] as const).map(([k, l]) => (
+                <li key={k} className={active.ran[k] ? "text-primary" : "text-text-3"}>{active.ran[k] ? "●" : "○"} {l}</li>
+              ))}
+            </ul>
+            <Formats value={engFmts} onChange={setEngFmts} only={["pdf", "csv"]} />
+            <Button primary className="mt-3 w-full" disabled={!dir || job.running || !Object.values(active.ran).some(Boolean)}
+              onClick={() => job.run("Mühendislik raporu yazılıyor", () => report.engineering({
+                terrain_id: active.terrain_id, use_obstacles: active.use_obstacles, camera: active.camera, weather: active.weather,
+                formats: Object.keys(engFmts).filter((k) => engFmts[k]), out_dir: dir, stem: base, project_name: name,
+              })).then((r) => done(r, r && !r.measured ? "Arazi ölçülmüş değil; rapor bunu kaynak kutusunda kırmızı uyarıyla belirtir." : ""))}>
+              <FileText size={14} /> Mühendislik Raporunu Yaz
+            </Button>
+          </>
+        ) : <p className="text-[12px] text-text-3">Önce "Arazi & Görüş Alanı" sayfasında bir arazi yükleyip analiz çalıştırın.</p>}
+      </Panel>
+
+      {files.length > 0 && (
+        <Panel title="Yazılan dosyalar" className="w-full">
+          <ul className="flex flex-col gap-1">
+            {files.map((f) => (
+              <li key={f} className="flex items-center gap-2 font-mono text-[12px]">
+                <span className="min-w-0 flex-1 truncate">{f}</span>
+                <Button onClick={() => report.open(f).catch((e) => setNote(String(e.message ?? e)))}><ExternalLink size={14} /> Aç</Button>
+              </li>
+            ))}
+          </ul>
+        </Panel>
+      )}
+    </div>
+  );
+}
+
+function Formats({ value, onChange, only = ["pdf", "xlsx", "csv"] }: { value: Record<string, boolean>; onChange: (v: Record<string, boolean>) => void; only?: string[] }) {
+  return (
+    <div className="mt-3 flex gap-4 text-[12px]">
+      {only.map((f) => (
+        <label key={f} className="flex items-center gap-1.5">
+          <input type="checkbox" checked={!!value[f]} onChange={(e) => onChange({ ...value, [f]: e.target.checked })} /> {f.toUpperCase()}
+        </label>
+      ))}
+    </div>
+  );
+}

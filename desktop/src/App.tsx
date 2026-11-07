@@ -1,17 +1,19 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   Box, ClipboardCheck, Database, FileText, Mountain, RefreshCw, SlidersHorizontal, SquareDashedMousePointer, Video,
 } from "lucide-react";
 import { CoreProvider, useCore } from "./core/CoreProvider";
+import { ProjectProvider } from "./core/project";
+import { ActiveTerrainProvider } from "./core/activeTerrain";
+import ProjectBar from "./components/ProjectBar";
+import { PageActive } from "./core/pageActive";
 import Workspace from "./pages/Workspace";
 import Library from "./pages/Library";
 import Terrain from "./pages/Terrain";
 import Optics from "./pages/Optics";
 import View3D from "./pages/View3D";
 import Spec from "./pages/Spec";
-import { ProjectProvider } from "./core/project";
-import ProjectBar from "./components/ProjectBar";
-import NotMigrated from "./pages/NotMigrated";
+import Reports from "./pages/Reports";
 
 type Page = "workspace" | "optics" | "view3d" | "terrain" | "library" | "spec" | "reports";
 
@@ -43,8 +45,22 @@ function CoreBadge() {
 
 function Shell() {
   const [page, setPage] = useState<Page>("workspace");
+  const [visited, setVisited] = useState<Set<Page>>(() => new Set(["workspace"]));
   const [status, setStatus] = useState("");
   const current = NAV.find((n) => n.id === page)!;
+  const go = (p: Page) => { setPage(p); setVisited((v) => (v.has(p) ? v : new Set(v).add(p))); };
+
+  // A page is mounted on first visit and then kept: leaving the terrain page
+  // used to throw away the loaded terrain, the plan and every result.
+  const pages: Record<Page, ReactNode> = {
+    workspace: <Workspace onStatus={setStatus} />,
+    library: <Library />,
+    terrain: <Terrain />,
+    optics: <Optics />,
+    view3d: <View3D />,
+    spec: <Spec />,
+    reports: <Reports />,
+  };
 
   return (
     <div className="flex h-full flex-col">
@@ -67,7 +83,7 @@ function Shell() {
               <button
                 key={id}
                 type="button"
-                onClick={() => setPage(id)}
+                onClick={() => go(id)}
                 aria-current={active ? "page" : undefined}
                 className={`flex items-center gap-2.5 border-l-2 px-3.5 py-2.5 text-left text-[13px] font-medium ${
                   active
@@ -82,14 +98,12 @@ function Shell() {
           })}
         </nav>
 
-        <main className="min-w-0 flex-1 overflow-auto">
-          {page === "workspace" && <Workspace onStatus={setStatus} />}
-          {page === "library" && <Library />}
-          {page === "terrain" && <Terrain />}
-          {page === "optics" && <Optics />}
-          {page === "view3d" && <View3D />}
-          {page === "spec" && <Spec />}
-          {!["workspace", "library", "terrain", "optics", "view3d", "spec"].includes(page) && <NotMigrated title={current.label} />}
+        <main className="relative min-w-0 flex-1">
+          {NAV.filter((n) => visited.has(n.id)).map((n) => (
+            <div key={n.id} className="absolute inset-0 overflow-auto" hidden={n.id !== page}>
+              <PageActive.Provider value={n.id === page}>{pages[n.id]}</PageActive.Provider>
+            </div>
+          ))}
         </main>
       </div>
 
@@ -107,7 +121,9 @@ export default function App() {
   return (
     <CoreProvider>
       <ProjectProvider>
-        <Shell />
+        <ActiveTerrainProvider>
+          <Shell />
+        </ActiveTerrainProvider>
       </ProjectProvider>
     </CoreProvider>
   );

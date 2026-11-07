@@ -4,6 +4,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { CheckCircle2, ScanLine, XCircle } from "lucide-react";
 import type { Catalog, OpticResult } from "../core/api";
 import { useCoalesced, useCore } from "../core/CoreProvider";
+import { usePageActive } from "../core/pageActive";
 import { useProject } from "../core/project";
 import type { BenchResult, EdgeMeasure } from "../core/benchApi";
 import PlanView from "../components/PlanView";
@@ -18,6 +19,7 @@ const TASKS = [
 
 /** EN 62676-4 optics bench: one camera, one task at one distance, a verdict with reasons. */
 export default function Optics() {
+  const active = usePageActive();
   const { api, bench, terrain, state } = useCore();
   const { site, update } = useProject();
   const c = site.camera;
@@ -43,7 +45,7 @@ export default function Optics() {
       bench.bench({ camera: i.c, mode: i.mode, req_ppm: TASKS[i.task][1], distance_m: i.dist, weather: i.weather }),
     ]);
     return { plan, verdict } as { plan: OpticResult; verdict: BenchResult };
-  }, state === "ready");
+  }, state === "ready" && active);
   const v = res.value?.verdict;
   const mp = (() => {
     const r = catalog?.resolutions.find((x) => x.name === c.resolution_name);

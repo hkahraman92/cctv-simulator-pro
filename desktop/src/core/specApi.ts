@@ -71,3 +71,15 @@ export function specApi(rpc: RpcClient) {
 }
 
 export type SpecApi = ReturnType<typeof specApi>;
+
+export function reportApi(rpc: RpcClient) {
+  return {
+    optics: (p: { cameras: import("./api").CameraConfig[]; mode: "min" | "max" | "compare"; formats: string[]; out_dir: string; stem: string }) =>
+      rpc.call<{ files: string[] }>("report.optics", p, { timeoutMs: 0 }),
+    engineering: (p: { terrain_id: string; use_obstacles: boolean; camera: import("./api").CameraConfig; weather: string; formats: string[]; out_dir: string; stem: string; project_name: string }) =>
+      rpc.call<{ files: string[]; sections: Record<string, boolean>; measured: boolean }>("report.engineering", p, { timeoutMs: 0 }),
+    open: (path: string) => rpc.call<{ opened: string }>("report.open", { path }),
+  };
+}
+
+export type ReportApi = ReturnType<typeof reportApi>;
