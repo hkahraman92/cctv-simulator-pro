@@ -77,6 +77,8 @@ def _info(entry: _s.TerrainEntry) -> Dict[str, Any]:
         "has_photo": entry.photo is not None, "attribution": entry.attribution,
         "has_obstacles": surf is not None,
         "obstacle_note": surf.obstacle_note if surf is not None else "",
+        # how it was loaded, so a project file can reopen it
+        "preset": entry.extra.get("preset", ""), "file": entry.extra.get("file", ""),
     }
 
 
@@ -121,7 +123,8 @@ def terrain_procedural(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     grid = int(_num(params, "grid", 200, lo=50, hi=800))
     width = _num(params, "width_m", 2000.0, lo=200, hi=20000)
     t = generate_procedural_terrain(preset, grid_size=grid, cell_size_m=width / grid)
-    return _info(_register(t, label=dict(PROCEDURAL_PRESETS)[preset], source="procedural"))
+    return _info(_register(t, label=dict(PROCEDURAL_PRESETS)[preset], source="procedural",
+                           extra={"preset": preset, "grid": grid, "width_m": width}))
 
 
 def terrain_geotiff(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
@@ -135,7 +138,7 @@ def terrain_geotiff(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         raise RpcError(APP_ERROR, f"Dosya bulunamadı: {path}") from None
     except Exception as exc:
         raise RpcError(APP_ERROR, f"Yükselti dosyası okunamadı: {exc}") from None
-    return _info(_register(t, label=t.name, source="geotiff"))
+    return _info(_register(t, label=t.name, source="geotiff", extra={"file": path}))
 
 
 def terrain_download(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:

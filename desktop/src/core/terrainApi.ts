@@ -30,6 +30,8 @@ export interface TerrainInfo {
   attribution: string;
   has_obstacles: boolean;
   obstacle_note: string;
+  preset: string;
+  file: string;
   save_error?: string;
   summary?: string;
   message?: string;

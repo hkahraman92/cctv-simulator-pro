@@ -130,6 +130,26 @@ def test_project_roundtrip(tmp_path):
     assert proj["project_name"] == "Deneme" and proj["cameras"][0]["name"] == "Giriş"
 
 
+def test_terrain_block_extras_survive_a_load_and_save(tmp_path):
+    """The map window's GUI-only keys (fence, line mode, mixed PTZ) used to be
+    dropped by any headless re-save."""
+    src = tmp_path / "classic.json"
+    cam = dataclasses.asdict(CameraConfig(name="K1"))
+    src.write_text(json.dumps({"cameras": [cam], "terrain": {
+        "source": "region", "region_id": "kizilay-20261107", "width_m": 1000, "weather": "Pus",
+        "fence_points": [[1, 2], [3, 4], [5, 6]], "fence_closed": True, "line_mode": "border",
+        "mixed_ptz": {"camera": "PTZ", "every_n": 3, "patrol_span_deg": 180}}}), encoding="utf-8")
+    by_id, _ = _run([_req(1, "project.load", path=str(src))])
+    proj = by_id[1]["result"]["project"]
+    assert proj["terrain_region_id"] == "kizilay-20261107"
+    assert proj["terrain_extra"]["fence_points"] == [[1, 2], [3, 4], [5, 6]]
+    out = tmp_path / "again.json"
+    by_id, _ = _run([_req(2, "project.save", path=str(out), project=proj)])
+    assert "result" in by_id[2], by_id[2]
+    terr = json.loads(out.read_text(encoding="utf-8"))["terrain"]
+    assert terr["line_mode"] == "border" and terr["mixed_ptz"]["every_n"] == 3 and terr["source"] == "region"
+
+
 def test_cancel_and_progress():
     started = threading.Event()
 

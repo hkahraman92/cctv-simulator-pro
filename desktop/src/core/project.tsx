@@ -15,8 +15,16 @@ export interface PlanSettings {
   level_key: string;       // required level at the check point (models.DEFAULT_LEVELS key)
 }
 
+/** project_io terrain fields (flat, as project.save/load carry them). */
+export type TerrainBlock = Record<string, unknown>;
+
 interface ProjectCtx {
   sites: Site[];
+  /** what the terrain page last published (saved with the project) */
+  terrainBlock: TerrainBlock | null;
+  setTerrainBlock: (b: TerrainBlock | null, opts?: { touch?: boolean }) => void;
+  /** terrain block of the project file just opened; nonce changes on every open */
+  loadedTerrain: { block: TerrainBlock; nonce: number } | null;
   selected: number;
   site: Site;
   plan: PlanSettings;
@@ -32,7 +40,7 @@ interface ProjectCtx {
   updateAt: (i: number, patch: Partial<CameraConfig>) => void;
   replaceCamera: (camera: CameraConfig) => void;
   setPlan: (patch: Partial<PlanSettings>) => void;
-  load: (sites: Site[], path: string, name: string, plan?: Partial<PlanSettings>) => void;
+  load: (sites: Site[], path: string, name: string, plan?: Partial<PlanSettings>, terrain?: TerrainBlock) => void;
   markSaved: (path: string, name: string) => void;
 }
 
@@ -64,12 +72,20 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [path, setPath] = useState("");
   const [name, setName] = useState("Yeni proje");
   const [dirty, setDirty] = useState(false);
+  const [terrainBlock, setTerrainBlockState] = useState<TerrainBlock | null>(null);
+  const [loadedTerrain, setLoadedTerrain] = useState<{ block: TerrainBlock; nonce: number } | null>(null);
   const sel = Math.min(selected, sites.length - 1);
 
   const touch = useCallback((fn: (s: Site[]) => Site[]) => { setSites(fn); setDirty(true); }, []);
 
   const value = useMemo<ProjectCtx>(() => ({
-    sites, selected: sel, site: sites[sel], plan, path, name, dirty,
+    sites, selected: sel, site: sites[sel], plan, path, name, dirty, terrainBlock, loadedTerrain,
+    setTerrainBlock: (b, opts) => {
+      setTerrainBlockState((prev) => {
+        if (opts?.touch && JSON.stringify(prev) !== JSON.stringify(b)) setDirty(true);
+        return b;
+      });
+    },
     select: setSelected,
     add: () => {
       const n = freeName(sites);
@@ -86,12 +102,13 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     updateAt: (idx, patch) => touch((a) => a.map((s, i) => (i === idx ? { ...s, camera: { ...s.camera, ...patch } } : s))),
     replaceCamera: (camera) => touch((a) => a.map((s, i) => (i === sel ? { camera, focal: camera.focal_min_mm } : s))),
     setPlan: (patch) => { setPlanState((p) => ({ ...p, ...patch })); setDirty(true); },
-    load: (next, p, n, pl) => {
+    load: (next, p, n, pl, terrain) => {
       setSites(next.length ? next : [newSite(1)]); setSelected(0); setPath(p); setName(n);
       setPlanState({ ...DEFAULT_PLAN, ...pl }); setDirty(false);
+      if (terrain) setLoadedTerrain((t) => ({ block: terrain, nonce: (t?.nonce ?? 0) + 1 }));
     },
     markSaved: (p, n) => { setPath(p); setName(n); setDirty(false); },
-  }), [sites, sel, plan, path, name, dirty, touch]);
+  }), [sites, sel, plan, path, name, dirty, touch, terrainBlock, loadedTerrain]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

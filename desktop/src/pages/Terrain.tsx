@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { isTauri } from "@tauri-apps/api/core";
 import {
@@ -12,6 +12,7 @@ import type {
 } from "../core/terrainApi";
 import { useJob } from "../core/useJob";
 import { useActiveTerrain } from "../core/activeTerrain";
+import { useProject } from "../core/project";
 import MapView from "../components/MapView";
 import JobBar from "../components/JobBar";
 import { FocalCurve, ProfileChart } from "../components/charts";
@@ -138,6 +139,57 @@ export default function Terrain() {
       x_m: mount.x, y_m: mount.y, mast_m: mount.mast, pan_deg: mount.pan, level: "recognize", weather, n_focals: 10 }, o));
     if (r) setSweep(r);
   };
+
+  // ── project file: publish this page's state, restore it when a project opens ──
+  const { setTerrainBlock, loadedTerrain } = useProject();
+  const restoring = useRef(false);     // a project being reopened is not an unsaved change
+  useEffect(() => {
+    if (!info) return;
+    const source = info.source === "region" || info.region_id ? "region" : info.source === "geotiff" ? "geotiff" : "procedural";
+    setTerrainBlock({
+      terrain_source: source, terrain_region_id: info.region_id, terrain_preset: info.preset || "ridge_and_valley",
+      terrain_file: info.file, terrain_width_m: info.width_m, terrain_grid: info.cols, viewshed_range_m: mount.range, weather,
+      placements: [{ camera: camera.name, x_m: mount.x, y_m: mount.y, mast_m: mount.mast, pan_deg: mount.pan, tilt_deg: mount.tilt,
+        range_m: mount.range, lens_mode: mount.lens }],
+      terrain_extra: {
+        camera_name: camera.name, camera_model: camera.model_name, planner_mode: tab === "perimeter" ? "perimeter" : "single",
+        fence_points: fence, fence_closed: plan.closed, line_mode: plan.line_mode, watch_side: plan.watch_side,
+        target_ppm: plan.target_ppm, perimeter_mast_m: plan.mast_m,
+        mixed_ptz: { camera: mixedPtz.camera?.model_name ?? "", every_n: mixedPtz.everyN, patrol_span_deg: mixedPtz.span },
+      },
+    }, { touch: !restoring.current });
+  }, [setTerrainBlock, info, mount, weather, camera, tab, fence, plan, mixedPtz]);
+
+  useEffect(() => {
+    if (!loadedTerrain || state !== "ready") return;
+    const b = loadedTerrain.block;
+    const x = (b.terrain_extra ?? {}) as Record<string, unknown>;
+    const src = String(b.terrain_source ?? "procedural");
+    const load = src === "region" && b.terrain_region_id ? () => T.openRegion(String(b.terrain_region_id))
+      : src === "geotiff" && b.terrain_file ? () => T.geotiff(String(b.terrain_file))
+      : () => T.procedural(String(b.terrain_preset || "ridge_and_valley"), Number(b.terrain_width_m) || 2000, Number(b.terrain_grid) || 200);
+    restoring.current = true;
+    void job.run("Projenin arazisi açılıyor", load).then((t) => {
+      setTimeout(() => { restoring.current = false; }, 1500);
+      if (!t) { setNotice("Projedeki arazi açılamadı (kayıtlı bölge silinmiş ya da dosya taşınmış olabilir)."); return; }
+      adopt(t);
+      const pl = (Array.isArray(b.placements) ? b.placements[0] : null) as Record<string, number> | null;
+      if (pl) setMount((m) => ({ ...m, x: pl.x_m ?? m.x, y: pl.y_m ?? m.y, mast: pl.mast_m ?? m.mast, pan: pl.pan_deg ?? m.pan,
+        tilt: pl.tilt_deg ?? m.tilt, range: pl.range_m ?? m.range }));
+      if (typeof b.weather === "string" && b.weather) setWeather(b.weather);
+      if (Array.isArray(x.fence_points)) setFence(x.fence_points as [number, number][]);
+      setPlan((p) => ({
+        ...p, closed: typeof x.fence_closed === "boolean" ? x.fence_closed : p.closed,
+        line_mode: (["facility", "border", "highway"].includes(String(x.line_mode)) ? x.line_mode : p.line_mode) as typeof p.line_mode,
+        watch_side: (x.watch_side === "left" || x.watch_side === "right" ? x.watch_side : p.watch_side) as typeof p.watch_side,
+        target_ppm: typeof x.target_ppm === "number" ? x.target_ppm : p.target_ppm,
+        mast_m: typeof x.perimeter_mast_m === "number" ? x.perimeter_mast_m : p.mast_m,
+      }));
+      if (x.planner_mode === "perimeter") setTab("perimeter");
+      if (typeof x.camera_model === "string" && x.camera_model) void applyModel(x.camera_model).catch(() => undefined);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadedTerrain?.nonce, state]);
 
   // publish what has been run on this terrain, for the Reports page
   const { setActive } = useActiveTerrain();

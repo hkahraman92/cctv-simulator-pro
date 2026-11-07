@@ -13,9 +13,9 @@ export default function ProjectBar() {
   const proj = useProject();
   const [msg, setMsg] = useState("");
 
-  const doSave = async (asNew: boolean) => {
-    let path = proj.path;
-    if (asNew || !path) {
+  const doSave = async (asNew: boolean, forcedPath?: string) => {
+    let path = forcedPath ?? proj.path;
+    if (!forcedPath && (asNew || !path)) {
       const p = await save({ title: "Projeyi kaydet", filters: FILTERS, defaultPath: `${proj.name || "proje"}.json` });
       if (!p) return;
       path = p.endsWith(".json") ? p : `${p}.json`;
@@ -27,6 +27,8 @@ export default function ProjectBar() {
         plan_path: proj.plan.plan_path, plan_width_m: proj.plan.plan_width_m,
         target_point: { active: proj.plan.target.active, name: "Kontrol Noktası", x_m: proj.plan.target.x_m,
           y_m: proj.plan.target.y_m, required_level_key: proj.plan.level_key },
+        // the terrain page may never have opened this session: keep the block read from the file
+        ...(proj.terrainBlock ?? proj.loadedTerrain?.block ?? {}),
       });
       proj.markSaved(path, name);
       setMsg("");
@@ -35,9 +37,9 @@ export default function ProjectBar() {
     }
   };
 
-  const doOpen = async () => {
-    if (proj.dirty && !window.confirm("Kaydedilmemiş değişiklikler kaybolacak. Devam edilsin mi?")) return;
-    const p = await open({ title: "Proje aç", filters: FILTERS });
+  const doOpen = async (forcedPath?: string) => {
+    if (!forcedPath && proj.dirty && !window.confirm("Kaydedilmemiş değişiklikler kaybolacak. Devam edilsin mi?")) return;
+    const p = forcedPath ?? (await open({ title: "Proje aç", filters: FILTERS }));
     if (typeof p !== "string") return;
     try {
       const r = await api.loadProject(p);
@@ -46,12 +48,21 @@ export default function ProjectBar() {
       proj.load(sites, p, r.project.project_name || (p.split(/[\\/]/).pop() ?? "").replace(/\.json$/, ""), {
         plan_path: String(r.project.plan_path ?? ""), plan_width_m: Number(r.project.plan_width_m ?? 45) || 45,
         target: { active: !!tp.active, x_m: tp.x_m ?? 12, y_m: tp.y_m ?? 0 }, level_key: tp.required_level_key || "Characterize",
-      });
+      }, Object.fromEntries(Object.entries(r.project).filter(([k]) =>
+        k.startsWith("terrain_") || ["viewshed_range_m", "weather", "placements", "ptz"].includes(k))));
       setMsg("");
     } catch (e) {
       setMsg(e instanceof Error ? e.message : String(e));
     }
   };
+
+  // Development builds only: lets the UI automation open / save without the native dialog.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    (window as unknown as { __cctvTest?: object }).__cctvTest = {
+      open: (path: string) => doOpen(path), save: (path: string) => doSave(false, path),
+    };
+  });
 
   // Ctrl+S / Ctrl+O, as in the classic app
   useEffect(() => {
@@ -72,7 +83,7 @@ export default function ProjectBar() {
         {proj.dirty ? "▲ Kaydedilmedi" : proj.path ? "● Kaydedildi" : ""}
       </span>
       {msg && <span className="max-w-[360px] truncate font-mono text-[10px] text-danger" title={msg}>■ {msg}</span>}
-      <button type="button" disabled={!can} onClick={doOpen} title="Proje aç (Ctrl+O)" className="rounded p-1 text-text-2 hover:bg-bg-5 disabled:opacity-40"><FolderOpen size={14} /></button>
+      <button type="button" disabled={!can} onClick={() => void doOpen()} title="Proje aç (Ctrl+O)" className="rounded p-1 text-text-2 hover:bg-bg-5 disabled:opacity-40"><FolderOpen size={14} /></button>
       <button type="button" disabled={!can} onClick={() => doSave(false)} title="Kaydet (Ctrl+S)" className="rounded p-1 text-text-2 hover:bg-bg-5 disabled:opacity-40"><Save size={14} /></button>
       <button type="button" disabled={!can} onClick={() => doSave(true)} title="Farklı kaydet (Ctrl+Shift+S)" className="rounded p-1 text-text-2 hover:bg-bg-5 disabled:opacity-40"><SaveAll size={14} /></button>
     </div>

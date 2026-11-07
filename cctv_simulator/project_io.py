@@ -45,6 +45,14 @@ class ProjectData:
     # {"camera": <name|index>, "x_m", "y_m", "mast_m", "range_m", "slew_speed_deg_s",
     #  "presets": [{"name", "pan_deg", "tilt_deg", "lens_mode", "dwell_s"}, ...]}
     ptz: Dict[str, Any] = field(default_factory=dict)
+    # GUI-only keys of the terrain block (fence_points, line_mode, mixed_ptz, ...):
+    # not used headless, but kept verbatim so a load + save here (CLI, new
+    # desktop shell) no longer drops the fence the map window saved.
+    terrain_extra: Dict[str, Any] = field(default_factory=dict)
+
+
+_TERRAIN_KEYS = ("source", "preset", "file", "region_id", "width_m", "grid", "viewshed_range_m",
+                 "weather", "placements", "ptz")
 
 
 def load_project(path: str | Path) -> ProjectData:
@@ -83,6 +91,7 @@ def load_project(path: str | Path) -> ProjectData:
         weather=str(terr.get("weather", "")),
         placements=list(terr.get("placements", []) or []),
         ptz=dict(terr.get("ptz", {}) or {}),
+        terrain_extra={k: v for k, v in terr.items() if k not in _TERRAIN_KEYS},
     )
 
 
@@ -109,6 +118,7 @@ def save_project(path: str | Path, project: ProjectData) -> None:
             "weather": project.weather,
             "placements": project.placements,
             "ptz": project.ptz,
+            **{k: v for k, v in project.terrain_extra.items() if k not in _TERRAIN_KEYS},
         },
     }
     Path(path).write_text(json.dumps(data, ensure_ascii=False, indent=4), encoding="utf-8")
