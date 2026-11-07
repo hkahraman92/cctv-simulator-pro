@@ -1,0 +1,93 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
+/* Design tokens — same values as the approved preview (Stitch surfaces +
+   our DORI meaning). Fonts are bundled, nothing is fetched at runtime.
+   `static`: emit every variable even if no utility class uses it — SVG
+   fills read them through var(), which Tailwind cannot see. */
+@theme static {
+  --font-sans: "Inter Variable", "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono Variable", Consolas, monospace;
+
+  --color-bg-0: #0a0e16;
+  --color-bg-1: #0f131c;
+  --color-bg-2: #141821;
+  --color-bg-3: #181c24;
+  --color-bg-4: #1c2028;
+  --color-bg-5: #262a33;
+  --color-bg-6: #31353e;
+  --color-line: #3c4a42;
+  --color-line-soft: #1f242e;
+
+  --color-text: #dfe2ee;
+  --color-text-2: #bbcabf;
+  --color-text-3: #8a9890;
+
+  --color-primary: #4edea3;
+  --color-on-primary: #003824;
+  --color-secondary: #4cd7f6;
+  --color-on-secondary: #003640;
+  --color-warn: #ffb95f;
+  --color-warn-bg: #33270f;
+  --color-danger: #ffb4ab;
+  --color-danger-bg: #3a1915;
+  --color-ok-bg: #0f2a1d;
+  --color-info: #7fb0e0;
+  --color-info-bg: #14263d;
+  --color-ptz: #b18cff;
+
+  /* DORI: cold ramp, best level brightest. Warm colours mean attention only. */
+  --color-dori-identify: #acedff;
+  --color-dori-recognize: #4cd7f6;
+  --color-dori-observe: #2b8fb8;
+  --color-dori-detect: #1f5f86;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg-1);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+input,
+select,
+textarea {
+  user-select: text;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-secondary);
+  outline-offset: 1px;
+}
+
+.label {
+  font: 600 10px var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-3);
+}
+
+input[type="range"] {
+  accent-color: var(--color-primary);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-bg-6);
+  border-radius: 5px;
+  border: 2px solid var(--color-bg-1);
+}

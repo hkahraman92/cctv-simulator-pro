@@ -59,7 +59,18 @@ cctv_dual_view_simulator.py          giriş noktası
     ui/spec_assistant.py             uygunluk matrisi
     ui/camera_db_window.py           kamera veritabanı (yönetici parolası)
 cctv_optics_workbench.py             optik tezgâhı için bağımsız başlatıcı
+  service/                           çekirdek servis: stdio JSON-RPC 2.0, API v1 (yeni masaüstü kabuğu için)
+desktop/                             yeni arayüz: Tauri 2 (Rust) + React/TS/Tailwind — docs/masaustu-mimari.md
 ```
+
+**Yeni masaüstü kabuğu.** `desktop/` Python çekirdeği (`python -m
+cctv_simulator.service`) alt süreç olarak başlatır, satır başına bir JSON-RPC
+nesnesi taşır. Ekran fizik türetmez; her sayı bir API yönteminden gelir.
+Yeni bir ekran için önce `service/methods.py`'ye yöntem + `tests/test_service.py`'ye
+motorla birebir eşlik testi, sonra `desktop/src/core/api.ts`'ye tip. stdout
+yalnız protokol kanalı (sunucu `sys.stdout`'u stderr'e çevirir). Taşınmamış
+modül "taşınmadı" der, uydurma veri göstermez. Klasik Tk arayüzü değişmeden
+çalışır.
 
 ## Kurallar
 
