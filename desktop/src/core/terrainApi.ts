@@ -159,6 +159,25 @@ export interface AreaPlanResult {
   plan: PlanResult;
 }
 
+export interface ApproachResult {
+  breach: boolean;
+  /** first-seen walking distance to the target; 0 on a breach; null = no walkable approach */
+  warning_m: number | null;
+  warning_s: Record<string, number | null>;
+  response_s: number | null;
+  sufficient: Record<string, boolean>;
+  breakout_xy: [number, number] | null;
+  dash_path: [number, number][];
+  breach_points: [number, number][];
+  sectors: { x0: number; y0: number; x1: number; y1: number; warning_m: number | null }[];
+  covert_area_m2: number;
+  depth_m: number;
+  notes: string[];
+  overlay: Picture;
+  legend: LegendRow[];
+  measured: boolean;
+}
+
 export interface AreaParams {
   fence: [number, number][];
   level: DoriLevel;
@@ -341,6 +360,8 @@ export function terrainApi(rpc: RpcClient) {
     plan: (p: T & PlanParams & { camera: CameraConfig }) => rpc.call<PlanResult>("perimeter.plan", p),
     coverage: (p: T & { layer?: "dori" | "overlap"; band_m?: number; max_px?: number }, opts?: CallOptions) =>
       rpc.call<CoverageResult>("perimeter.coverage", p, { timeoutMs: 0, ...opts }),
+    approach: (p: T & { depth_m: number; response_s?: number; speeds?: Record<string, number>; max_px?: number }, opts?: CallOptions) =>
+      rpc.call<ApproachResult>("approach.analyse", p, { timeoutMs: 0, ...opts }),
     areaPlan: (p: T & AreaParams & { camera: CameraConfig }, opts?: CallOptions) =>
       rpc.call<AreaPlanResult>("area.plan", p, { timeoutMs: 0, ...opts }),
     optimize: (p: T & { level: string; position_steps: number; pan_search_deg?: number; n_focals?: number }, opts?: CallOptions) =>

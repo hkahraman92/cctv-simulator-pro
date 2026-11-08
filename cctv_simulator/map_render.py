@@ -52,6 +52,9 @@ LAYER_BANDS = {
         (ZONE_RECOG, ZONE_RECOG + 1, _rgba("dori-recognize", 175), "Tanıma ≥ 125 px/m"),
         (ZONE_OBSERVE, ZONE_OBSERVE + 1, _rgba("dori-observe", 165), "Gözlem ≥ 62,5 px/m"),
         (ZONE_DETECT, ZONE_DETECT + 1, _rgba("dori-detect", 160), "Algılama ≥ 25 px/m"))),
+    "approach": ("YAKLAŞMA — sabit kameralara göre", (
+        (3, 4, _rgba("danger", 110), "Görünmeden ilerlenebilir"),
+        (2, 3, _rgba("dori-detect", 120), "Algılanır (≥ 25 px/m)"))),
     "fused": ("ALGILAMA: SABİT + PTZ", (
         (2, 3, _rgba("dori-identify", 140), "Sürekli — sabit kamera"),
         (1, 2, _rgba("warn", 125), "Aralıklı — yalnız PTZ devriyesi"))),
@@ -210,7 +213,7 @@ def zone_overlay(dori_grid: np.ndarray, size: Tuple[int, int], *, mode: str = "d
     """A ZONE_* (or any banded) grid as a smoothed RGBA image of ``size``."""
     g = np.flipud(dori_grid)
     ov = np.zeros(g.shape + (4,), dtype=np.uint8)
-    paint_bands(ov, g, LAYER_BANDS[mode][1], mask=True if mode in ("dori", "envelope", "fused", "overlap") else None)
+    paint_bands(ov, g, LAYER_BANDS[mode][1], mask=True if mode in ("dori", "envelope", "fused", "overlap", "approach") else None)
     return smooth_overlay(ov, size)
 
 

@@ -172,6 +172,34 @@ def test_area_plan_matches_the_engine_and_the_plan_tools_use_the_polygon(hills):
     assert bad["error"]["code"] == INVALID_PARAMS
 
 
+def test_approach_matches_the_engine_and_a_new_plan_drops_it(hills):
+    from cctv_simulator.approach import analyse_approach
+    from cctv_simulator.focal_optimizer import band_area
+    from cctv_simulator.viewshed_3d import ZONE_DETECT
+
+    tid = hills["terrain_id"]
+    fence = [[400, 400], [800, 400], [800, 800], [400, 800]]
+    ok("perimeter.plan", terrain_id=tid, camera=CAM, fence=fence, target_ppm=40, mast_m=6)
+    r, prog = call("approach.analyse", terrain_id=tid, depth_m=300, response_s=60, max_px=400)
+    a = r["result"]
+    assert prog, "approach reports progress"
+    entry = session.SESSION.get(tid)
+    plan, cam, kw, f = entry.results["plan"]
+    t = entry.terrain(True)
+    mv, _ = band_area(t, plan, cam, None, ZONE_DETECT, visibility_km=kw["visibility_km"], weather=kw["weather"])
+    want = analyse_approach(t, mv.dori_grid >= ZONE_DETECT, f, mode="facility", closed=True, depth_m=300, response_s=60)
+    assert a["breach"] == want.breach
+    assert a["warning_m"] == (want.warning_m if np.isfinite(want.warning_m) else None)
+    assert a["covert_area_m2"] == pytest.approx(want.covert_area_m2)
+    assert set(a["warning_s"]) == set(want.warning_s) and set(a["sufficient"]) == set(want.warning_s)
+    assert len(a["sectors"]) == len(want.sectors) and a["legend"]
+    assert "approach" in entry.results
+    ok("perimeter.plan", terrain_id=tid, camera=CAM, fence=fence, target_ppm=40, mast_m=6, spacing_m=40)
+    assert "approach" not in entry.results
+    bad, _ = call("approach.analyse", terrain_id=tid, speeds={"Koşarak": -1})
+    assert bad["error"]["code"] == INVALID_PARAMS
+
+
 def test_network_and_cost_of_the_current_plan(hills):
     from cctv_simulator.network_plan import PriceBook, estimate_cost, plan_network
 

@@ -36,7 +36,7 @@ class TerrainEntry:
 
     # Results computed FROM a plan. A new plan drops them: a scenario snapshot,
     # KMZ or offer package must never pair plan B with plan A's coverage / cost.
-    PLAN_DERIVED = ("multi", "band_share", "network", "cost", "night", "mixed")
+    PLAN_DERIVED = ("multi", "band_share", "network", "cost", "night", "mixed", "approach")
 
     def set_plan(self, value) -> None:
         for k in self.PLAN_DERIVED:

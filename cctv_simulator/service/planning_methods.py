@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import dataclasses
+import math
 from typing import Any, Dict
 
 from .params import _camera_from
@@ -135,7 +136,60 @@ def compare_use(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     return {"plan": _plan_json(o.plan), "camera": dataclasses.asdict(cam)}
 
 
+def _finite(v: float):
+    return float(v) if math.isfinite(v) else None
+
+
+def approach_analyse(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """Hidden approach: how close an intruder gets unseen, and the warning time it leaves (fixed cameras)."""
+    from .. import map_render
+    from ..approach import DEFAULT_SPEEDS, analyse_approach
+    from ..focal_optimizer import band_area
+    from ..viewshed_3d import ZONE_DETECT
+    from .terrain_methods import _DISPLAY_PX, _image, _overlay_size
+
+    entry, t = _terrain_of(params)
+    if "plan" not in entry.results:
+        raise RpcError(APP_ERROR, "Önce bir çit / alan planı oluşturun.")
+    plan, cam, kw, fence = entry.results["plan"]
+    if not plan.placed_cameras:
+        raise RpcError(APP_ERROR, "Planda sabit kamera yok.")
+    speeds = params.get("speeds") or DEFAULT_SPEEDS
+    if not isinstance(speeds, dict) or not all(
+            isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0 for v in speeds.values()):
+        raise RpcError(INVALID_PARAMS, "'speeds' ad → pozitif m/sn eşlemesi olmalı.")
+    response = params.get("response_s")
+    if response is not None:
+        response = _num(params, "response_s", lo=0, hi=3600)
+    ctx.progress(0, 2, "Algılama haritası (otoriter motor)")
+    # always re-run: a cached map may belong to the other obstacle setting (use_obstacles)
+    mv, _ = band_area(t, plan, cam, None, ZONE_DETECT, visibility_km=kw["visibility_km"], weather=kw["weather"])
+    ctx.progress(1, 2, "Yaklaşma yolları")
+    try:
+        res = analyse_approach(t, mv.dori_grid >= ZONE_DETECT, fence, mode=kw.get("line_mode", "facility"),
+                               closed=bool(kw.get("is_closed_loop", True)), watch_side=kw.get("watch_side", "right"),
+                               depth_m=_num(params, "depth_m", 400.0, lo=50, hi=5000),
+                               speeds={str(k): float(v) for k, v in speeds.items()}, response_s=response)
+    except ValueError as exc:
+        raise RpcError(APP_ERROR, str(exc)) from None
+    entry.results["approach"] = res
+    max_px = int(_num(params, "max_px", _DISPLAY_PX, lo=200, hi=4096))
+    overlay = map_render.zone_overlay(res.layer, _overlay_size(t, max_px), mode="approach")
+    return {
+        "breach": res.breach, "warning_m": _finite(res.warning_m),
+        "warning_s": {k: _finite(v) for k, v in res.warning_s.items()},
+        "response_s": res.response_s, "sufficient": res.sufficient,
+        "breakout_xy": res.breakout_xy, "dash_path": res.dash_path, "breach_points": res.breach_points,
+        "sectors": [{"x0": s.x0, "y0": s.y0, "x1": s.x1, "y1": s.y1, "warning_m": _finite(s.warning_m)}
+                    for s in res.sectors],
+        "covert_area_m2": res.covert_area_m2, "depth_m": res.depth_m, "notes": res.notes,
+        "overlay": _image(overlay, max_px=max_px), "legend": map_render.legend("approach")[1],
+        "measured": bool(t.is_measured),
+    }
+
+
 METHODS = {
+    "approach.analyse": approach_analyse,
     "network.plan": network_plan,
     "perimeter.compare_models": compare_models,
     "perimeter.compare_use": compare_use,

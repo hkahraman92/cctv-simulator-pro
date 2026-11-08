@@ -23,7 +23,7 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
 - **API v1** (`cctv_simulator/service/__init__.py: API_VERSION`). Yöntem
   eklemek / isteğe bağlı alan eklemek küçük sürüm; yeniden adlandırma ya da
   silme büyük sürüm. `system.describe` güncel listeyi verir.
-- Yöntemler (67; modül başına):
+- Yöntemler (68; modül başına):
   - `methods.py`: `system.info|ping|describe`, `catalog.get`,
     `library.list|get|camera`, `optics.calculate`, `project.load|save`
   - `library_methods.py`: `library.fields|record|auth|save|delete|set_password`
@@ -38,12 +38,13 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
     template_save|template_run|template_delete|statement`, `training.export`
   - `report_methods.py`: `report.optics|engineering|open`
   - `planning_methods.py`: `network.plan` (switch / kablo / PoE / NVR + maliyet),
+    `approach.analyse` (gizli yaklaşma + uyarı süresi),
     `perimeter.compare_models|compare_use`
   - `delivery_methods.py`: `export.site` (KML / KMZ / DXF), `export.share_html`,
     `export.package` (teklif ZIP), `night.condition|timeline|coverage`,
     `scenario.snapshot|compare`
 - Plandan türetilmiş sonuçlar (`multi`, `band_share`, `network`, `cost`,
-  `night`, `mixed`) yeni bir plan kurulunca düşer (`TerrainEntry.set_plan`):
+  `night`, `mixed`, `approach`) yeni bir plan kurulunca düşer (`TerrainEntry.set_plan`):
   senaryo, KMZ ya da teklif paketi B planını A'nın kapsaması / maliyetiyle
   eşleştiremez. Arayüz aynı kuralı izler (`replacePlan`).
 - Izgaralar çekirdek oturumunda (`session.py`, en fazla 4 arazi) kalır; kabuğa

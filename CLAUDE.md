@@ -38,6 +38,7 @@ cctv_dual_view_simulator.py          giriş noktası
   focal_optimizer.py                 varifokal/PTZ: tüm odak taraması, zarf, sabit+PTZ dizilim optimizasyonu
   pole_optimizer.py                  çit hedefini tutan en az direk: aralık araması + direk başına odak
   area_planner.py                    alan hedefi: poligonda DORI seviyesini tutan en az kamera / direk
+  approach.py                        gizli yaklaşma: görünmeden ne kadar yaklaşılır, uyarı süresi
   raster_smooth.py                   sınıf bindirmelerini yalnız görüntüde yumuşatır, FOV kamasına kırpar
   compliance.py                      Gemini/Ollama + kural tabanlı şartname analizi
   compliance_optics.py               şartname DORI/menzil isteri → optik motorla doğrula
@@ -71,7 +72,7 @@ desktop/                             yeni arayüz: Tauri 2 (Rust) + React/TS/Tai
 
 **Yeni masaüstü kabuğu.** `desktop/` Python çekirdeği (`python -m
 cctv_simulator.service`, yayında `cctv-core.exe`) alt süreç olarak başlatır,
-satır başına bir JSON-RPC nesnesi taşır (API v1, 67 yöntem; liste ve
+satır başına bir JSON-RPC nesnesi taşır (API v1, 68 yöntem; liste ve
 sözleşme `docs/masaustu-mimari.md`). Ekran fizik türetmez; her sayı bir API
 yönteminden gelir. Yeni özellik için: önce `service/*_methods.py`'ye yöntem +
 `tests/test_service_*.py`'ye motorla birebir eşlik testi, sonra
@@ -526,6 +527,10 @@ sayısıyla ağırlıklı, DORI metrikleri yalnız parse edilenler üzerinden). 
   hedef otoriter motorla tutar (bildirilen pay = `band_area`), düşük hedef
   daha çok kamera istemez, duvarın iki yanına kamera, bina içi aday atlanır,
   tutmayan hedef dürüstçe raporlanır, iç direğe hendek / direk üstü switch.
+- `test_approach.py` — geodezik mesafe = Dijkstra (duvarlı ızgara), kapalı
+  algılama halkasında uyarı = halkanın dış kenarı, halkadaki görülmeyen
+  koridor = ihlal o tarafta, bandın arkasındaki kör şerit ihlal değil, bina
+  sırası dolanmaya zorlar, sınır modunda yalnız izlenen taraftan gelinir.
 - `test_pole_optimizer.py` — `spacing_m` geçersizleştirmesi (None bit-aynı),
   ulaşılabilir hedefte planlayıcıdan az direk, planlayıcı üstü hedefte
   sıklaşma ve en seyrek geçen deneme, imkânsız hedefte en iyi çaba + not.
@@ -685,6 +690,29 @@ modunda gizli. Ağ planı: hat dışındaki direğe sınırdan dik hendek ekleni
 tek başına aşan direğe direk üstü switch + fiber (`Switch.on_pole`).
 Ölçüldü (2 km tepelik, 10 m hücre, 4,75 ha, Gözlem %90, 8 m direk): 35
 kamera / 20 direk, motor %90,3, 3 sn.
+
+**Gizli yaklaşma ve uyarı süresi (`approach.analyse_approach`).** Kapsama
+yüzdesi "çite görünmeden ulaşılır mı, görülürse ekibe kaç saniye kalır"
+sorusunu yanıtlamaz. Hedefin ±`depth_m` penceresinde: algılanan = planın
+sabit kameralarının otoriter motorda ≥ Algılama gördüğü hücre
+(`band_area(..., ZONE_DETECT)`, `use_obstacles` farkı yüzünden her çağrıda
+yeniden), geçilebilir = hedef ve bina (`KIND_BUILDING`) dışı (ağaç geçilir,
+görüşü zaten keser). Başlangıç = hedefe en az `depth_m` yürüme mesafesindeki
+hücreler, yaklaşma tarafında (kapalı çit / alan: dış; sınır: izlenen taraf;
+açık çit / yol: iki taraf) — yalnız pencere kenarı yetmez, arazi pencereyi
+kırptığında kenar bir hat ucunun dibine düşüyordu. Gizli bölge = başlangıçtan
+yalnız algılanmayan hücrelerden geçerek ulaşılan yer (flood fill); hedefe
+değiyorsa ihlal (uyarı 0). Değilse ilk görülme = gizli bölgeye komşu
+algılanan hücre; uyarı mesafesi onun hedefe 8-komşu geodezik yürüme
+mesafesi (binaların etrafından; `geodesic` yinelemeli gevşetme, Dijkstra ile
+birebir — test), en küçüğü. Bandın arkasındaki kör şerit ihlal değildir:
+oraya ancak banttan geçilerek varılır. Uyarı süresi = mesafe / hız (arayüz
+hızları sahiplenir: yürüyüş 1,4, koşu 4, araç 11,1 m/sn), müdahale süresiyle
+karşılaştırılır; hedef hat 50 m kesimlere bölünür, her kesimin en kötüsü
+(etiket yayılımıyla en yakın hedef hücresi) haritada renkli. Yalnız sabit
+kameralar, geometrik algılama; algılama olasılığı / kamuflaj yok. Ölçüldü
+(2 km tepelik, 10 m hücre, varsayılan 40 px/m tesis planı): ilk görülme
+çite 14 m kala — koşan sızmacıya 4 sn; 0,4 sn.
 
 **Sürekli PTZ taraması (`ptz_schedule.py`).** `SectorPatrol` (a→b→a, hız,
 uçlarda bekleme) ve `Rotation360`; `evaluate_sweep(...)` → `SweepResult`.

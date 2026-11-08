@@ -20,6 +20,7 @@ import { FocalCurve, ProfileChart } from "../components/charts";
 import { MixedPanel, PtzPanel, type Layer } from "../components/PtzPanels";
 import { ComparePanel, EMPTY_PRICES, NetworkPanel, type NetworkResult, type PriceBook } from "../components/PlanningPanels";
 import { NightPanel, ScenarioPanel } from "../components/DeliveryPanels";
+import { ApproachPanel, type ApproachMarks } from "../components/ApproachPanel";
 import { Button, Panel, Slider, Tile, fmt } from "../components/ui";
 
 const ha = (m2: number) => `${fmt(m2 / 1e4, 2)} ha`;
@@ -78,12 +79,13 @@ export default function Terrain() {
   const [optRes, setOptRes] = useState<{ before_m2: number; after_m2: number; band_area_m2: number; changed: number; moved: number; max_move_m: number; notes: string[] } | null>(null);
   const [poleRes, setPoleRes] = useState<PoleSearch | null>(null);
   const [night, setNight] = useState<NightCoverage | null>(null);
+  const [approachMarks, setApproachMarks] = useState<ApproachMarks | null>(null);
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   // A new plan drops what was computed from the old one (the core does the same: set_plan).
   const [planVer, setPlanVer] = useState(0);       // remounts panels that hold results of the old plan
   const replacePlan = useCallback((p: PlanResult | null) => {
     setPlanVer((v) => v + 1);
-    setPlanRes(p); setCoverage(null); setNetwork(null); setNight(null); setMixedLayer(null);
+    setPlanRes(p); setCoverage(null); setNetwork(null); setNight(null); setMixedLayer(null); setApproachMarks(null);
     if (!p) setAreaRes(null);
   }, []);
 
@@ -304,6 +306,7 @@ export default function Terrain() {
               poles={tab === "perimeter" ? planRes?.poles : []} ptz={tab === "perimeter" ? planRes?.ptz : []}
               gaps={tab === "perimeter" ? planRes?.gaps : []}
               switches={tab === "perimeter" ? network?.network.switches : []}
+              approach={tab === "perimeter" && mixedLayer?.title === "Gizli yaklaşma" ? approachMarks : null}
               tool={tab === "single" ? "camera" : drawing ? "fence" : "none"} onPick={pick}>
               {legend && (
                 <div className="rounded border border-bg-5 bg-bg-1/85 px-3 py-2 backdrop-blur">
@@ -541,6 +544,10 @@ export default function Terrain() {
             {planRes && (
               <NightPanel resetKey={planVer} T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} camera={camera}
                 hasLatLon={info.lat_center !== null} onLayer={setMixedLayer} onResult={setNight} />
+            )}
+            {planRes && (
+              <ApproachPanel resetKey={planVer} T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles}
+                onLayer={setMixedLayer} onMarks={setApproachMarks} />
             )}
             {(planRes || scenarios.length > 0) && (
               <ScenarioPanel T={T} terrainId={info.terrain_id} scenarios={scenarios} onChange={setScenarios} canSnapshot={!!planRes} />

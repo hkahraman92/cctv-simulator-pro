@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Maximize, Minus, Plus } from "lucide-react";
 import type { FenceGap, PlacedCamera } from "../core/terrainApi";
+import type { ApproachMarks } from "./ApproachPanel";
 import { fmt } from "./ui";
 
 export interface CameraMark {
@@ -23,6 +24,8 @@ interface Props {
   ptz?: PlacedCamera[];
   gaps?: FenceGap[];
   switches?: { index: number; x_m: number; y_m: number; ports_used: number; over_budget: boolean }[];
+  /** hidden-approach result: fence sectors by warning time, the intruder's last dash */
+  approach?: ApproachMarks | null;
   /** what a plain click does */
   tool: "camera" | "fence" | "none";
   onPick?: (x: number, y: number) => void;
@@ -120,6 +123,20 @@ export default function MapView(p: Props) {
         {(p.fence ?? []).map(([x, y], i) => (
           <rect key={i} x={x - 3 * px} y={H - y - 3 * px} width={6 * px} height={6 * px} fill="var(--color-warn)" />
         ))}
+        {(p.approach?.sectors ?? []).map((s, i) => (
+          <line key={`sec${i}`} x1={s.x0} y1={H - s.y0} x2={s.x1} y2={H - s.y1}
+            stroke={s.tone === "danger" ? "var(--color-danger)" : s.tone === "warn" ? "var(--color-warn)" : "var(--color-primary)"}
+            strokeWidth={5 * px} strokeLinecap="round" opacity={0.9} />
+        ))}
+        {p.approach && p.approach.dash.length > 1 && (
+          <polyline points={p.approach.dash.map(([x, y]) => `${x},${H - y}`).join(" ")} fill="none" stroke="var(--color-danger)"
+            strokeWidth={2.5 * px} strokeDasharray={`${5 * px} ${3 * px}`} />
+        )}
+        {p.approach?.breakout && (
+          <circle cx={p.approach.breakout[0]} cy={H - p.approach.breakout[1]} r={6 * px} fill="none" stroke="var(--color-danger)" strokeWidth={2.5 * px}>
+            <title>İlk görülme noktası</title>
+          </circle>
+        )}
         {(p.gaps ?? []).map((g, i) => (
           <line key={i} x1={g.start_x} y1={H - g.start_y} x2={g.end_x} y2={H - g.end_y} stroke="var(--color-danger)" strokeWidth={4 * px} />
         ))}
