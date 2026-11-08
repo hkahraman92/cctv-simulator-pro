@@ -135,9 +135,38 @@ export interface CoverageResult {
   band_m: number;
   band_area_m2: number;
   band_share: Record<"identify" | "recognize" | "observe" | "detect", number>;
+  /** "area": the shares are of the drawn polygon (area plan), "band": of the ±band_m fence band */
+  roi_kind: "area" | "band";
   overlay: Picture;
   legend: LegendRow[];
   measured: boolean;
+}
+
+export type DoriLevel = "detect" | "observe" | "recognize" | "identify";
+
+export interface AreaPlanResult {
+  met: boolean;
+  level: DoriLevel;
+  goal_frac: number;
+  area_m2: number;
+  /** authoritative multi-camera engine share of the polygon at >= level */
+  engine_frac: number;
+  estimate_frac: number;
+  sites_considered: number;
+  sites_skipped_obstacle: number;
+  curve: { cameras: number; poles: number; frac: number }[];
+  notes: string[];
+  plan: PlanResult;
+}
+
+export interface AreaParams {
+  fence: [number, number][];
+  level: DoriLevel;
+  goal_frac: number;
+  mast_m: number;
+  interior: boolean;
+  max_per_pole: number;
+  weather?: string;
 }
 
 export interface PoleTrial {
@@ -183,7 +212,8 @@ export interface PlanParams {
   closed: boolean;
   target_ppm: number;
   mast_m: number;
-  line_mode: "facility" | "border" | "highway";
+  /** "area" is only meaningful for area.plan; the fence planners refuse it */
+  line_mode: "facility" | "border" | "highway" | "area";
   watch_side: "left" | "right";
   weather?: string;
   spacing_m?: number;
@@ -266,7 +296,7 @@ export interface NightParams {
   ir_on?: boolean; white_light_range_m?: number; camera?: CameraConfig;
 }
 export interface NightCoverage {
-  condition: LightCondition; mode: NightMode; band_m: number; band_area_m2: number;
+  condition: LightCondition; mode: NightMode; band_m: number; band_area_m2: number; roi_kind?: "area" | "band";
   day_band_share: LevelShare; night_band_share: LevelShare; overlay?: Picture; legend: LegendRow[]; measured: boolean;
 }
 export interface NightTimeline { lat: number; lon: number; steps: (LightCondition & { mode?: NightMode["mode"]; range_cap_m?: number | null })[] }
@@ -311,6 +341,8 @@ export function terrainApi(rpc: RpcClient) {
     plan: (p: T & PlanParams & { camera: CameraConfig }) => rpc.call<PlanResult>("perimeter.plan", p),
     coverage: (p: T & { layer?: "dori" | "overlap"; band_m?: number; max_px?: number }, opts?: CallOptions) =>
       rpc.call<CoverageResult>("perimeter.coverage", p, { timeoutMs: 0, ...opts }),
+    areaPlan: (p: T & AreaParams & { camera: CameraConfig }, opts?: CallOptions) =>
+      rpc.call<AreaPlanResult>("area.plan", p, { timeoutMs: 0, ...opts }),
     optimize: (p: T & { level: string; position_steps: number; pan_search_deg?: number; n_focals?: number }, opts?: CallOptions) =>
       rpc.call<{ before_m2: number; after_m2: number; band_area_m2: number; changed: number; moved: number; max_move_m: number; notes: string[]; plan: PlanResult }>(
         "perimeter.optimize", p, { timeoutMs: 0, ...opts }),

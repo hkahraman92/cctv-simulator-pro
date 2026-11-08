@@ -123,8 +123,8 @@ export default function MapView(p: Props) {
         {(p.gaps ?? []).map((g, i) => (
           <line key={i} x1={g.start_x} y1={H - g.start_y} x2={g.end_x} y2={H - g.end_y} stroke="var(--color-danger)" strokeWidth={4 * px} />
         ))}
-        {(p.poles ?? []).map((c) => (
-          <g key={c.pole_id}>
+        {(p.poles ?? []).map((c, i) => (
+          <g key={i}>
             <line x1={c.x_m} y1={H - c.y_m} x2={c.x_m + Math.sin((c.pan_deg * Math.PI) / 180) * 14 * px}
               y2={H - c.y_m - Math.cos((c.pan_deg * Math.PI) / 180) * 14 * px} stroke="var(--color-primary)" strokeWidth={1.5 * px} />
             <circle cx={c.x_m} cy={H - c.y_m} r={3.5 * px} fill="var(--color-primary)" stroke="var(--color-bg-0)" strokeWidth={1.2 * px} />

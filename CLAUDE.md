@@ -37,6 +37,7 @@ cctv_dual_view_simulator.py          giriş noktası
   ptz_animation.py                   PTZ görsel tarama: anlık bakış + iz + gölge, kesit
   focal_optimizer.py                 varifokal/PTZ: tüm odak taraması, zarf, sabit+PTZ dizilim optimizasyonu
   pole_optimizer.py                  çit hedefini tutan en az direk: aralık araması + direk başına odak
+  area_planner.py                    alan hedefi: poligonda DORI seviyesini tutan en az kamera / direk
   raster_smooth.py                   sınıf bindirmelerini yalnız görüntüde yumuşatır, FOV kamasına kırpar
   compliance.py                      Gemini/Ollama + kural tabanlı şartname analizi
   compliance_optics.py               şartname DORI/menzil isteri → optik motorla doğrula
@@ -70,7 +71,7 @@ desktop/                             yeni arayüz: Tauri 2 (Rust) + React/TS/Tai
 
 **Yeni masaüstü kabuğu.** `desktop/` Python çekirdeği (`python -m
 cctv_simulator.service`, yayında `cctv-core.exe`) alt süreç olarak başlatır,
-satır başına bir JSON-RPC nesnesi taşır (API v1, 66 yöntem; liste ve
+satır başına bir JSON-RPC nesnesi taşır (API v1, 67 yöntem; liste ve
 sözleşme `docs/masaustu-mimari.md`). Ekran fizik türetmez; her sayı bir API
 yönteminden gelir. Yeni özellik için: önce `service/*_methods.py`'ye yöntem +
 `tests/test_service_*.py`'ye motorla birebir eşlik testi, sonra
@@ -521,6 +522,10 @@ sayısıyla ağırlıklı, DORI metrikleri yalnız parse edilenler üzerinden). 
   yön araması tepenin açık tarafını bulur, zarf her tekil bakışı kapsar (PTZ
   zarfı sabitinkini), dizilim başlangıçtan kötü olamaz ve kötü başlangıcı
   düzeltir, PTZ talep üzerine birleşime eklenir, çit bandı.
+- `test_area_planner.py` — poligon maskesi (içbükey dahil), aday yer tavanı,
+  hedef otoriter motorla tutar (bildirilen pay = `band_area`), düşük hedef
+  daha çok kamera istemez, duvarın iki yanına kamera, bina içi aday atlanır,
+  tutmayan hedef dürüstçe raporlanır, iç direğe hendek / direk üstü switch.
 - `test_pole_optimizer.py` — `spacing_m` geçersizleştirmesi (None bit-aynı),
   ulaşılabilir hedefte planlayıcıdan az direk, planlayıcı üstü hedefte
   sıklaşma ve en seyrek geçen deneme, imkânsız hedefte en iyi çaba + not.
@@ -656,6 +661,30 @@ tutmazsa arayüz planı DEĞİŞTİRMEZ, yalnız raporlar. Kazanan plan arayüzd
 bant kapsaması odak optimizasyonu sonrası bile ≤%97: kameralar çit boyunca
 baktığından bandın dış kenarına yetişmez. `_plan_kwargs` / `_refresh_plan_stats`
 "Otomatik Diz" ile aramanın aynı ayarla planlamasını sağlar.
+
+**Alan hedefi (`area_planner.plan_area`).** Çit planlayıcısı bir ÇİZGİYİ
+(±40 m bant) korur; otopark, avlu, depo sahası, meydan bir ALANDIR. Kullanıcı
+poligon çizer, hedef seviye + oran verir ("%95'i Tanıma"). Aday direk yerleri
+sınırda + (isteğe bağlı) içeride ızgara, hedef seviyedeki tele erişiminden
+aralıklı, `max_sites` (80) tavanlı; direk hücresinde lensten yüksek bina/ağaç
+varsa yer atlanır. Her yerde direk raster'ı üstünde odak × `auto_tilts` × pan
+adayları (Kural 1 yapı taşları), ROI'ye kırpılır. Tembel açgözlü küme örtüsü:
+en çok yeni hücre ekleyen görüş; dikili direkteki görüş, yeni direğinkinin
+`NEW_POLE_FACTOR` (0,8) katını geçiyorsa tercih edilir (direk temel + hendek
+ister, ikinci kamera istemez); direk başına `max_per_pole`. Sonra fazlalar
+(sondan) budanır. Sonuç `band_area` ile **otoriter motordan** geçer; motor
+hedefin altındaysa iç hedef yükseltilip açgözlü devam eder (≤3 tur) —
+bildirilen pay her zaman motorun. Plan bir `PerimeterPlanResult`
+(`line_mode="area"`, poligon `fence_points`, birden çok kamera aynı
+`pole_id`'yi paylaşabilir): kapsama, ağ/maliyet, gece, senaryo, KML aynen
+çalışır; servis `_plan_roi` ile çit bandı yerine poligonu puanlar,
+`perimeter.optimize` iç direkleri çite kaydırmaz ve çit boşluk analizini
+koşmaz. En az direk / model karşılaştırma / karma PTZ çit içindir, alan
+modunda gizli. Ağ planı: hat dışındaki direğe sınırdan dik hendek eklenir
+(≤0,5 m sapma 0 sayılır → çit planları bit-aynı); hendeği bakır sınırını
+tek başına aşan direğe direk üstü switch + fiber (`Switch.on_pole`).
+Ölçüldü (2 km tepelik, 10 m hücre, 4,75 ha, Gözlem %90, 8 m direk): 35
+kamera / 20 direk, motor %90,3, 3 sn.
 
 **Sürekli PTZ taraması (`ptz_schedule.py`).** `SectorPatrol` (a→b→a, hız,
 uçlarda bekleme) ve `Rotation360`; `evaluate_sweep(...)` → `SweepResult`.

@@ -39,6 +39,9 @@ class Switch:
     poe_w: float = 0.0
     copper_m: float = 0.0
     over_budget: bool = False
+    # a cabinet on the pole itself, fed by fibre from the line: an area plan's
+    # interior pole too far from the edge for copper (never on a fence plan)
+    on_pole: bool = False
 
 
 @dataclass
@@ -66,6 +69,11 @@ def camera_power_w(model: Optional[Dict], ptz: bool = False) -> Tuple[float, boo
 
 
 def _arc_of(points: Sequence[Tuple[float, float]], x: float, y: float) -> float:
+    return _arc_and_offset(points, x, y)[0]
+
+
+def _arc_and_offset(points: Sequence[Tuple[float, float]], x: float, y: float) -> Tuple[float, float]:
+    """(distance along the line of the nearest point, distance from the line)."""
     best, at, run = None, 0.0, 0.0
     for a, b in zip(points[:-1], points[1:]):
         dx, dy = b[0] - a[0], b[1] - a[1]
@@ -77,7 +85,14 @@ def _arc_of(points: Sequence[Tuple[float, float]], x: float, y: float) -> float:
         if best is None or d < best:
             best, at = d, run + u * seg
         run += seg
-    return at
+    return at, (best or 0.0)
+
+
+def _lateral(points, cam) -> float:
+    """Trench from the line to a pole standing off it (an area plan's interior
+    pole); poles on the line (every fence plan) get 0, so their runs are unchanged."""
+    d = _arc_and_offset(points, cam.x_m, cam.y_m)[1]
+    return d if d > 0.5 else 0.0
 
 
 def plan_network(plan, *, camera_model: Optional[Dict] = None, ptz_model: Optional[Dict] = None,
@@ -97,11 +112,16 @@ def plan_network(plan, *, camera_model: Optional[Dict] = None, ptz_model: Option
     warnings: List[str] = []
     switches: List[Switch] = []
     reach = max_copper_m / (1.0 + slack_frac)
+    lateral_any = False
+    # poles whose trench alone uses up the copper get their own cabinet (fibre to the line)
+    remote = [f for f in feeds if _lateral(pts, f[0]) + f[0].mast_height_m > reach]
+    feeds = [f for f in feeds if _lateral(pts, f[0]) + f[0].mast_height_m <= reach]
+    lateral_fibre = 0.0
 
     i = 0
     while i < len(feeds):
         first = _arc_of(pts, feeds[i][0].x_m, feeds[i][0].y_m)
-        mast = feeds[i][0].mast_height_m
+        mast = feeds[i][0].mast_height_m + _lateral(pts, feeds[i][0])
         # switch as far along as the first feed's copper allows
         at = first + max(reach - mast, 0.0)
         sx, sy = point_along_polyline(pts, at)[:2]
@@ -109,7 +129,9 @@ def plan_network(plan, *, camera_model: Optional[Dict] = None, ptz_model: Option
         while i < len(feeds):
             cam, is_ptz = feeds[i]
             arc = _arc_of(pts, cam.x_m, cam.y_m)
-            run = (abs(arc - at) + cam.mast_height_m) * (1.0 + slack_frac)
+            off = _lateral(pts, cam)
+            lateral_any = lateral_any or off > 0
+            run = (abs(arc - at) + off + cam.mast_height_m) * (1.0 + slack_frac)
             w = ptz_w if is_ptz else fixed_w
             # the first feed sits exactly at the copper limit by construction; arc rounding must not trip it
             if run > max_copper_m + 1e-6 or sw.ports_used + 1 > switch_ports or sw.poe_w + w > poe_budget_w:
@@ -125,6 +147,24 @@ def plan_network(plan, *, camera_model: Optional[Dict] = None, ptz_model: Option
             i += 1
         switches.append(sw)
 
+    by_pole: Dict[Tuple[float, float], List] = {}
+    for f in remote:
+        by_pole.setdefault((f[0].x_m, f[0].y_m), []).append(f)
+    for (x, y), group in by_pole.items():
+        arc = _arc_of(pts, x, y)
+        sw = None
+        for cam, is_ptz in group:
+            w = ptz_w if is_ptz else fixed_w
+            if sw is None or sw.ports_used + 1 > switch_ports or sw.poe_w + w > poe_budget_w:
+                sw = Switch(index=len(switches) + 1, x_m=float(x), y_m=float(y), arc_m=arc, on_pole=True)
+                switches.append(sw)
+                lateral_fibre += _lateral(pts, cam) * (1.0 + slack_frac)
+            sw.poles.append(cam.pole_id)
+            sw.ports_used += 1
+            sw.poe_w += w
+            sw.copper_m += cam.mast_height_m * (1.0 + slack_frac)
+        feeds += group
+
     copper = sum(s.copper_m for s in switches)
     longest = 0.0
     for s in switches:
@@ -133,12 +173,14 @@ def plan_network(plan, *, camera_model: Optional[Dict] = None, ptz_model: Option
     fibre = 0.0
     if switches:
         arcs = sorted(s.arc_m for s in switches)
-        fibre = (max(arcs[-1], nvr_at_m) - min(arcs[0], nvr_at_m)) * (1.0 + slack_frac)
+        fibre = (max(arcs[-1], nvr_at_m) - min(arcs[0], nvr_at_m)) * (1.0 + slack_frac) + lateral_fibre
     bitrate = (len(plan.placed_cameras) * bitrate_fixed_mbps
                + len(getattr(plan, "ptz_cameras", [])) * bitrate_ptz_mbps)
     storage_tb = bitrate * 1e6 / 8 * 86400 * retention_days / 1e12 * (1.0 + raid_overhead)
     assumptions = [
-        f"Bakır kablo: çit boyunca + direk boyu + %{slack_frac * 100:.0f} pay, en çok {max_copper_m:.0f} m.",
+        f"Bakır kablo: çit boyunca + direk boyu + %{slack_frac * 100:.0f} pay, en çok {max_copper_m:.0f} m."
+        + (" Hat dışındaki direklere sınırdan dik hendek eklenir." if lateral_any or remote else "")
+        + (f" Sınıra bakırla ulaşamayan {len(by_pole)} direğe direk üstü switch + fiber." if remote else ""),
         f"Switch: {switch_ports} port, PoE bütçesi {poe_budget_w:.0f} W.",
         f"Kamera gücü: sabit {fixed_w:g} W ({'broşür' if fixed_ds else 'varsayılan'})"
         + (f", PTZ {ptz_w:g} W ({'broşür' if ptz_ds else 'varsayılan'})" if getattr(plan, "ptz_cameras", []) else "") + ".",

@@ -136,8 +136,9 @@ def night_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """The plan's fixed poles at a night time: the engine with each pole's reach
     capped by what lights the scene, against the same band by day."""
     from .. import map_render
-    from ..focal_optimizer import band_area, fence_roi
+    from ..focal_optimizer import band_area
     from ..night import capped_placements, light_condition
+    from .terrain_methods import _plan_roi
     from ..viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_OBSERVE, ZONE_RECOG
 
     entry, t = _terrain_of(params)
@@ -149,8 +150,9 @@ def night_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     lat, lon = _latlon(params, t)
     cond = light_condition(lat, lon, _when(params), **_light_kw(params))
     mode = _mode_for(cam, cond.lux, params)
-    band = _num(params, "band_m", 40.0, lo=5, hi=500)
-    roi = fence_roi(t, fence, kw["is_closed_loop"], band)
+    is_area = kw.get("line_mode") == "area"
+    band = 0.0 if is_area else _num(params, "band_m", 40.0, lo=5, hi=500)
+    roi = _plan_roi(t, fence, kw, band)
     cell = t.cell_size_m ** 2
     roi_area = float(roi.sum() * cell)
     levels = (("identify", ZONE_IDENT), ("recognize", ZONE_RECOG), ("observe", ZONE_OBSERVE), ("detect", ZONE_DETECT))
@@ -170,7 +172,8 @@ def night_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     entry.results["night"] = res
     max_px = int(_num(params, "max_px", _DISPLAY_PX, lo=200, hi=4096))
     out = {"condition": _cond_json(cond), "mode": {"mode": mode.mode, "range_cap_m": mode.range_cap_m, "text": mode.text},
-           "band_m": band, "band_area_m2": roi_area, "day_band_share": day, "night_band_share": night,
+           "band_m": band, "band_area_m2": roi_area, "roi_kind": "area" if is_area else "band",
+           "day_band_share": day, "night_band_share": night,
            "legend": map_render.legend("dori")[1], "measured": bool(t.is_measured)}
     if night_mv is not None:
         out["overlay"] = _image(map_render.zone_overlay(night_mv.dori_grid, _overlay_size(t, max_px)), max_px=max_px)

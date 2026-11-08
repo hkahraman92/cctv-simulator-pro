@@ -144,6 +144,34 @@ def test_optimize_in_place_never_loses_band_area_and_can_move_poles(hills):
     assert sum(moved) == r["moved"]
 
 
+def test_area_plan_matches_the_engine_and_the_plan_tools_use_the_polygon(hills):
+    from cctv_simulator.area_planner import plan_area, polygon_mask
+    from cctv_simulator.viewshed_3d import ZONE_DETECT
+
+    tid = hills["terrain_id"]
+    poly = [[450, 450], [750, 450], [750, 700], [450, 700]]
+    r, prog = call("area.plan", terrain_id=tid, camera=CAM, fence=poly, level="detect", goal_frac=0.8, mast_m=8)
+    a = r["result"]
+    assert prog, "area plan reports progress"
+    t = session.SESSION.get(tid).terrain(True)
+    want = plan_area(t, [tuple(p) for p in poly], CameraConfig(**CAM), level=ZONE_DETECT, goal_frac=0.8,
+                     mast_height_m=8.0)
+    assert a["met"] == want.met and a["engine_frac"] == pytest.approx(want.engine_frac)
+    assert a["plan"]["camera_count"] == want.plan.camera_count and a["plan"]["line_mode"] == "area"
+    assert a["area_m2"] == pytest.approx(polygon_mask(t, poly).sum() * t.cell_size_m ** 2)
+    # coverage scores the polygon, not a fence band, and agrees with the plan's engine share
+    cov = ok("perimeter.coverage", terrain_id=tid, max_px=400)
+    assert cov["roi_kind"] == "area" and cov["band_area_m2"] == pytest.approx(a["area_m2"])
+    assert cov["band_share"]["detect"] == pytest.approx(a["engine_frac"])
+    # optimising in place keeps poles where they stand and never loses area
+    o = ok("perimeter.optimize", terrain_id=tid, level="detect", position_steps=2, n_focals=4)
+    assert o["moved"] == 0 and o["after_m2"] >= o["before_m2"] - 1e-6 and o["plan"]["gaps"] == []
+    net = ok("network.plan", terrain_id=tid, switch_ports=8)
+    assert net["network"]["cameras"] == a["plan"]["camera_count"]
+    bad, _ = call("area.plan", terrain_id=tid, camera=CAM, fence=poly[:2])
+    assert bad["error"]["code"] == INVALID_PARAMS
+
+
 def test_network_and_cost_of_the_current_plan(hills):
     from cctv_simulator.network_plan import PriceBook, estimate_cost, plan_network
 

@@ -89,7 +89,7 @@ export function NightPanel({ T, job, terrainId, useObstacles, camera, hasLatLon,
             {c.period} · {fmt(c.lux, c.lux < 1 ? 4 : 0)} lux · güneş {fmt(c.sun_el_deg, 0)}° · ay {fmt(c.moon_el_deg, 0)}° (%{fmt(c.moon_fraction * 100, 0)} aydınlık)
           </div>
           <table className="mt-2 w-full font-mono text-[11px]">
-            <thead><tr className="text-text-3"><th className="text-left font-normal">±{fmt(res.band_m, 0)} m bant</th><th className="text-right font-normal">Gündüz</th><th className="text-right font-normal">Gece</th></tr></thead>
+            <thead><tr className="text-text-3"><th className="text-left font-normal">{res.roi_kind === "area" ? "Alan" : `±${fmt(res.band_m, 0)} m bant`}</th><th className="text-right font-normal">Gündüz</th><th className="text-right font-normal">Gece</th></tr></thead>
             <tbody>
               {LEVELS.map(([k, l]) => (
                 <tr key={k}><td className="font-sans">{l}</td><td className="text-right">{pct(res.day_band_share[k])}</td>

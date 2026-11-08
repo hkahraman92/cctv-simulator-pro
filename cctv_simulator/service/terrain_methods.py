@@ -443,6 +443,20 @@ def _plan_json(plan) -> Dict[str, Any]:
     }
 
 
+def _plan_roi(t, fence, kw: Dict[str, Any], band_m: float) -> np.ndarray:
+    """What a plan protects: the drawn polygon for an area plan, else the fence band."""
+    if kw.get("line_mode") == "area":
+        from ..area_planner import polygon_mask
+        return polygon_mask(t, fence)
+    from ..focal_optimizer import fence_roi
+    return fence_roi(t, fence, kw["is_closed_loop"], band_m)
+
+
+def _levels_table() -> Dict[str, int]:
+    from ..viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_OBSERVE, ZONE_RECOG
+    return {"detect": ZONE_DETECT, "observe": ZONE_OBSERVE, "recognize": ZONE_RECOG, "identify": ZONE_IDENT}
+
+
 def perimeter_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """Poles along a fence / border / road line (planner + fence-line gap analysis)."""
     from ..perimeter_planner import generate_perimeter_plan
@@ -461,7 +475,7 @@ def perimeter_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
 def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """The last plan through the authoritative multi-camera viewshed: DORI map + fence-band shares."""
     from .. import map_render
-    from ..focal_optimizer import band_area, fence_roi
+    from ..focal_optimizer import band_area
     from ..viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_OBSERVE, ZONE_RECOG
 
     entry, t = _terrain_of(params)
@@ -471,8 +485,9 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     if not plan.placed_cameras:
         raise RpcError(APP_ERROR, "Planda kamera yok.")
     ctx.progress(0, 1, f"{len(plan.placed_cameras)} kamera hesaplanıyor")
-    band = _num(params, "band_m", 40.0, lo=5, hi=500)
-    roi = fence_roi(t, fence, kw["is_closed_loop"], band)
+    is_area = kw.get("line_mode") == "area"
+    band = 0.0 if is_area else _num(params, "band_m", 40.0, lo=5, hi=500)
+    roi = _plan_roi(t, fence, kw, band)
     # Each pole is evaluated out to its Detection reach: the plan caps it at
     # the fence target (e.g. 40 px/m), which would cut the lower DORI bands.
     mv, _ = band_area(t, plan, cam, roi, ZONE_DETECT, visibility_km=kw["visibility_km"], weather=kw["weather"])
@@ -495,6 +510,7 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         "overlap_area_m2": mv.overlap_area_m2, "single_cover_area_m2": mv.single_cover_area_m2,
         "zone_areas_m2": _zone_areas(mv.dori_grid, cell),
         "band_m": band, "band_area_m2": roi_area, "band_share": band_share,
+        "roi_kind": "area" if is_area else "band",
         "overlay": _image(overlay, max_px=max_px), "legend": map_render.legend(layer)[1],
         "measured": bool(t.is_measured),
     }
@@ -540,22 +556,22 @@ def perimeter_minimize_poles(params: Dict[str, Any], ctx: Context) -> Dict[str, 
 def perimeter_optimize(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """Optimise the last plan's poles in place: focal / tilt (/ heading) and optionally
     their place along the fence; both plans re-scored by the authoritative engine."""
-    from ..focal_optimizer import apply_layout, band_area, fence_roi, mounts_from_plan, optimize_layout
-    from ..viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_OBSERVE, ZONE_RECOG
+    from ..focal_optimizer import apply_layout, band_area, mounts_from_plan, optimize_layout
 
     entry, t = _terrain_of(params)
     if "plan" not in entry.results:
         raise RpcError(APP_ERROR, "Önce bir çit planı oluşturun.")
     plan, cam, kw, fence = entry.results["plan"]
-    levels = {"detect": ZONE_DETECT, "observe": ZONE_OBSERVE, "recognize": ZONE_RECOG, "identify": ZONE_IDENT}
-    level = levels.get(params.get("level", "detect"))
+    level = _levels_table().get(params.get("level", "detect"))
     if level is None:
         raise RpcError(INVALID_PARAMS, "'level' detect, observe, recognize ya da identify olmalı.")
-    steps = int(_num(params, "position_steps", 0, lo=0, hi=4))
+    is_area = kw.get("line_mode") == "area"
+    # an area plan's poles stand inside the polygon too: sliding "along the fence" would drag them to its edge
+    steps = 0 if is_area else int(_num(params, "position_steps", 0, lo=0, hi=4))
     step_m = _num(params, "position_step_m", max(plan.avg_spacing_m / (2 * steps + 2), 1.0) if steps else 0.0,
                   lo=0, hi=500)
     band = _num(params, "band_m", 40.0, lo=5, hi=500)
-    roi = fence_roi(t, fence, kw["is_closed_loop"], band)
+    roi = _plan_roi(t, fence, kw, band)
     mounts = mounts_from_plan(plan, cam, pan_search_deg=_num(params, "pan_search_deg", 0.0, lo=0, hi=90),
                               position_step_m=step_m, position_steps=steps)
     res = optimize_layout(t, mounts, roi=roi, level=level, n_focals=int(_num(params, "n_focals", 6, lo=2, hi=16)),
@@ -566,6 +582,9 @@ def perimeter_optimize(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     ctx.progress(1, 1, "Otoriter motorla doğrulanıyor")
     _, a0 = band_area(t, plan, cam, roi, level, visibility_km=kw["visibility_km"], weather=kw["weather"])
     _, a1 = band_area(t, new_plan, cam, roi, level, visibility_km=kw["visibility_km"], weather=kw["weather"])
+    if is_area:          # apply_layout re-ran the FENCE gap analysis; an area plan reports its own share
+        new_plan = dataclasses.replace(new_plan, gaps=[], coverage_percentage=round(
+            100.0 * a1 / max(float(roi.sum()) * t.cell_size_m ** 2, 1e-9), 1))
     if params.get("apply", True):
         entry.set_plan((new_plan, cam, kw, fence))
     moved = [c for c in res.choices if c.moved_m > 0.05]
@@ -574,6 +593,43 @@ def perimeter_optimize(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
             "changed": sum(1 for c in res.choices if c.changed), "moved": len(moved),
             "max_move_m": max((c.moved_m for c in moved), default=0.0), "notes": res.notes,
             "plan": _plan_json(new_plan)}
+
+
+def area_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """Area goal: fewest cameras / poles holding a DORI level over a polygon (verified by the engine)."""
+    from ..area_planner import plan_area
+    from ..atmosphere import WEATHER_PRESETS
+
+    entry, t = _terrain_of(params)
+    cam = _camera_from(params.get("camera", {}))
+    poly = _fence(params)
+    if len(poly) < 3:
+        raise RpcError(INVALID_PARAMS, "Alan için en az üç köşe gerekir.")
+    levels = _levels_table()
+    level = levels.get(params.get("level", "recognize"))
+    if level is None:
+        raise RpcError(INVALID_PARAMS, "'level' detect, observe, recognize ya da identify olmalı.")
+    weather = str(params.get("weather", "")) if params.get("weather") in WEATHER_PRESETS else ""
+    vis = WEATHER_PRESETS.get(weather, 40.0)
+    mast = _num(params, "mast_m", 6.0, lo=0.5, hi=200)
+    try:
+        res = plan_area(t, poly, cam, level=level, goal_frac=_num(params, "goal_frac", 0.95, lo=0.05, hi=1.0),
+                        mast_height_m=mast, interior=bool(params.get("interior", True)),
+                        max_per_pole=int(_num(params, "max_per_pole", 2, lo=1, hi=6)),
+                        max_cameras=int(_num(params, "max_cameras", 120, lo=1, hi=500)),
+                        visibility_km=vis, weather=weather,
+                        progress=lambda d, n: ctx.progress(d, n, "Aday direkler" if d <= n - 3 else "Motorla doğrulanıyor"))
+    except ValueError as exc:
+        raise RpcError(APP_ERROR, str(exc)) from None
+    kw = {"target_ppm": res.plan.target_ppm, "mast_height_m": mast, "is_closed_loop": True,
+          "visibility_km": vis, "weather": weather, "line_mode": "area", "watch_side": "right", "level": level}
+    entry.set_plan((res.plan, cam, kw, poly))
+    names = {v: k for k, v in levels.items()}
+    return {"met": res.met, "level": names[res.level], "goal_frac": res.goal_frac, "area_m2": res.area_m2,
+            "engine_frac": res.engine_frac, "estimate_frac": res.estimate_frac,
+            "sites_considered": res.sites_considered, "sites_skipped_obstacle": res.sites_skipped_obstacle,
+            "curve": [dataclasses.asdict(st) for st in res.steps], "notes": res.notes,
+            "plan": _plan_json(res.plan)}
 
 
 def focal_sweep(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
@@ -622,5 +678,6 @@ METHODS = {
     "perimeter.coverage": perimeter_coverage,
     "perimeter.minimize_poles": perimeter_minimize_poles,
     "perimeter.optimize": perimeter_optimize,
+    "area.plan": area_plan,
     "focal.sweep": focal_sweep,
 }
