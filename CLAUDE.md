@@ -242,6 +242,11 @@ motorlar (viewshed, mount raster, PTZ, çit LOS) görüş hattını yüzeye kar�
 test eder; **direk zeminde durur**: `TerrainData.ground_elevation_at`
 (viewshed_3d, mount_visibility, perimeter_planner `_place`). Engel yokken
 `ground_elevation_at == get_elevation_at` → optik golden bit-aynı.
+Yeraltı binası (`location=underground`, `layer` < 0) atlanır: Kızılay metro
+yerleşkesi `building=train_station` olarak eşlenmiş, Atatürk Bulvarı ve
+meydanın üstüne 6 m duvar olarak çıkıyordu. Overpass istemcisi
+(aynalar, önbellek, yüksek sesle hata) `fetch_overpass` — şehir katmanı da
+onu kullanır.
 Yükseklik sırası: `height` etiketi → `building:levels` × 3 m → varsayılan
 (bina 6, ağaç 8, orman 12 m); `ObstacleLayer.counts` kaynakları sayar,
 varsayılan payı > %50 ise `showwarning` — tahmini yüzeyi ölçüm gibi sunma.

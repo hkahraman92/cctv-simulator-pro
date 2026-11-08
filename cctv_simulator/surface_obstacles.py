@@ -135,9 +135,21 @@ def feature_height(tags: Dict[str, str], kind: int) -> Tuple[float, str]:
     return DEFAULT_CANOPY_M, "default"
 
 
+def _underground(tags: Dict[str, str]) -> bool:
+    """Below the surface: a metro station complex is mapped as a building
+    (Kızılay: building=train_station, layer=-1, location=underground) and was
+    raised as a 6 m wall across Atatürk Bulvarı and the square."""
+    if tags.get("location") in ("underground", "underwater") or tags.get("building") == "underground":
+        return True
+    try:
+        return float(str(tags.get("layer", "0")).replace(",", ".")) < 0
+    except ValueError:
+        return False
+
+
 def _kind(tags: Dict[str, str]) -> int:
     if "building" in tags or "building:part" in tags:
-        return KIND_BUILDING
+        return KIND_NONE if _underground(tags) else KIND_BUILDING
     if tags.get("natural") in ("tree", "tree_row", "wood") or tags.get("landuse") == "forest":
         return KIND_VEGETATION
     return KIND_NONE
@@ -211,22 +223,31 @@ def _http_fetch(url: str, query: str, timeout_s: float) -> bytes:
         return resp.read()
 
 
-def fetch_osm_obstacles(bbox: Tuple[float, float, float, float], *,
-                        fetch: Optional[Callable[[str, str, float], bytes]] = None,
-                        use_cache: bool = True, timeout_s: float = 120.0) -> List[Feature]:
-    """Download + parse. Cached on disk per query (``osm-cache``). Raises
-    RuntimeError (Turkish message) when every endpoint fails -- a silent empty
-    result would read as "no buildings here"."""
+def check_area(bbox: Tuple[float, float, float, float], what: str = "bina/ağaç") -> None:
     s, w, n, e = bbox
     km2 = ((n - s) * 111.32) * ((e - w) * 111.32 * math.cos(math.radians((s + n) / 2)))
     if km2 > MAX_AREA_KM2:
-        raise RuntimeError(f"Alan çok büyük ({km2:.0f} km²); bina/ağaç indirmesi en fazla "
+        raise RuntimeError(f"Alan çok büyük ({km2:.0f} km²); {what} indirmesi en fazla "
                            f"{MAX_AREA_KM2:.0f} km² için yapılır.")
-    query = build_query(bbox)
+
+
+def fetch_osm_obstacles(bbox: Tuple[float, float, float, float], *,
+                        fetch: Optional[Callable[[str, str, float], bytes]] = None,
+                        use_cache: bool = True, timeout_s: float = 120.0) -> List[Feature]:
+    """Download + parse buildings / trees (see ``fetch_overpass``)."""
+    check_area(bbox)
+    return parse_overpass(fetch_overpass(build_query(bbox), fetch=fetch, use_cache=use_cache, timeout_s=timeout_s))
+
+
+def fetch_overpass(query: str, *, fetch: Optional[Callable[[str, str, float], bytes]] = None,
+                   use_cache: bool = True, timeout_s: float = 120.0) -> dict:
+    """Overpass JSON for ``query``: disk cache (``osm-cache``), then each mirror.
+    Raises RuntimeError (Turkish message) when every endpoint fails -- a silent
+    empty result would read as "nothing here"."""
     path = _cache_file(query) if use_cache else None
     if path is not None and path.is_file():
         try:
-            return parse_overpass(json.loads(gzip.decompress(path.read_bytes()).decode("utf-8")))
+            return json.loads(gzip.decompress(path.read_bytes()).decode("utf-8"))
         except (OSError, ValueError):
             pass
     fetch = fetch or _http_fetch
@@ -243,7 +264,7 @@ def fetch_osm_obstacles(bbox: Tuple[float, float, float, float], *,
                 path.write_bytes(gzip.compress(raw))
             except OSError:
                 pass
-        return parse_overpass(data)
+        return data
     raise RuntimeError("OpenStreetMap (Overpass) verisi alınamadı:\n" + "\n".join(errors))
 
 

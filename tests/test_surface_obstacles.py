@@ -178,3 +178,17 @@ def test_report_says_the_surface_is_an_osm_estimate(tmp_path):
     out = tmp_path / "r.csv"
     export_engineering_report_csv(str(out), project_name="P", terrain=surf, camera=CAM, weather="")
     assert "Yüzey modeli" in out.read_text(encoding="utf-8-sig")
+
+
+def test_underground_buildings_do_not_rise_above_the_surface():
+    """Kızılay's metro complex is mapped as building=train_station, layer=-1,
+    location=underground; it used to be raised as a 6 m wall over the square."""
+    terr = _terrain()
+    ring = [{"lat": la, "lon": lo} for la, lo in _box(terr, 300, 300, 600, 600)]
+    data = {"elements": [
+        {"type": "way", "id": 1, "tags": {"building": "train_station", "layer": "-1", "location": "underground"}, "geometry": ring},
+        {"type": "way", "id": 2, "tags": {"building": "yes", "layer": "-2"}, "geometry": ring},
+        {"type": "way", "id": 3, "tags": {"building": "roof", "layer": "1"}, "geometry": ring},   # a canopy: above ground
+    ]}
+    feats = so.parse_overpass(data)
+    assert len(feats) == 1 and feats[0].kind == so.KIND_BUILDING
