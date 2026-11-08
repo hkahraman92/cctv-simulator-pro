@@ -111,7 +111,8 @@ def plan_network(plan, *, camera_model: Optional[Dict] = None, ptz_model: Option
             arc = _arc_of(pts, cam.x_m, cam.y_m)
             run = (abs(arc - at) + cam.mast_height_m) * (1.0 + slack_frac)
             w = ptz_w if is_ptz else fixed_w
-            if run > max_copper_m or sw.ports_used + 1 > switch_ports or sw.poe_w + w > poe_budget_w:
+            # the first feed sits exactly at the copper limit by construction; arc rounding must not trip it
+            if run > max_copper_m + 1e-6 or sw.ports_used + 1 > switch_ports or sw.poe_w + w > poe_budget_w:
                 if sw.ports_used == 0:          # a single feed that cannot fit anywhere
                     sw.over_budget = True
                     warnings.append(f"Direk {cam.pole_id}: tek başına PoE bütçesini ya da kablo sınırını aşıyor.")

@@ -29,6 +29,16 @@ def test_every_pole_on_exactly_one_switch_within_the_rules(plan):
     assert len(plan_network(plan, max_copper_m=40).switches) >= len(net.switches)
 
 
+def test_rounding_at_the_copper_limit_is_not_an_over_budget_pole():
+    # far along a long fence the switch's arc no longer cancels exactly; the first feed is at the limit
+    t = TerrainData(np.zeros((400, 400)), cell_size_m=5.0)
+    long_plan = generate_perimeter_plan(t, [(100.0, 100.0), (1900.0, 100.0), (1900.0, 1900.0), (100.0, 1900.0)], CAM,
+                                        target_ppm=40, mast_height_m=6, is_closed_loop=True, spacing_m=21.37)
+    net = plan_network(long_plan, switch_ports=8, poe_budget_w=120, max_copper_m=90)
+    assert net.warnings == [] and not any(s.over_budget for s in net.switches)
+    assert net.longest_copper_m <= 90 + 1e-6
+
+
 def test_storage_and_power_are_the_stated_formulas(plan):
     net = plan_network(plan, bitrate_fixed_mbps=4.0, retention_days=30, raid_overhead=0.15)
     n = len(plan.placed_cameras)
