@@ -186,6 +186,36 @@ export interface AreaParams {
   interior: boolean;
   max_per_pole: number;
   weather?: string;
+  /** target = the polygon's streets, poles stand on streets (needs city.osm first) */
+  streets_only?: boolean;
+}
+
+export interface CityPlace { name: string; kind: string; x_m: number; y_m: number }
+
+export interface CityInfo {
+  streets: number;
+  residential: number;
+  pois: CityPlace[];
+  street_area_m2: Record<string, number>;
+  residential_area_m2: number;
+  attribution: string;
+  overlay: Picture;
+  legend: LegendRow[];
+}
+
+export interface CityAnalysis {
+  level: DoriLevel;
+  street_area_m2: number;
+  share_by_level: Record<DoriLevel, number>;
+  by_class: { label: string; area_m2: number; share: number }[];
+  face_share: number;
+  pois: (CityPlace & { best: DoriLevel | null; face: boolean })[];
+  privacy: { label: string; seen_m2: number; private_m2: number; share: number; flagged: boolean }[];
+  private_seen_m2: number;
+  notes: string[];
+  overlay: Picture;
+  legend: LegendRow[];
+  measured: boolean;
 }
 
 export interface PoleTrial {
@@ -362,6 +392,10 @@ export function terrainApi(rpc: RpcClient) {
       rpc.call<CoverageResult>("perimeter.coverage", p, { timeoutMs: 0, ...opts }),
     approach: (p: T & { depth_m: number; response_s?: number; speeds?: Record<string, number>; max_px?: number }, opts?: CallOptions) =>
       rpc.call<ApproachResult>("approach.analyse", p, { timeoutMs: 0, ...opts }),
+    cityOsm: (terrain_id: string, opts?: CallOptions) =>
+      rpc.call<CityInfo>("city.osm", { terrain_id, max_px: 1200 }, { timeoutMs: 0, ...opts }),
+    cityAnalyse: (p: T & { level: DoriLevel; flag_share?: number; max_px?: number }, opts?: CallOptions) =>
+      rpc.call<CityAnalysis>("city.analyse", p, { timeoutMs: 0, ...opts }),
     areaPlan: (p: T & AreaParams & { camera: CameraConfig }, opts?: CallOptions) =>
       rpc.call<AreaPlanResult>("area.plan", p, { timeoutMs: 0, ...opts }),
     optimize: (p: T & { level: string; position_steps: number; pan_search_deg?: number; n_focals?: number }, opts?: CallOptions) =>

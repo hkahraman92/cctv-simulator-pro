@@ -55,6 +55,16 @@ LAYER_BANDS = {
     "approach": ("YAKLAŞMA — sabit kameralara göre", (
         (3, 4, _rgba("danger", 110), "Görünmeden ilerlenebilir"),
         (2, 3, _rgba("dori-detect", 120), "Algılanır (≥ 25 px/m)"))),
+    "city": ("ŞEHİR — sokak, yüz, gizlilik", (
+        (4, 5, _rgba("warn", 150), "Konut binası görülüyor (KVKK)"),
+        (3, 4, _rgba("dori-identify", 190), "Yüz yakalanır (Teşhis, ≤ 15°)"),
+        (2, 3, _rgba("dori-observe", 165), "Sokak hedef seviyede görülüyor"),
+        (1, 2, _rgba("danger", 150), "Sokak görülmüyor"))),
+    "streets": ("SOKAKLAR (OpenStreetMap)", (
+        (4, 5, _rgba("info", 200), "Ana yol / cadde"),
+        (3, 4, _rgba("info", 165), "Cadde"),
+        (2, 3, _rgba("info", 130), "Sokak"),
+        (1, 2, _rgba("info", 95), "Yaya yolu / meydan"))),
     "fused": ("ALGILAMA: SABİT + PTZ", (
         (2, 3, _rgba("dori-identify", 140), "Sürekli — sabit kamera"),
         (1, 2, _rgba("warn", 125), "Aralıklı — yalnız PTZ devriyesi"))),
@@ -213,7 +223,7 @@ def zone_overlay(dori_grid: np.ndarray, size: Tuple[int, int], *, mode: str = "d
     """A ZONE_* (or any banded) grid as a smoothed RGBA image of ``size``."""
     g = np.flipud(dori_grid)
     ov = np.zeros(g.shape + (4,), dtype=np.uint8)
-    paint_bands(ov, g, LAYER_BANDS[mode][1], mask=True if mode in ("dori", "envelope", "fused", "overlap", "approach") else None)
+    paint_bands(ov, g, LAYER_BANDS[mode][1], mask=True if mode in ("dori", "envelope", "fused", "overlap", "approach", "city", "streets") else None)
     return smooth_overlay(ov, size)
 
 

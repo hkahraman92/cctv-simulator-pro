@@ -311,3 +311,27 @@ def test_osm_surface_blocks_the_view(monkeypatch):
     bare = ok("viewshed.single", use_obstacles=False, **args)
     walled = ok("viewshed.single", use_obstacles=True, **args)
     assert walled["visible_area_m2"] < bare["visible_area_m2"]
+
+
+def test_city_layer_street_plan_and_analysis_through_the_api(monkeypatch):
+    from cctv_simulator import city
+    from cctv_simulator.terrain_loader import TerrainData
+    from tests.test_city import osm
+
+    t = TerrainData(np.zeros((150, 150), np.float32), cell_size_m=2.0, is_measured=True, lat_center=39.92, lon_center=32.85)
+    entry = session.SESSION.add(dict(bare=t, label="mahalle"))
+    monkeypatch.setattr(city, "fetch_city", lambda terrain: city.build_layer(terrain, osm(terrain)))
+    bad, _ = call("area.plan", terrain_id=entry.id, camera=CAM, fence=[[100, 100], [200, 100], [200, 200]], streets_only=True)
+    assert "sokak" in bad["error"]["message"].lower()
+    c = ok("city.osm", terrain_id=entry.id)
+    assert c["streets"] == 2 and c["residential"] == 1 and {p["kind"] for p in c["pois"]} == {"Okul", "Otobüs durağı"}
+    poly = [[100, 100], [200, 100], [200, 200], [100, 200]]
+    a = ok("area.plan", terrain_id=entry.id, camera=CAM, fence=poly, level="observe", goal_frac=0.9, mast_m=4,
+           streets_only=True)
+    assert a["met"]
+    assert all(abs(p["y_m"] - 150) < 0.06 or abs(p["x_m"] - 150) < 0.06 for p in a["plan"]["poles"])
+    cov = ok("perimeter.coverage", terrain_id=entry.id, max_px=300)
+    assert cov["band_share"]["observe"] == pytest.approx(a["engine_frac"])       # scored on the streets only
+    r = ok("city.analyse", terrain_id=entry.id, level="observe", max_px=300)
+    assert r["share_by_level"]["observe"] >= 0.9 - 1e-9 and r["legend"] and len(r["privacy"]) == a["plan"]["camera_count"]
+    assert {b["label"] for b in r["by_class"]} <= set(city.CLASS_LABEL.values())

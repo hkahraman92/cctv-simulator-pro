@@ -52,8 +52,8 @@ def test_area_plan_meets_the_goal_by_the_authoritative_engine():
     assert per_pole.max() <= 2
     # the reported share is exactly what the multi-camera engine says
     roi = polygon_mask(t, SQUARE)
-    _, a = band_area(t, plan, CAM, roi, ZONE_OBSERVE)
-    assert rep.engine_frac == pytest.approx(a / (roi.sum() * 4.0))
+    mv, _ = band_area(t, plan, CAM, roi, ZONE_DETECT)            # the coverage run: full Algılama reach
+    assert rep.engine_frac == pytest.approx(((mv.dori_grid >= ZONE_OBSERVE) & roi).sum() / roi.sum())
     assert plan.coverage_percentage == pytest.approx(rep.engine_frac * 100, abs=0.06)
 
 

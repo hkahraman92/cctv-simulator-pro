@@ -19,7 +19,8 @@ which lenses, which headings put >= 95 % of this polygon at Recognition".
    ``max_per_pole`` cameras per pole.
 4. Redundant cameras are pruned (latest first) while the goal still holds.
 5. The result goes through the AUTHORITATIVE multi-camera engine
-   (``focal_optimizer.band_area``). If the engine scores below the goal the
+   (``focal_optimizer.band_area``, every pole out to its Algılama reach --
+   the same run coverage reports). If the engine scores below the goal the
    greedy continues with a raised internal goal (a few rounds); the reported
    fraction is always the engine's.
 
@@ -184,24 +185,40 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
               level: int = ZONE_RECOG, goal_frac: float = 0.95, mast_height_m: float = 6.0,
               interior: bool = True, max_per_pole: int = 2, max_cameras: int = 120, max_sites: int = 80,
               spacing_m: Optional[float] = None, n_focals: int = 5, visibility_km: float = 40.0,
-              weather: str = "", verify: bool = True,
+              weather: str = "", verify: bool = True, roi_mask: Optional[np.ndarray] = None,
+              sites_fn: Optional[Callable[[float], List[Tuple[float, float]]]] = None,
               progress: Optional[Callable[[int, int], None]] = None) -> AreaPlanReport:
-    """Fewest cameras (and poles) putting ``goal_frac`` of the polygon at >= ``level``."""
+    """Fewest cameras (and poles) putting ``goal_frac`` of the polygon at >= ``level``.
+
+    ``roi_mask`` narrows the target to part of the polygon (e.g. its streets);
+    ``sites_fn(step_m)`` replaces the boundary / grid pole sites (e.g. points
+    along the streets, where lamp posts stand)."""
     from . import surface_obstacles as obs
 
     ring = _ring(polygon)
     if len(ring) < 4:
         raise ValueError("Alan için en az üç köşe gerekir.")
     roi = polygon_mask(terrain, ring)
+    if roi_mask is not None:
+        roi &= roi_mask
     n_roi = int(roi.sum())
     if n_roi == 0:
-        raise ValueError("Çizilen alan arazi ızgarasının hiçbir hücresini içermiyor.")
+        raise ValueError("Çizilen alan arazi ızgarasının hiçbir hücresini içermiyor."
+                         if roi_mask is None else "Çizilen alanda hedef hücre (ör. sokak) yok.")
     cell_area = terrain.cell_size_m ** 2
     ppm = LEVEL_PPM[level]
     tele = float(max(camera.focal_max_mm, camera.focal_min_mm))
     reach_tele = _ground_reach(camera, tele, ppm, mast_height_m)
-    sites, step = candidate_sites(ring, spacing_m or max(2.0 * terrain.cell_size_m, 0.5 * reach_tele),
-                                  interior=interior, max_sites=max_sites)
+    # open ground: half the tele reach; street poles: lamp-post density (buildings cut the sightlines)
+    step0 = spacing_m or max(2.0 * terrain.cell_size_m, (0.25 if sites_fn is not None else 0.5) * reach_tele)
+    if sites_fn is None:
+        sites, step = candidate_sites(ring, step0, interior=interior, max_sites=max_sites)
+    else:
+        step = step0
+        sites = sites_fn(step)
+        while len(sites) > max_sites:
+            step *= 1.15
+            sites = sites_fn(step)
     xs, ys = [p[0] for p in ring], [p[1] for p in ring]
     cap = _mount_range(camera, None)
 
@@ -304,7 +321,12 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
             engine_frac = frac()
             break
         from .focal_optimizer import band_area
-        _, a = band_area(terrain, plan, camera, roi, level, visibility_km=visibility_km, weather=weather)
+        from .viewshed_3d import ZONE_DETECT
+        # the same engine run (every pole out to its Algılama reach) as coverage, approach and
+        # city analysis: a cut at the target level's reach samples rays differently and gave
+        # the same plan a second, slightly different share
+        mv, _ = band_area(terrain, plan, camera, roi, ZONE_DETECT, visibility_km=visibility_km, weather=weather)
+        a = float(((mv.dori_grid >= level) & roi).sum()) * cell_area
         engine_frac = a / (n_roi * cell_area)
         if engine_frac >= goal_frac or frac() < target - 1e-9 or target >= 1.0:
             break                                  # met, or the greedy has nothing more to give
@@ -315,12 +337,14 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
     if not met:
         why = (f"kamera tavanına ({max_cameras}) ulaşıldı" if len(chosen) >= max_cameras
                else "kalan hücreleri hiçbir aday görmüyor")
-        notes.append(f"Hedef %{goal_frac * 100:.0f} tutmadı ({why}); en iyi %{engine_frac * 100:.1f}. "
+        best = f"{engine_frac * 100:.1f}".replace(".", ",")
+        notes.append(f"Hedef %{goal_frac * 100:.0f} tutmadı ({why}); en iyi %{best}. "
                      f"Daha yüksek direk, daha uzun odak ya da alan içine direk deneyin.")
     if skipped:
         notes.append(f"{skipped} aday direk yeri bina / ağaç içinde kaldığı için atlandı.")
     notes.append(f"Aday direk yerleri {step:.0f} m aralıkla: {len(site_xy)} yer"
-                 + (" (sınır + alan içi)." if interior else " (yalnız sınır)."))
+                 + (" (sokak üzerinde)." if sites_fn is not None
+                    else " (sınır + alan içi)." if interior else " (yalnız sınır)."))
     return AreaPlanReport(plan=plan, level=level, goal_frac=goal_frac, area_m2=n_roi * cell_area,
                           estimate_frac=frac(), engine_frac=engine_frac, met=met,
                           sites_considered=len(site_xy), sites_skipped_obstacle=skipped, steps=steps, notes=notes)

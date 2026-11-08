@@ -447,7 +447,10 @@ def _plan_roi(t, fence, kw: Dict[str, Any], band_m: float) -> np.ndarray:
     """What a plan protects: the drawn polygon for an area plan, else the fence band."""
     if kw.get("line_mode") == "area":
         from ..area_planner import polygon_mask
-        return polygon_mask(t, fence)
+        roi = polygon_mask(t, fence)
+        if kw.get("roi_mask") is not None:          # street-only area plan: its streets
+            roi &= kw["roi_mask"]
+        return roi
     from ..focal_optimizer import fence_roi
     return fence_roi(t, fence, kw["is_closed_loop"], band_m)
 
@@ -612,8 +615,19 @@ def area_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     weather = str(params.get("weather", "")) if params.get("weather") in WEATHER_PRESETS else ""
     vis = WEATHER_PRESETS.get(weather, 40.0)
     mast = _num(params, "mast_m", 6.0, lo=0.5, hi=200)
+    roi_mask, sites_fn = None, None
+    if params.get("streets_only"):
+        if entry.city is None:
+            raise RpcError(APP_ERROR, "Önce sokakları indirin (Şehir → OpenStreetMap).")
+        from ..city import street_sites, street_target
+        roi_mask = street_target(entry.city, t)
+        city = entry.city
+
+        def sites_fn(step):
+            return street_sites(city, poly, step)
     try:
         res = plan_area(t, poly, cam, level=level, goal_frac=_num(params, "goal_frac", 0.95, lo=0.05, hi=1.0),
+                        roi_mask=roi_mask, sites_fn=sites_fn,
                         mast_height_m=mast, interior=bool(params.get("interior", True)),
                         max_per_pole=int(_num(params, "max_per_pole", 2, lo=1, hi=6)),
                         max_cameras=int(_num(params, "max_cameras", 120, lo=1, hi=500)),
@@ -622,7 +636,8 @@ def area_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     except ValueError as exc:
         raise RpcError(APP_ERROR, str(exc)) from None
     kw = {"target_ppm": res.plan.target_ppm, "mast_height_m": mast, "is_closed_loop": True,
-          "visibility_km": vis, "weather": weather, "line_mode": "area", "watch_side": "right", "level": level}
+          "visibility_km": vis, "weather": weather, "line_mode": "area", "watch_side": "right", "level": level,
+          "roi_mask": roi_mask}
     entry.set_plan((res.plan, cam, kw, poly))
     names = {v: k for k, v in levels.items()}
     return {"met": res.met, "level": names[res.level], "goal_frac": res.goal_frac, "area_m2": res.area_m2,
@@ -630,6 +645,84 @@ def area_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
             "sites_considered": res.sites_considered, "sites_skipped_obstacle": res.sites_skipped_obstacle,
             "curve": [dataclasses.asdict(st) for st in res.steps], "notes": res.notes,
             "plan": _plan_json(res.plan)}
+
+
+def city_osm(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """Streets, residential buildings and priority places from OpenStreetMap for this terrain."""
+    from .. import map_render
+    from ..city import CLASS_LABEL, fetch_city
+
+    entry = _s.SESSION.get(params.get("terrain_id"))
+    t = entry.bare
+    if t.lat_center is None:
+        raise RpcError(APP_ERROR, "Sokak verisi yalnız konumu bilinen bir arazide (indirilen / kayıtlı bölge) alınabilir.")
+    ctx.progress(0, 2, "OpenStreetMap sorgulanıyor")
+    try:
+        layer = fetch_city(t)
+    except (RuntimeError, ValueError) as exc:
+        raise RpcError(APP_ERROR, f"Sokak / bina verisi indirilemedi: {exc}") from None
+    ctx.progress(1, 2, "Izgaraya işleniyor")
+    entry.city = layer
+    cell = t.cell_size_m ** 2
+    max_px = int(_num(params, "max_px", _DISPLAY_PX, lo=200, hi=4096))
+    return {
+        "streets": layer.counts.get("streets", 0), "residential": layer.counts.get("residential", 0),
+        "pois": [{"name": p.name, "kind": p.kind, "x_m": p.x_m, "y_m": p.y_m} for p in layer.pois],
+        "street_area_m2": {CLASS_LABEL[c]: float((layer.street_class == c).sum() * cell) for c in CLASS_LABEL},
+        "residential_area_m2": float(layer.residential.sum() * cell), "attribution": layer.attribution,
+        "overlay": _image(map_render.zone_overlay(layer.street_class, _overlay_size(t, max_px), mode="streets"),
+                          max_px=max_px),
+        "legend": map_render.legend("streets")[1],
+    }
+
+
+def city_analyse(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """The plan in a city: street coverage by class, face-capable streets, priority places, privacy per camera."""
+    from .. import map_render
+    from ..city import CLASS_LABEL, analyse_city
+    from ..focal_optimizer import band_area
+    from ..viewshed_3d import ZONE_DETECT
+
+    entry, t = _terrain_of(params)
+    if entry.city is None:
+        raise RpcError(APP_ERROR, "Önce sokakları indirin (Şehir → OpenStreetMap).")
+    if "plan" not in entry.results:
+        raise RpcError(APP_ERROR, "Önce bir çit / alan planı oluşturun.")
+    plan, cam, kw, fence = entry.results["plan"]
+    if not plan.placed_cameras:
+        raise RpcError(APP_ERROR, "Planda sabit kamera yok.")
+    levels = _levels_table()
+    level = levels.get(params.get("level", "observe"))
+    if level is None:
+        raise RpcError(INVALID_PARAMS, "'level' detect, observe, recognize ya da identify olmalı.")
+    ctx.progress(0, 2, f"{len(plan.placed_cameras)} kamera (otoriter motor)")
+    mv, _ = band_area(t, plan, cam, None, ZONE_DETECT, visibility_km=kw["visibility_km"], weather=kw["weather"])
+    ctx.progress(1, 2, "Sokak, yüz ve gizlilik")
+    roi = None
+    if params.get("inside_plan", True) and kw.get("line_mode") == "area":
+        from ..area_planner import polygon_mask
+        roi = polygon_mask(t, fence)
+    labels = [f"Direk {c.pole_id} · {c.pan_deg:.0f}°" for c in plan.placed_cameras]
+    res = analyse_city(t, entry.city, mv, level=level, roi=roi, labels=labels,
+                       flag_share=_num(params, "flag_share", 0.10, lo=0.0, hi=1.0))
+    if t.obstacle_grid is None:
+        res.notes.insert(0, "Bina / ağaç yüzey modeli yüklü değil: kameralar binaların içinden görüyor sayılır, "
+                            "sokak kapsaması olduğundan yüksek çıkar. Önce 'Bina & Ağaç İndir (OSM)'.")
+    names = {v: k for k, v in levels.items()}
+    max_px = int(_num(params, "max_px", _DISPLAY_PX, lo=200, hi=4096))
+    return {
+        "level": names[level], "street_area_m2": res.street_area_m2,
+        "share_by_level": {names[k]: v for k, v in res.share_by_level.items()},
+        "by_class": [{"label": CLASS_LABEL[c], "area_m2": a, "share": s} for c, (a, s) in res.share_by_class.items()],
+        "face_share": res.face_share,
+        "pois": [{"name": p.name, "kind": p.kind, "x_m": p.x_m, "y_m": p.y_m,
+                  "best": names.get(p.best_zone), "face": p.face} for p in res.pois],
+        "privacy": [{"label": c.label, "seen_m2": c.seen_m2, "private_m2": c.private_m2, "share": c.share,
+                     "flagged": c.flagged} for c in res.privacy],
+        "private_seen_m2": res.private_seen_m2, "notes": res.notes,
+        "overlay": _image(map_render.zone_overlay(res.layer, _overlay_size(t, max_px), mode="city"), max_px=max_px),
+        "legend": map_render.legend("city")[1], "measured": bool(t.is_measured),
+    }
 
 
 def focal_sweep(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
@@ -679,5 +772,7 @@ METHODS = {
     "perimeter.minimize_poles": perimeter_minimize_poles,
     "perimeter.optimize": perimeter_optimize,
     "area.plan": area_plan,
+    "city.osm": city_osm,
+    "city.analyse": city_analyse,
     "focal.sweep": focal_sweep,
 }

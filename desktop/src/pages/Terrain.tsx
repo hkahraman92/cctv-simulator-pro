@@ -8,7 +8,7 @@ import { DEFAULT_CAMERA, type CameraConfig, type ModelSummary } from "../core/ap
 import { useCoalesced, useCore } from "../core/CoreProvider";
 import { usePageActive } from "../core/pageActive";
 import type {
-  AreaPlanResult, CoverageResult, DoriLevel, FocalSweep, LegendRow, NightCoverage, PlanResult, PoleSearch, RegionInfo, Scenario,
+  AreaPlanResult, CityInfo, CoverageResult, DoriLevel, FocalSweep, LegendRow, NightCoverage, PlanResult, PoleSearch, RegionInfo, Scenario,
   SingleViewshed, TerrainCatalog, TerrainInfo,
 } from "../core/terrainApi";
 import { useJob } from "../core/useJob";
@@ -21,6 +21,7 @@ import { MixedPanel, PtzPanel, type Layer } from "../components/PtzPanels";
 import { ComparePanel, EMPTY_PRICES, NetworkPanel, type NetworkResult, type PriceBook } from "../components/PlanningPanels";
 import { NightPanel, ScenarioPanel } from "../components/DeliveryPanels";
 import { ApproachPanel, type ApproachMarks } from "../components/ApproachPanel";
+import { CityPanel } from "../components/CityPanel";
 import { Button, Panel, Slider, Tile, fmt } from "../components/ui";
 
 const ha = (m2: number) => `${fmt(m2 / 1e4, 2)} ha`;
@@ -65,8 +66,9 @@ export default function Terrain() {
   const [plan, setPlan] = useState<{ closed: boolean; line_mode: LineMode; watch_side: "left" | "right"; target_ppm: number; mast_m: number }>(
     { closed: true, line_mode: "facility", watch_side: "right", target_ppm: 40, mast_m: 6 });
   // area goal: the drawn polygon itself is what must be seen (car park, yard, square)
-  const [area, setArea] = useState<{ level: DoriLevel; goal: number; interior: boolean; perPole: number }>(
-    { level: "recognize", goal: 95, interior: true, perPole: 2 });
+  const [area, setArea] = useState<{ level: DoriLevel; goal: number; interior: boolean; perPole: number; streetsOnly: boolean }>(
+    { level: "recognize", goal: 95, interior: true, perPole: 2, streetsOnly: false });
+  const [city, setCity] = useState<CityInfo | null>(null);   // OSM streets / homes / places of this terrain
   const [areaRes, setAreaRes] = useState<AreaPlanResult | null>(null);
   const isArea = plan.line_mode === "area";
   const [planRes, setPlanRes] = useState<PlanResult | null>(null);
@@ -100,6 +102,7 @@ export default function Terrain() {
     setInfo(t);
     setMount((m) => ({ ...m, x: t.width_m / 2, y: t.height_m / 2 }));
     setFence([]); setPlanRes(null); setCoverage(null); setNetwork(null); setNight(null); setPoleRes(null); setSweep(null); setAreaRes(null);
+    setCity(null);
     const notes: string[] = [];
     if (!t.is_measured) notes.push("Bu arazi ölçüm değil (prosedürel). Görüş alanı sonuçları bağlayıcı değildir.");
     if (t.save_error) notes.push(`Bölge kaydedilemedi: ${t.save_error}`);
@@ -150,7 +153,8 @@ export default function Terrain() {
   const runArea = async () => {
     if (!info || fence.length < 3) return;
     const r = await job.run("Alan kapsama planı", (o) => T.areaPlan({ terrain_id: info.terrain_id, use_obstacles: useObstacles, camera,
-      fence, level: area.level, goal_frac: area.goal / 100, mast_m: plan.mast_m, interior: area.interior, max_per_pole: area.perPole, weather }, o));
+      fence, level: area.level, goal_frac: area.goal / 100, mast_m: plan.mast_m, interior: area.interior, max_per_pole: area.perPole, weather,
+      streets_only: area.streetsOnly && !!city }, o));
     if (r) { replacePlan(r.plan); setAreaRes(r); setPoleRes(null); setOptLevel(r.level); }
   };
   const runCoverage = async () => {
@@ -186,7 +190,7 @@ export default function Terrain() {
         camera_name: camera.name, camera_model: camera.model_name, planner_mode: tab === "perimeter" ? "perimeter" : "single",
         fence_points: fence, fence_closed: plan.closed, line_mode: plan.line_mode, watch_side: plan.watch_side,
         target_ppm: plan.target_ppm, perimeter_mast_m: plan.mast_m,
-        area_goal: { level: area.level, goal_pct: area.goal, interior: area.interior, per_pole: area.perPole },
+        area_goal: { level: area.level, goal_pct: area.goal, interior: area.interior, per_pole: area.perPole, streets_only: area.streetsOnly },
         mixed_ptz: { camera: mixedPtz.camera?.model_name ?? "", every_n: mixedPtz.everyN, patrol_span_deg: mixedPtz.span },
         prices, scenarios,
       },
@@ -225,6 +229,7 @@ export default function Terrain() {
         goal: typeof ag.goal_pct === "number" ? ag.goal_pct : a.goal,
         interior: typeof ag.interior === "boolean" ? ag.interior : a.interior,
         perPole: typeof ag.per_pole === "number" ? ag.per_pole : a.perPole,
+        streetsOnly: typeof ag.streets_only === "boolean" ? ag.streets_only : a.streetsOnly,
       }));
       if (x.prices && typeof x.prices === "object") setPrices({ ...EMPTY_PRICES, ...(x.prices as Partial<PriceBook>) });
       setScenarios(Array.isArray(x.scenarios) ? (x.scenarios as Scenario[]) : []);
@@ -445,13 +450,16 @@ export default function Terrain() {
                   <Slider label="Alanın en az" unit="%" value={area.goal} min={50} max={99} step={1} onChange={(v) => setArea((a) => ({ ...a, goal: v }))} />
                   <Slider label="Direk" unit="m" value={plan.mast_m} min={2} max={30} step={0.5} onChange={(v) => setPlan((p) => ({ ...p, mast_m: v }))} />
                   <div className="grid grid-cols-2 gap-2">
-                    <label className="flex items-center gap-2 text-[12px]"><input type="checkbox" checked={area.interior} onChange={(e) => setArea((a) => ({ ...a, interior: e.target.checked }))} /> Alan içine de direk</label>
+                    <label className="flex items-center gap-2 text-[12px]"><input type="checkbox" checked={area.interior} disabled={area.streetsOnly && !!city} onChange={(e) => setArea((a) => ({ ...a, interior: e.target.checked }))} /> Alan içine de direk</label>
                     <label><span className="label">Direk başına kamera</span>
                       <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-1 text-[12px]" value={area.perPole}
                         onChange={(e) => setArea((a) => ({ ...a, perPole: Number(e.target.value) }))}>
                         {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
                       </select></label>
                   </div>
+                  <label className="flex items-center gap-2 text-[12px]" title={city ? "" : "Önce Şehir güvenliği panelinden sokakları indirin"}>
+                    <input type="checkbox" checked={area.streetsOnly && !!city} disabled={!city} onChange={(e) => setArea((a) => ({ ...a, streetsOnly: e.target.checked }))} />
+                    Yalnız sokaklar (hedef sokaklar, direkler sokakta)</label>
                   <Button primary className="w-full" disabled={job.running || fence.length < 3} onClick={runArea}><MapPin size={14} /> Alanı Kapla</Button>
                 </div>
               ) : (
@@ -485,7 +493,7 @@ export default function Terrain() {
                 {planRes.line_mode === "area" && areaRes && (
                   <div className="mt-2 text-[12px]">
                     <div className={areaRes.met ? "text-primary" : "text-warn"}>
-                      {areaRes.met ? "●" : "▲"} Otoriter motor: alanın {pct(areaRes.engine_frac)}'i hedef seviyede (hedef {pct(areaRes.goal_frac)})
+                      {areaRes.met ? "●" : "▲"} Otoriter motor: alanda hedef seviye payı {pct(areaRes.engine_frac)} (hedef {pct(areaRes.goal_frac)})
                     </div>
                     {areaRes.notes.map((n) => <div key={n} className="mt-1 text-[11px] text-text-3">◆ {n}</div>)}
                   </div>
@@ -549,6 +557,8 @@ export default function Terrain() {
               <ApproachPanel resetKey={planVer} T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles}
                 onLayer={setMixedLayer} onMarks={setApproachMarks} />
             )}
+            <CityPanel resetKey={planVer} T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles}
+              hasLatLon={info.lat_center !== null} hasPlan={!!planRes} city={city} onCity={setCity} onLayer={setMixedLayer} />
             {(planRes || scenarios.length > 0) && (
               <ScenarioPanel T={T} terrainId={info.terrain_id} scenarios={scenarios} onChange={setScenarios} canSnapshot={!!planRes} />
             )}

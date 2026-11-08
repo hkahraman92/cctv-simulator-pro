@@ -40,6 +40,7 @@ cctv_dual_view_simulator.py          giriş noktası
   area_planner.py                    alan hedefi: poligonda DORI seviyesini tutan en az kamera / direk
   approach.py                        gizli yaklaşma: görünmeden ne kadar yaklaşılır, uyarı süresi
   anpr.py                            plaka okuma: şerit başına okuma bölgesi, kare / hız, bulanıklık, açı
+  city.py                            şehir: OSM sokak / konut / yer; sokak kapsaması, yüz açısı, KVKK
   raster_smooth.py                   sınıf bindirmelerini yalnız görüntüde yumuşatır, FOV kamasına kırpar
   compliance.py                      Gemini/Ollama + kural tabanlı şartname analizi
   compliance_optics.py               şartname DORI/menzil isteri → optik motorla doğrula
@@ -73,7 +74,7 @@ desktop/                             yeni arayüz: Tauri 2 (Rust) + React/TS/Tai
 
 **Yeni masaüstü kabuğu.** `desktop/` Python çekirdeği (`python -m
 cctv_simulator.service`, yayında `cctv-core.exe`) alt süreç olarak başlatır,
-satır başına bir JSON-RPC nesnesi taşır (API v1, 70 yöntem; liste ve
+satır başına bir JSON-RPC nesnesi taşır (API v1, 72 yöntem; liste ve
 sözleşme `docs/masaustu-mimari.md`). Ekran fizik türetmez; her sayı bir API
 yönteminden gelir. Yeni özellik için: önce `service/*_methods.py`'ye yöntem +
 `tests/test_service_*.py`'ye motorla birebir eşlik testi, sonra
@@ -541,6 +542,10 @@ sayısıyla ağırlıklı, DORI metrikleri yalnız parse edilenler üzerinden). 
   bölge / hız × fps, görüş hattı boyunca hareket bulanıklık vermez ve en uzun
   pozlamada bulanıklık tam sınırda, yan direkte okuma açı sınırından sonra
   başlar, gece IR menzili bölgeyi keser, optimizasyon geçen nişanı bulur.
+- `test_city.py` — sokak sınıfı rasteri (kavşakta ana yol kazanır), konut
+  ≠ ofis, yerler, ortak Overpass istemcisi, sokak direk yerleri, yüz: Teşhis
+  var ama 10 m direkte yüz yok, KVKK konuta bakan kamerayı işaretler, çatı
+  altı sokak hedef dışı, yalnız-sokak alan planı direkleri sokağa dizer.
 - `test_pole_optimizer.py` — `spacing_m` geçersizleştirmesi (None bit-aynı),
   ulaşılabilir hedefte planlayıcıdan az direk, planlayıcı üstü hedefte
   sıklaşma ve en seyrek geçen deneme, imkânsız hedefte en iyi çaba + not.
@@ -742,6 +747,30 @@ daha az örtülen nişan). Yan şerit aracının örtmesi modellenmez. Ölçüld
 (4 MP 8–32 mm, 6 m direk banket 1,5 m, 2 şerit, 90 km/sa, 1/1000): 9,3 mm,
 her iki şerit ~9 kare, bulanıklık ≤ 2 px; 1,6 sn. Masaüstü: Optik
 Laboratuvarı → "Plaka okuma (ANPR)".
+
+**Şehir güvenliği (`city.py`).** Şehirde ölçüt alan değil sokak. `city.osm`
+Overpass'tan (`surface_obstacles.fetch_overpass`) yolları (sınıf: ana yol /
+cadde / sokak / yaya-meydan, sınıfın tipik genişliğiyle çizilir; tek yönlü
+ana yol = bölünmüş yolun yarısı, en az 6 m), konut binalarını (residential,
+apartments, house …; ofis değil) ve öncelikli yerleri (okul, hastane, pazar,
+durak, metro girişi, meydan) alır. Tünel / iç mekân / kapalı / yeraltı
+(`layer` < 0) yollar atlanır — Kızılay'da 87 metro geçidi "sokak" sayılıyordu.
+Hedef sokak = `street_target`: yüzey modeli yüklüyse çatı altındaki hücreler
+dışarıda. `city.analyse` planın sabit kameralarını otoriter motordan geçirir
+(Algılama erişimi, kapsama ile aynı koşu): sınıf başına sokak payı, yüz
+yakalanan sokak (`face_mask`: bir kamera Teşhis'e ulaşıyor VE yüze ≤ 15°
+yukarıdan bakıyor — yüksek direk Teşhis verse de yalnız kafa tepesi görür),
+yer başına 15 m içindeki en iyi seviye, kamera başına konut payı (≥ %10 →
+KVKK maskesi önerisi). Yüzey modeli yoksa analiz bunu yazar (görüş
+binalardan geçer). `area.plan(streets_only=True)`: hedef = poligonun
+sokakları (`roi_mask`), aday direkler sokak üstünde (`street_sites`, aralık
+tele erişimin ¼'ü — binalar görüşü keser); kapsama / optimizasyon / gece
+aynı sokak maskesini puanlar (`kw["roi_mask"]`). Alan planı doğrulaması
+artık kapsamayla aynı motor koşusu (her direk Algılama erişimine kadar):
+seviyenin kendi erişiminde kesmek ışınları farklı örnekleyip aynı plana
+ikinci bir pay veriyordu (%95,4 / %95,8). Ölçüldü (Kızılay 600 m, 3 m hücre,
+OSM bina, 1,13 ha sokak, Gözlem %90, 6 m direk): 27 kamera / 18 direk,
+motor %91,5, yüz yakalanan sokak %2; 15 sn.
 
 **Sürekli PTZ taraması (`ptz_schedule.py`).** `SectorPatrol` (a→b→a, hız,
 uçlarda bekleme) ve `Rotation360`; `evaluate_sweep(...)` → `SweepResult`.

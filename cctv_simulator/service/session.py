@@ -23,6 +23,7 @@ class TerrainEntry:
     photo: Any = None                  # PIL image (north-up) or None
     surface: Any = None                # TerrainData with obstacles, or None
     obstacle_layer: Any = None
+    city: Any = None                   # city.CityLayer: streets / residential / places (OSM)
     label: str = ""
     source: str = ""                   # procedural | region | geotiff | online
     region_id: str = ""
