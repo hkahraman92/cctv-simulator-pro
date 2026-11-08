@@ -240,3 +240,6 @@ METHODS.update(_LIBRARY_METHODS)
 from .planning_methods import METHODS as _PLANNING_METHODS  # noqa: E402
 
 METHODS.update(_PLANNING_METHODS)
+from .delivery_methods import METHODS as _DELIVERY_METHODS  # noqa: E402
+
+METHODS.update(_DELIVERY_METHODS)

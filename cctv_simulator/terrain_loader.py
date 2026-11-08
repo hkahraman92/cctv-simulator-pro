@@ -40,6 +40,10 @@ class TerrainData:
     obstacle_grid: Optional[np.ndarray] = None    # m above ground (z_grid - ground)
     obstacle_kind: Optional[np.ndarray] = None    # 0 none, 1 building, 2 vegetation
     obstacle_note: str = ""
+    # Real-world anchor of a local GeoTIFF DEM: {"epsg", "x0", "y0" (projected
+    # SOUTH-WEST corner), "sx", "sy", "resampled"}. The local frame stays
+    # origin 0,0 (as downloaded DEMs); this keeps where it actually is.
+    georef: Optional[dict] = None
 
     def __post_init__(self):
         # NaN in the grid (DEM nodata, void) propagates silently through bilinear
@@ -287,6 +291,20 @@ def load_geotiff_or_dem(filepath: str | Path) -> TerrainData:
     terr = _terrain_from_rasterio(path)
     if terr is not None:
         return terr
+
+    # BUGFIX: without rasterio (the packaged core has none) a georeferenced
+    # DEM fell through to the greyscale-heightmap path below: georeference
+    # dropped, cell size invented, "not measured". Read its tags instead.
+    if path.suffix.lower() in (".tif", ".tiff"):
+        from .geotiff_reader import UnsupportedCRS, terrain_from_geotiff
+        try:
+            return terrain_from_geotiff(path)
+        except UnsupportedCRS:
+            raise
+        except ValueError as exc:
+            if "GeoKey" not in str(exc) and "bağlantı noktası" not in str(exc):
+                raise                                   # a real DEM we failed to read: say so
+            # no georeference at all: a plain greyscale heightmap, handled below
 
     try:
         from PIL import Image

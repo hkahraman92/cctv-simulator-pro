@@ -109,8 +109,8 @@ def report_open(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     import os
 
     p = Path(_require(params, "path", str))
-    if p.suffix.lower() not in (".pdf", ".csv", ".xlsx", ".md", ".jsonl"):
-        raise RpcError(INVALID_PARAMS, "Yalnız rapor dosyaları açılabilir (pdf, csv, xlsx, md, jsonl).")
+    if p.suffix.lower() not in (".pdf", ".csv", ".xlsx", ".md", ".jsonl", ".html", ".zip", ".kml", ".kmz", ".dxf"):
+        raise RpcError(INVALID_PARAMS, "Yalnız rapor dosyaları açılabilir (pdf, csv, xlsx, md, jsonl, html, zip, kml, kmz, dxf).")
     if not p.is_file():
         raise RpcError(APP_ERROR, f"Dosya bulunamadı: {p}")
     if not hasattr(os, "startfile"):

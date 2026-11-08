@@ -6,11 +6,13 @@ numpy>=1.24
 openpyxl>=3.1
 reportlab>=4.0
 pypdf>=4.0        # PDF şartname metin çıkarımı (kural tabanlı analiz). Yoksa yalnız Gemini yolu.
+tifffile>=2024.1    # yerel DEM GeoTIFF: döşemeli / sıkıştırılmış (COG). Yoksa yalnız şeritli + sıkıştırmasız.
+imagecodecs>=2024.1 # tifffile için deflate/LZW/zstd/LERC + kayan nokta öngörücü.
 python-docx>=1.1  # Taslak teknik şartname (.docx) üretimi (spec_writer.py). Yoksa yalnız o düğme devre dışı.
 
 # Optional: real GeoTIFF / DEM file loading in terrain_loader.load_geotiff_or_dem().
-# Without it the app falls back to reading the file as a greyscale heightmap,
-# whose values are relative, not metres. Online DEM download does not need it.
+# Without it a georeferenced GeoTIFF is read by geotiff_reader (tags + tifffile);
+# only a TIFF with no georeference falls back to a greyscale heightmap.
 # rasterio>=1.3
 
 # Build only

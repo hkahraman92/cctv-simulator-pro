@@ -454,7 +454,7 @@ def perimeter_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     if params.get("spacing_m") is not None:
         kw["spacing_m"] = _num(params, "spacing_m", lo=2, hi=5000)
     plan = generate_perimeter_plan(t, fence, cam, **kw)
-    entry.results["plan"] = (plan, cam, kw, fence)
+    entry.set_plan((plan, cam, kw, fence))
     return _plan_json(plan)
 
 
@@ -482,6 +482,7 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     band_share = {name: (float(((mv.dori_grid >= z) & roi).sum() * cell) / roi_area if roi_area else 0.0)
                   for name, z in (("identify", ZONE_IDENT), ("recognize", ZONE_RECOG),
                                   ("observe", ZONE_OBSERVE), ("detect", ZONE_DETECT))}
+    entry.results["band_share"] = (band, band_share)
     max_px = int(_num(params, "max_px", _DISPLAY_PX, lo=200, hi=4096))
     layer = params.get("layer", "dori")
     if layer not in ("dori", "overlap"):
@@ -526,7 +527,7 @@ def perimeter_minimize_poles(params: Dict[str, Any], ctx: Context) -> Dict[str, 
             from ..focal_optimizer import apply_layout
             plan = apply_layout(plan, res.best_layout, cam, kw["target_ppm"], terrain=t,
                                 visibility_km=kw["visibility_km"], weather=kw["weather"])
-        entry.results["plan"] = (plan, cam, kw, fence)
+        entry.set_plan((plan, cam, kw, fence))
     return {
         "met": res.met, "goal_frac": res.goal_frac, "roi_area_m2": res.roi_area_m2, "notes": res.notes,
         "base": dataclasses.asdict(res.base),
@@ -566,7 +567,7 @@ def perimeter_optimize(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     _, a0 = band_area(t, plan, cam, roi, level, visibility_km=kw["visibility_km"], weather=kw["weather"])
     _, a1 = band_area(t, new_plan, cam, roi, level, visibility_km=kw["visibility_km"], weather=kw["weather"])
     if params.get("apply", True):
-        entry.results["plan"] = (new_plan, cam, kw, fence)
+        entry.set_plan((new_plan, cam, kw, fence))
     moved = [c for c in res.choices if c.moved_m > 0.05]
     return {"before_m2": a0, "after_m2": a1, "band_area_m2": float(roi.sum()) * t.cell_size_m ** 2,
             "estimate_before_m2": res.before_m2[level], "estimate_after_m2": res.after_m2[level],

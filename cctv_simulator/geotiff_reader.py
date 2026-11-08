@@ -1,8 +1,10 @@
 """Minimal georeferenced GeoTIFF reader (no rasterio / GDAL / pyproj).
 
 Enough to place a local surface model (LiDAR nDSM / DSM) on a downloaded
-terrain: pixels via Pillow, georeference from the GeoTIFF tags, and a
-handful of coordinate systems projected with closed-form formulas.
+terrain, or to open a local DEM as measured terrain: pixels via Pillow (or
+tifffile for tiled / compressed files -- COG), georeference from the GeoTIFF
+tags, and a handful of coordinate systems with closed-form formulas (forward
+and inverse).
 
 Supported CRS (EPSG):
 * 4326 / 4258 / 5252 -- geographic lat/lon (WGS84, ETRS89, TUREF);
@@ -59,6 +61,16 @@ class Projection:
             return x, y
         return _tm_forward(lat, lon, self.lon0_deg, self.k0, self.false_e, self.false_n)
 
+    def inverse(self, x: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Projected (x, y) -> (lat, lon) degrees."""
+        x = np.asarray(x, dtype=np.float64)
+        y = np.asarray(y, dtype=np.float64)
+        if self.kind == "geographic":
+            return y, x
+        if self.kind == "webmercator":
+            return np.degrees(2.0 * np.arctan(np.exp(y / _A)) - np.pi / 2.0), np.degrees(x / _A)
+        return _tm_inverse(x, y, self.lon0_deg, self.k0, self.false_e, self.false_n)
+
 
 def _meridian_arc(phi: np.ndarray) -> np.ndarray:
     e2, e4, e6 = _E2, _E2 ** 2, _E2 ** 3
@@ -80,6 +92,28 @@ def _tm_forward(lat, lon, lon0, k0, fe, fn):
     y = k0 * (m + n * np.tan(phi) * (a * a / 2 + (5 - t + 9 * c + 4 * c * c) * a ** 4 / 24
                                     + (61 - 58 * t + t * t + 600 * c - 330 * _EP2) * a ** 6 / 720))
     return x + fe, y + fn
+
+
+def _tm_inverse(x, y, lon0, k0, fe, fn):
+    """Inverse Transverse Mercator (Snyder 1987, eq. 8-18 .. 8-25)."""
+    e1 = (1 - math.sqrt(1 - _E2)) / (1 + math.sqrt(1 - _E2))
+    m = (y - fn) / k0
+    mu = m / (_A * (1 - _E2 / 4 - 3 * _E2 ** 2 / 64 - 5 * _E2 ** 3 / 256))
+    phi1 = (mu + (3 * e1 / 2 - 27 * e1 ** 3 / 32) * np.sin(2 * mu)
+            + (21 * e1 ** 2 / 16 - 55 * e1 ** 4 / 32) * np.sin(4 * mu)
+            + (151 * e1 ** 3 / 96) * np.sin(6 * mu) + (1097 * e1 ** 4 / 512) * np.sin(8 * mu))
+    s1, c1_ = np.sin(phi1), np.cos(phi1)
+    c1 = _EP2 * c1_ ** 2
+    t1 = np.tan(phi1) ** 2
+    n1 = _A / np.sqrt(1 - _E2 * s1 ** 2)
+    r1 = _A * (1 - _E2) / (1 - _E2 * s1 ** 2) ** 1.5
+    d = (x - fe) / (n1 * k0)
+    lat = phi1 - (n1 * np.tan(phi1) / r1) * (
+        d ** 2 / 2 - (5 + 3 * t1 + 10 * c1 - 4 * c1 ** 2 - 9 * _EP2) * d ** 4 / 24
+        + (61 + 90 * t1 + 298 * c1 + 45 * t1 ** 2 - 252 * _EP2 - 3 * c1 ** 2) * d ** 6 / 720)
+    lon = lon0 + np.degrees((d - (1 + 2 * t1 + c1) * d ** 3 / 6
+                             + (5 - 2 * c1 + 28 * t1 - 3 * c1 ** 2 + 8 * _EP2 + 24 * t1 ** 2) * d ** 5 / 120) / c1_)
+    return np.degrees(lat), lon
 
 
 def projection_for_epsg(epsg: int) -> Projection:
@@ -147,18 +181,8 @@ def _geokeys(tag) -> dict:
 def read_geotiff(path: str | Path) -> GeoRaster:
     """Single-band GeoTIFF -> GeoRaster. Raises ValueError (Turkish) when the
     file has no usable georeference or an unsupported CRS."""
-    from PIL import Image
-    Image.MAX_IMAGE_PIXELS = None                   # LiDAR tiles are big by design
     p = Path(path)
-    try:
-        img = Image.open(p)
-        tags = dict(img.tag_v2)
-        if getattr(img, "n_frames", 1) > 1:
-            img.seek(0)
-        arr = np.asarray(img, dtype=np.float32)
-    except Exception as exc:
-        raise ValueError(f"GeoTIFF okunamadı ({p.name}): {exc}. Döşemeli / sıkıştırılmış bir dosyaysa "
-                         "şeritli olarak yeniden yazın: gdal_translate -co TILED=NO -co COMPRESS=NONE") from None
+    arr, tags = _pixels_and_tags(p)
     if arr.ndim == 3:
         arr = arr[..., 0]
     keys = _geokeys(tags.get(34735))
@@ -189,6 +213,102 @@ def read_geotiff(path: str | Path) -> GeoRaster:
             pass
     arr = np.where(np.isfinite(arr) & (arr > -1000.0) & (arr < 9000.0), arr, np.nan).astype(np.float32)
     return GeoRaster(arr, x0, y0, sx, sy, proj, str(p))
+
+
+def _pixels_and_tags(p: Path):
+    """(float32 band 0, {tag code: value}). Pillow first; tifffile for what
+    Pillow cannot decode (tiled / deflate / LZW / predictor: cloud-optimised
+    GeoTIFFs)."""
+    from PIL import Image
+    Image.MAX_IMAGE_PIXELS = None                   # LiDAR tiles are big by design
+    first_err = None
+    try:
+        img = Image.open(p)
+        tags = dict(img.tag_v2)
+        if getattr(img, "n_frames", 1) > 1:
+            img.seek(0)
+        arr = np.asarray(img, dtype=np.float32)
+        if arr.ndim == 3:
+            arr = arr[..., 0]
+        return arr, tags
+    except FileNotFoundError:
+        raise
+    except Exception as exc:                        # noqa: BLE001 -- try the next reader
+        first_err = exc
+    try:
+        import tifffile
+    except ImportError:
+        raise ValueError(f"GeoTIFF okunamadı ({p.name}): {first_err}. Döşemeli / sıkıştırılmış dosyalar için "
+                         "'tifffile' paketi gerekir (pip install tifffile) ya da dosyayı şeritli yazın: "
+                         "gdal_translate -co TILED=NO -co COMPRESS=NONE") from None
+    try:
+        with tifffile.TiffFile(p) as tf:
+            page = tf.pages[0]
+            arr = page.asarray().astype(np.float32)
+            tags = {t.code: t.value for t in page.tags.values()}
+    except Exception as exc:                        # noqa: BLE001
+        raise ValueError(f"GeoTIFF okunamadı ({p.name}): {exc}") from None
+    if arr.ndim == 3:
+        arr = arr[..., 0] if arr.shape[-1] <= 4 else arr[0]
+    return arr, tags
+
+
+def terrain_from_geotiff(path: str | Path, max_cells: int = 1200):
+    """A local DEM GeoTIFF as MEASURED TerrainData, without rasterio.
+
+    Local frame like a downloaded DEM: origin 0,0 at the south-west corner,
+    row 0 = south (the raster is flipped), square cells. A projected raster
+    (UTM / TUREF TM / Web Mercator) keeps its grid (grid convergence of a few
+    tenths of a degree is ignored); a geographic one is resampled to square
+    metres at its centre latitude. ``lat/lon_center`` and ``georef`` keep the
+    real-world position. Rasters wider than ``max_cells`` are averaged down.
+    """
+    from .terrain_loader import TerrainData
+
+    r = read_geotiff(path)
+    rows, cols = r.data.shape
+    cx, cy = r.x0 + cols * r.sx / 2.0, r.y0 - rows * r.sy / 2.0
+    lat_c, lon_c = (float(v) for v in r.projection.inverse(cx, cy))
+    data = r.data
+    if r.projection.kind == "geographic":
+        m_lat = 111132.954 - 559.822 * math.cos(2 * math.radians(lat_c))
+        m_lon = 111412.84 * math.cos(math.radians(lat_c))
+        dx, dy = r.sx * m_lon, r.sy * m_lat
+    elif r.projection.kind == "webmercator":
+        k = math.cos(math.radians(lat_c))           # Web Mercator scale at the centre latitude
+        dx, dy = r.sx * k, r.sy * k
+    else:
+        dx, dy = r.sx, r.sy
+    cell = min(dx, dy)
+    width_m, height_m = cols * dx, rows * dy
+    step = max(1, math.ceil(max(width_m, height_m) / cell / max_cells))
+    cell *= step
+    n_c, n_r = max(2, int(round(width_m / cell))), max(2, int(round(height_m / cell)))
+    resampled = (abs(dx - dy) > 1e-6 * max(dx, dy)) or step > 1
+    if resampled:
+        # bilinear on the source pixel centres (NaN-aware: nodata stays NaN)
+        xs = (np.arange(n_c) + 0.5) * cell / dx - 0.5
+        ys = (np.arange(n_r) + 0.5) * cell / dy - 0.5            # from the NORTH edge
+        gx, gy = np.meshgrid(np.clip(xs, 0, cols - 1), np.clip(ys, 0, rows - 1))
+        c0 = np.minimum(gx.astype(int), cols - 2) if cols > 1 else np.zeros_like(gx, int)
+        r0 = np.minimum(gy.astype(int), rows - 2) if rows > 1 else np.zeros_like(gy, int)
+        fx, fy = gx - c0, gy - r0
+        c1, r1 = np.minimum(c0 + 1, cols - 1), np.minimum(r0 + 1, rows - 1)
+        data = ((data[r0, c0] * (1 - fx) + data[r0, c1] * fx) * (1 - fy)
+                + (data[r1, c0] * (1 - fx) + data[r1, c1] * fx) * fy).astype(np.float32)
+    valid = np.isfinite(data)
+    if not valid.any():
+        raise ValueError(f"{Path(path).name}: geçerli yükselti değeri yok (hepsi nodata).")
+    z = np.flipud(np.where(valid, data, np.nan)).astype(np.float64)
+    nodata_share = 1.0 - float(valid.mean())
+    note = (f"Yerel GeoTIFF DEM ({Path(path).name}, EPSG:{r.projection.epsg}, {cell:.1f} m hücre"
+            + (", yeniden örneklendi" if resampled else "") + ")")
+    if nodata_share > 0.001:
+        note += f" · %{nodata_share * 100:.1f} nodata ortalama ile dolduruldu"
+    return TerrainData(z_grid=z, cell_size_m=float(cell), name=Path(path).stem, lat_center=lat_c, lon_center=lon_c,
+                       is_measured=True, source_note=note,
+                       georef={"epsg": r.projection.epsg, "x0": r.x0, "y0": r.y0 - rows * r.sy, "sx": r.sx,
+                               "sy": r.sy, "resampled": resampled})
 
 
 def tm_meridian_arc(lat_deg: float) -> float:

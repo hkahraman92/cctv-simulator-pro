@@ -512,7 +512,7 @@ def apply_layout(plan, layout: LayoutResult, camera: CameraConfig, target_ppm: f
 
 
 def band_area(terrain: TerrainData, plan, camera: CameraConfig, roi: Optional[np.ndarray], level: int, *,
-              visibility_km: float = 40.0, weather: str = ""):
+              visibility_km: float = 40.0, weather: str = "", transform=None):
     """(MultiViewshedResult, m2 at >= ``level`` inside ``roi``) for a plan's
     fixed poles through the AUTHORITATIVE multi-camera engine.
 
@@ -529,8 +529,12 @@ def band_area(terrain: TerrainData, plan, camera: CameraConfig, roi: Optional[np
         slant = camera_optics(camera, f).distance_for_ppm(LEVEL_PPM[level])
         return replace(pl, max_range_m=min(max(pl.max_range_m, slant), MAX_RANGE_CAP_M))
 
-    mv = calculate_multi_camera_viewshed(terrain, [full_reach(pl) for pl in plan_placements(plan, camera)],
-                                         visibility_km=visibility_km, weather=weather)
+    placements = [full_reach(pl) for pl in plan_placements(plan, camera)]
+    if transform is not None:              # e.g. night.capped_placements: a shorter reach, same engine
+        placements = transform(placements)
+    mv = calculate_multi_camera_viewshed(terrain, placements, visibility_km=visibility_km, weather=weather)
+    if mv is None:                          # nothing left to evaluate (a night with no light)
+        return None, 0.0
     inside = roi if roi is not None else np.ones(mv.dori_grid.shape, bool)
     return mv, float(((mv.dori_grid >= level) & inside).sum()) * terrain.cell_size_m ** 2
 

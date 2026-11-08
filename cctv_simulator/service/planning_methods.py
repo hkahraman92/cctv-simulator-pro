@@ -131,7 +131,7 @@ def compare_use(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     from .terrain_methods import _fence, _plan_kwargs
     # the plan belongs to THAT model: rebuild its camera on the caller's mounting
     cam = _camera_from(library_camera({"name": name, "base": params.get("camera", {})}, ctx)["camera"])
-    entry.results["plan"] = (o.plan, cam, _plan_kwargs(params), _fence(params))
+    entry.set_plan((o.plan, cam, _plan_kwargs(params), _fence(params)))
     return {"plan": _plan_json(o.plan), "camera": dataclasses.asdict(cam)}
 
 

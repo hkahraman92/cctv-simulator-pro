@@ -34,6 +34,15 @@ class TerrainEntry:
     def terrain(self, use_obstacles: bool = True):
         return self.surface if (use_obstacles and self.surface is not None) else self.bare
 
+    # Results computed FROM a plan. A new plan drops them: a scenario snapshot,
+    # KMZ or offer package must never pair plan B with plan A's coverage / cost.
+    PLAN_DERIVED = ("multi", "band_share", "network", "cost", "night", "mixed")
+
+    def set_plan(self, value) -> None:
+        for k in self.PLAN_DERIVED:
+            self.results.pop(k, None)
+        self.results["plan"] = value
+
 
 class Session:
     def __init__(self) -> None:

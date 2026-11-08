@@ -23,10 +23,15 @@ from .project_io import load_project
 _EXPORTERS = {"csv", "xlsx", "pdf"}
 
 
-def _build_terrain(project):
+def _build_terrain(project, base_dir=None):
     from .terrain_loader import generate_procedural_terrain, load_geotiff_or_dem
     if project.terrain_source == "geotiff" and project.terrain_file:
-        return load_geotiff_or_dem(project.terrain_file)
+        f = Path(project.terrain_file)
+        if not f.is_absolute() and base_dir is not None and not f.exists():
+            f = Path(base_dir) / f                 # relative to the project file
+        if not f.exists():
+            raise FileNotFoundError(f"Arazi dosyası bulunamadı: {project.terrain_file}")
+        return load_geotiff_or_dem(str(f))
     if project.terrain_source == "region" and project.terrain_region_id:
         # A saved region (downloaded DEM) -- the exact grid the GUI used.
         # Missing on this machine is an error, not a silent procedural stand-in.
@@ -184,7 +189,7 @@ def main(argv: List[str] | None = None) -> int:
     terrain = mv = placements = ptz_res = None
     report_cam = project.cameras[0]
     if args.viewshed or args.ptz:
-        terrain = _build_terrain(project)
+        terrain = _build_terrain(project, Path(args.project).parent)
     if args.viewshed:
         placements, report_cam, mv = _run_viewshed(project, terrain, mode)
         print(f"görüş alanı · {len(placements)} kamera · birleşik kapsama "
