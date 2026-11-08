@@ -8,7 +8,8 @@ import { DEFAULT_CAMERA, type CameraConfig, type ModelSummary } from "../core/ap
 import { useCoalesced, useCore } from "../core/CoreProvider";
 import { usePageActive } from "../core/pageActive";
 import type {
-  CoverageResult, FocalSweep, LegendRow, PlanResult, PoleSearch, RegionInfo, SingleViewshed, TerrainCatalog, TerrainInfo,
+  CoverageResult, FocalSweep, LegendRow, NightCoverage, PlanResult, PoleSearch, RegionInfo, Scenario, SingleViewshed, TerrainCatalog,
+  TerrainInfo,
 } from "../core/terrainApi";
 import { useJob } from "../core/useJob";
 import { useActiveTerrain } from "../core/activeTerrain";
@@ -18,6 +19,7 @@ import JobBar from "../components/JobBar";
 import { FocalCurve, ProfileChart } from "../components/charts";
 import { MixedPanel, PtzPanel, type Layer } from "../components/PtzPanels";
 import { ComparePanel, EMPTY_PRICES, NetworkPanel, type NetworkResult, type PriceBook } from "../components/PlanningPanels";
+import { NightPanel, ScenarioPanel } from "../components/DeliveryPanels";
 import { Button, Panel, Slider, Tile, fmt } from "../components/ui";
 
 const ha = (m2: number) => `${fmt(m2 / 1e4, 2)} ha`;
@@ -69,6 +71,14 @@ export default function Terrain() {
   const [optLevel, setOptLevel] = useState("detect");
   const [optRes, setOptRes] = useState<{ before_m2: number; after_m2: number; band_area_m2: number; changed: number; moved: number; max_move_m: number; notes: string[] } | null>(null);
   const [poleRes, setPoleRes] = useState<PoleSearch | null>(null);
+  const [night, setNight] = useState<NightCoverage | null>(null);
+  const [scenarios, setScenarios] = useState<Scenario[]>([]);
+  // A new plan drops what was computed from the old one (the core does the same: set_plan).
+  const [planVer, setPlanVer] = useState(0);       // remounts panels that hold results of the old plan
+  const replacePlan = useCallback((p: PlanResult | null) => {
+    setPlanVer((v) => v + 1);
+    setPlanRes(p); setCoverage(null); setNetwork(null); setNight(null); setMixedLayer(null);
+  }, []);
 
   useEffect(() => {
     if (state !== "ready") return;
@@ -80,7 +90,7 @@ export default function Terrain() {
   const adopt = useCallback((t: TerrainInfo) => {
     setInfo(t);
     setMount((m) => ({ ...m, x: t.width_m / 2, y: t.height_m / 2 }));
-    setFence([]); setPlanRes(null); setCoverage(null); setPoleRes(null); setSweep(null);
+    setFence([]); setPlanRes(null); setCoverage(null); setNetwork(null); setNight(null); setPoleRes(null); setSweep(null);
     const notes: string[] = [];
     if (!t.is_measured) notes.push("Bu arazi ölçüm değil (prosedürel). Görüş alanı sonuçları bağlayıcı değildir.");
     if (t.save_error) notes.push(`Bölge kaydedilemedi: ${t.save_error}`);
@@ -126,7 +136,7 @@ export default function Terrain() {
   const runPlan = async () => {
     if (!info || fence.length < 2) return;
     const r = await job.run("Çit planı", () => T.plan({ terrain_id: info.terrain_id, use_obstacles: useObstacles, camera, ...planParams() }));
-    if (r) { setPlanRes(r); setCoverage(null); setPoleRes(null); setMixedLayer(null); setNetwork(null); }
+    if (r) { replacePlan(r); setPoleRes(null); }
   };
   const runCoverage = async () => {
     if (!info) return;
@@ -137,7 +147,7 @@ export default function Terrain() {
     if (!info || fence.length < 2) return;
     const r = await job.run("En az direk araması", (o) => T.minimizePoles(
       { terrain_id: info.terrain_id, use_obstacles: useObstacles, camera, ...planParams(), goal_frac: goal / 100, level: "detect", position_steps: slide ? 2 : 0 }, o));
-    if (r) { setPoleRes(r); if (r.plan) { setPlanRes(r.plan); setCoverage(null); } }
+    if (r) { setPoleRes(r); if (r.plan) replacePlan(r.plan); }
   };
   const runSweep = async () => {
     if (!info) return;
@@ -162,10 +172,10 @@ export default function Terrain() {
         fence_points: fence, fence_closed: plan.closed, line_mode: plan.line_mode, watch_side: plan.watch_side,
         target_ppm: plan.target_ppm, perimeter_mast_m: plan.mast_m,
         mixed_ptz: { camera: mixedPtz.camera?.model_name ?? "", every_n: mixedPtz.everyN, patrol_span_deg: mixedPtz.span },
-        prices,
+        prices, scenarios,
       },
     }, { touch: !restoring.current });
-  }, [setTerrainBlock, info, mount, weather, camera, tab, fence, plan, mixedPtz, prices]);
+  }, [setTerrainBlock, info, mount, weather, camera, tab, fence, plan, mixedPtz, prices, scenarios]);
 
   useEffect(() => {
     if (!loadedTerrain || state !== "ready") return;
@@ -194,6 +204,7 @@ export default function Terrain() {
       }));
       if (x.planner_mode === "perimeter") setTab("perimeter");
       if (x.prices && typeof x.prices === "object") setPrices({ ...EMPTY_PRICES, ...(x.prices as Partial<PriceBook>) });
+      setScenarios(Array.isArray(x.scenarios) ? (x.scenarios as Scenario[]) : []);
       if (typeof x.camera_model === "string" && x.camera_model) void applyModel(x.camera_model).catch(() => undefined);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -204,9 +215,10 @@ export default function Terrain() {
   useEffect(() => {
     setActive(info ? {
       terrain_id: info.terrain_id, label: info.label, is_measured: info.is_measured, use_obstacles: useObstacles,
-      weather, camera, ran: { viewshed: !!single, plan: !!planRes, coverage: !!coverage },
+      weather, camera, ran: { viewshed: !!single, plan: !!planRes, coverage: !!coverage, network: !!network, night: !!night },
+      scenarios,
     } : null);
-  }, [setActive, info, useObstacles, weather, camera, single, planRes, coverage]);
+  }, [setActive, info, useObstacles, weather, camera, single, planRes, coverage, network, night, scenarios]);
 
   // a PTZ / mixed result, when one was run, is shown instead of the plain layer
   const extra = tab === "single" ? ptzLayer : mixedLayer;
@@ -382,7 +394,7 @@ export default function Terrain() {
               <div className="flex flex-wrap gap-1.5">
                 <Button onClick={() => setDrawing((d) => !d)} className={drawing ? "!bg-ok-bg !text-primary" : ""}><PencilLine size={14} /> {drawing ? "Çizim açık" : "Çiz"}</Button>
                 <Button disabled={!fence.length} onClick={() => setFence((f) => f.slice(0, -1))}><Undo2 size={14} /> Geri al</Button>
-                <Button disabled={!fence.length} onClick={() => { setFence([]); setPlanRes(null); setCoverage(null); }}><Trash2 size={14} /> Temizle</Button>
+                <Button disabled={!fence.length} onClick={() => { setFence([]); replacePlan(null); }}><Trash2 size={14} /> Temizle</Button>
               </div>
               <label className="mt-2 flex items-center gap-2 text-[12px]"><input type="checkbox" checked={plan.closed} onChange={(e) => setPlan((p) => ({ ...p, closed: e.target.checked }))} /> Kapalı halka</label>
               <div className="mt-2 grid grid-cols-2 gap-2">
@@ -435,7 +447,7 @@ export default function Terrain() {
                 <label className="mt-2 flex items-center gap-2 text-[12px]"><input type="checkbox" checked={slide} onChange={(e) => setSlide(e.target.checked)} /> Direkleri çit boyunca kaydır (arazi / bina)</label>
                 <Button className="mt-2 w-full" disabled={job.running} onClick={() => job.run("Dizilim optimizasyonu", (o) => T.optimize({
                   terrain_id: info.terrain_id, use_obstacles: useObstacles, level: optLevel, position_steps: slide ? 2 : 0 }, o))
-                  .then((r) => { if (!r) return; setOptRes(r); setPlanRes(r.plan); setCoverage(null); setMixedLayer(null); })}>
+                  .then((r) => { if (!r) return; setOptRes(r); replacePlan(r.plan); })}>
                   <Play size={14} /> Odak / eğim{slide ? " / konum" : ""} optimize et
                 </Button>
                 {optRes && (
@@ -449,12 +461,19 @@ export default function Terrain() {
               </Panel>
             )}
             {planRes && (
-              <NetworkPanel T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} prices={prices} onPrices={setPrices} onResult={setNetwork} />
+              <NetworkPanel resetKey={planVer} T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} prices={prices} onPrices={setPrices} onResult={setNetwork} />
+            )}
+            {planRes && (
+              <NightPanel resetKey={planVer} T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} camera={camera}
+                hasLatLon={info.lat_center !== null} onLayer={setMixedLayer} onResult={setNight} />
+            )}
+            {(planRes || scenarios.length > 0) && (
+              <ScenarioPanel T={T} terrainId={info.terrain_id} scenarios={scenarios} onChange={setScenarios} canSnapshot={!!planRes} />
             )}
             {fence.length >= 2 && (
               <ComparePanel T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} models={models} camera={camera}
                 planArgs={planParams()} prices={prices}
-                onUse={(p, name) => { setPlanRes(p); setCoverage(null); setNetwork(null); void applyModel(name); }} />
+                onUse={(p, name) => { replacePlan(p); void applyModel(name); }} />
             )}
             <Panel title="En az direk">
               <Slider label="Algılama hedefi (bant)" unit="%" value={goal} min={50} max={99} step={1} onChange={setGoal} />

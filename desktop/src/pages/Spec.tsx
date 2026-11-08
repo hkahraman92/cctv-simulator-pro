@@ -5,6 +5,7 @@ import { BrainCircuit, ClipboardCheck, FileDown, FolderOpen, Play, Save, Trash2 
 import { useCore } from "../core/CoreProvider";
 import { useProject } from "../core/project";
 import { useJob } from "../core/useJob";
+import { publishSpecResult } from "../core/activeTerrain";
 import type { Analysis, MatrixRow, Status } from "../core/specApi";
 import JobBar from "../components/JobBar";
 import { Button, Panel, fmt } from "../components/ui";
@@ -46,6 +47,7 @@ export default function Spec() {
   }, [spec, state]);
 
   const result = analysis?.result;
+  useEffect(() => { publishSpecResult(result ?? null); }, [result]);   // offer package (Raporlar)
   const cameras = useMemo(() => [...new Set((result?.matrix ?? []).map((r) => r.camera_model))], [result]);
   const best = result?.camera_scores[0]?.camera_model ?? "";
   const shownCamera = camera || best;

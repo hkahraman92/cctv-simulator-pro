@@ -73,6 +73,15 @@ def _fmt(v, nd=0, pct=False, unit=""):
     return f"{s} {unit}".strip()
 
 
+def _cost_cell(s: Dict) -> str:
+    total = s.get("cost_total")
+    if total is None:
+        return "—"
+    if not total and s.get("unpriced"):
+        return "fiyat girilmedi"
+    return _fmt(total, 0, unit=s.get("currency", "")) + (" (eksik fiyat)" if s.get("unpriced") else "")
+
+
 def comparison_rows(scenarios: Sequence[Dict]) -> List[List[str]]:
     """Table (header + rows) of scenarios side by side; first column is the metric."""
     rows = [["Ölçüt"] + [s.get("label", f"S{i + 1}") for i, s in enumerate(scenarios)]]
@@ -92,9 +101,7 @@ def comparison_rows(scenarios: Sequence[Dict]) -> List[List[str]]:
     add("PoE switch", lambda s: _fmt(s.get("switches")))
     add("Bant genişliği", lambda s: _fmt(s.get("bitrate_mbps"), 1, unit="Mbps"))
     add("Kayıt", lambda s: _fmt(s.get("storage_tb"), 1, unit="TB"))
-    add("Toplam maliyet", lambda s: (_fmt(s.get("cost_total"), 0, unit=s.get("currency", ""))
-                                     + (" (eksik fiyat)" if s.get("unpriced") else "")) if s.get("cost_total") is not None
-        else "—")
+    add("Toplam maliyet", _cost_cell)
     return rows
 
 
@@ -242,13 +249,13 @@ def build_share_html(terrain: TerrainData, plan, *, title: str, network=None, co
     if summary:
         bs = summary.get("band_share") or {}
         figs = [("Direk", _fmt(summary.get("poles"))),
-                ("Kamera", f"{summary.get('fixed_cameras', 0)} sabit + {summary.get('ptz_cameras', 0)} PTZ"),
+                ("Kamera", f"{summary.get('fixed_cameras', 0)} sabit"
+                 + (f" + {summary['ptz_cameras']} PTZ" if summary.get("ptz_cameras") else "")),
                 ("Çit", _fmt(summary.get("fence_m"), 0, unit="m")),
                 ("Bant Algılama", _fmt(bs.get("detect"), pct=True)),
                 ("Bant Teşhis", _fmt(bs.get("identify"), pct=True)),
                 ("Kayıt", _fmt(summary.get("storage_tb"), 1, unit="TB")),
-                ("Maliyet", _fmt(summary.get("cost_total"), 0, unit=summary.get("currency", ""))
-                 if summary.get("cost_total") is not None else "—")]
+                ("Maliyet", _cost_cell(summary))]
     fig_html = "".join(f"<div class=fig><b>{html.escape(v)}</b><span>{html.escape(k_)}</span></div>"
                        for k_, v in figs)
     table_html = ""

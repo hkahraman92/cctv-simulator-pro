@@ -254,6 +254,33 @@ export interface MixedResult {
   legend: LegendRow[];
 }
 
+export type LevelShare = Record<"identify" | "recognize" | "observe" | "detect", number>;
+
+export interface LightCondition {
+  when: string; sun_el_deg: number; sun_az_deg: number; moon_el_deg: number; moon_az_deg: number;
+  moon_fraction: number; lux: number; period: "gündüz" | "alacakaranlık" | "gece";
+}
+export interface NightMode { mode: "termal" | "pasif" | "ir" | "beyaz" | "yok"; range_cap_m: number | null; text: string }
+export interface NightParams {
+  datetime: string; lat?: number; lon?: number; utc_offset_h?: number; cloud_cover?: number; sky_glow_lux?: number;
+  ir_on?: boolean; white_light_range_m?: number; camera?: CameraConfig;
+}
+export interface NightCoverage {
+  condition: LightCondition; mode: NightMode; band_m: number; band_area_m2: number;
+  day_band_share: LevelShare; night_band_share: LevelShare; overlay?: Picture; legend: LegendRow[]; measured: boolean;
+}
+export interface NightTimeline { lat: number; lon: number; steps: (LightCondition & { mode?: NightMode["mode"]; range_cap_m?: number | null })[] }
+
+/** One design alternative, as scenario.snapshot returns it (saved in the project file). */
+export interface Scenario {
+  label: string; created: string; camera_model: string; ptz_model: string; poles: number; fixed_cameras: number;
+  ptz_cameras: number; fence_m: number; avg_spacing_m: number; fence_coverage_pct: number; gap_m: number;
+  target_ppm: number; line_mode: string; bitrate_mbps: number | null; storage_tb: number | null; switches: number | null;
+  copper_m: number | null; fibre_m: number | null; poe_w: number | null; cost_total: number | null; currency: string;
+  unpriced: string[]; band_share: Record<string, number | null>; night_band_share: Record<string, number> | null;
+  night_mode: string; measured: boolean | null;
+}
+
 type T = { terrain_id: string; use_obstacles?: boolean };
 
 export function terrainApi(rpc: RpcClient) {
@@ -313,6 +340,19 @@ export function terrainApi(rpc: RpcClient) {
     compareUse: (p: T & Record<string, unknown>) => rpc.call<{ plan: PlanResult; camera: CameraConfig }>("perimeter.compare_use", p),
     mixed: (p: T & { speed_deg_s: number; layer?: "fused" | "cue"; cue_target_ppm?: number; max_px?: number }, opts?: CallOptions) =>
       rpc.call<MixedResult>("perimeter.mixed", p, { timeoutMs: 0, ...opts }),
+    nightCoverage: (p: T & NightParams & { band_m?: number; max_px?: number }, opts?: CallOptions) =>
+      rpc.call<NightCoverage>("night.coverage", p, { timeoutMs: 0, ...opts }),
+    nightTimeline: (p: Partial<T> & Omit<NightParams, "datetime"> & { date: string; step_min?: number }) =>
+      rpc.call<NightTimeline>("night.timeline", p),
+    snapshot: (p: T & { label: string }) => rpc.call<{ scenario: Scenario }>("scenario.snapshot", p),
+    compareScenarios: (scenarios: Scenario[]) =>
+      rpc.call<{ rows: string[][]; best: Record<string, number | null> }>("scenario.compare", { scenarios }),
+    exportSite: (p: T & { path: string; real_world?: boolean; name?: string }) =>
+      rpc.call<{ path: string; exact_georef: boolean; has_latlon: boolean; with_network: boolean; with_coverage: boolean }>("export.site", p, { timeoutMs: 0 }),
+    exportShare: (p: T & { path: string; title: string; scenarios?: Scenario[] }) =>
+      rpc.call<{ path: string; bytes: number }>("export.share_html", p, { timeoutMs: 0 }),
+    exportPackage: (p: T & { path: string; project_name: string; bidder?: string; spec_result?: object; scenarios?: Scenario[] }, opts?: CallOptions) =>
+      rpc.call<{ path: string; files: string[]; skipped: string[] }>("export.package", p, { timeoutMs: 0, ...opts }),
   };
 }
 

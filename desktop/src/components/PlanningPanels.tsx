@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Cable, Play, Scale, Trophy } from "lucide-react";
 import type { CameraConfig, ModelSummary } from "../core/api";
 import type { PlanResult, TerrainApi } from "../core/terrainApi";
@@ -30,13 +30,14 @@ const PRICE_FIELDS: [keyof PriceBook, string][] = [
 ];
 
 /** Cabling, PoE, NVR sizing and the priced bill of quantities of the current plan. */
-export function NetworkPanel({ T, job, terrainId, useObstacles, prices, onPrices, onResult }: {
-  T: TerrainApi; job: Job; terrainId: string; useObstacles: boolean;
+export function NetworkPanel({ T, job, terrainId, useObstacles, prices, onPrices, onResult, resetKey }: {
+  T: TerrainApi; job: Job; terrainId: string; useObstacles: boolean; resetKey: number;
   prices: PriceBook; onPrices: (p: PriceBook) => void; onResult: (r: NetworkResult | null) => void;
 }) {
   const [cfg, setCfg] = useState({ switch_ports: 8, poe_budget_w: 120, max_copper_m: 90, retention_days: 30 });
   const [res, setRes] = useState<NetworkResult | null>(null);
   const [showPrices, setShowPrices] = useState(false);
+  useEffect(() => { setRes(null); }, [resetKey]);       // a new plan: the old network no longer applies
   const run = () => void job.run("Ağ planı ve maliyet", () => T.network({ terrain_id: terrainId, use_obstacles: useObstacles, ...cfg, prices }))
     .then((r) => { if (r) { setRes(r); onResult(r); } });
   const n = res?.network;

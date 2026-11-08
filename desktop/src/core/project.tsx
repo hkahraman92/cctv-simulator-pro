@@ -81,16 +81,20 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const sel = Math.min(selected, sites.length - 1);
 
   const touch = useCallback((fn: (s: Site[]) => Site[]) => { setSites(fn); setDirty(true); }, []);
+  // Stable, and a no-op for an equal block: the terrain page publishes from an
+  // effect that depends on it, so a fresh identity / fresh state per call looped.
+  const setTerrainBlock = useCallback((b: TerrainBlock | null, opts?: { touch?: boolean }) => {
+    setTerrainBlockState((prev) => {
+      if (JSON.stringify(prev) === JSON.stringify(b)) return prev;
+      if (opts?.touch) setDirty(true);
+      return b;
+    });
+  }, []);
 
   const value = useMemo<ProjectCtx>(() => ({
     sites, selected: sel, site: sites[sel], plan, path, name, dirty, terrainBlock, loadedTerrain, levels,
     setLevels: (l) => { setLevelsState(l); setDirty(true); },
-    setTerrainBlock: (b, opts) => {
-      setTerrainBlockState((prev) => {
-        if (opts?.touch && JSON.stringify(prev) !== JSON.stringify(b)) setDirty(true);
-        return b;
-      });
-    },
+    setTerrainBlock,
     select: setSelected,
     add: () => {
       const n = freeName(sites);
@@ -114,7 +118,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       if (terrain) setLoadedTerrain((t) => ({ block: terrain, nonce: (t?.nonce ?? 0) + 1 }));
     },
     markSaved: (p, n) => { setPath(p); setName(n); setDirty(false); },
-  }), [sites, sel, plan, path, name, dirty, touch, terrainBlock, loadedTerrain, levels]);
+  }), [sites, sel, plan, path, name, dirty, touch, setTerrainBlock, terrainBlock, loadedTerrain, levels]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
