@@ -8,6 +8,7 @@ import { usePageActive } from "../core/pageActive";
 import { useProject } from "../core/project";
 import type { BenchResult, EdgeMeasure } from "../core/benchApi";
 import PlanView from "../components/PlanView";
+import AnprBench from "../components/AnprBench";
 import { Button, Panel, Slider, Tile, fmt } from "../components/ui";
 
 const TASKS = [
@@ -31,6 +32,7 @@ export default function Optics() {
   const [weather, setWeather] = useState("Berrak hava");
   const [edge, setEdge] = useState<EdgeMeasure | null>(null);
   const [edgeErr, setEdgeErr] = useState("");
+  const [view, setView] = useState<"dori" | "anpr">("dori");
 
   useEffect(() => {
     if (state !== "ready") return;
@@ -45,7 +47,7 @@ export default function Optics() {
       bench.bench({ camera: i.c, mode: i.mode, req_ppm: TASKS[i.task][1], distance_m: i.dist, weather: i.weather }),
     ]);
     return { plan, verdict } as { plan: OpticResult; verdict: BenchResult };
-  }, state === "ready" && active);
+  }, state === "ready" && active && view === "dori");
   const v = res.value?.verdict;
   const mp = (() => {
     const r = catalog?.resolutions.find((x) => x.name === c.resolution_name);
@@ -67,6 +69,14 @@ export default function Optics() {
 
   return (
     <div className="flex min-h-full flex-wrap content-start gap-3 p-3">
+      <div className="flex w-full gap-1 rounded-md bg-bg-4 p-1 sm:w-auto">
+        {([["dori", "DORI tezgâhı"], ["anpr", "Plaka okuma (ANPR)"]] as const).map(([id, label]) => (
+          <button key={id} type="button" onClick={() => setView(id)}
+            className={`h-8 rounded px-4 text-[12px] font-semibold ${view === id ? "bg-bg-6 text-primary" : "text-text-2"}`}>{label}</button>
+        ))}
+      </div>
+      <div className="basis-full" />
+      {view === "anpr" ? <AnprBench camera={c} active={active} /> : (<>
       <Panel title="Kamera ve montaj" className="w-[300px] shrink-0">
         <div className="mb-2 truncate text-[12px] font-semibold">{c.name} · <span className="text-text-2">{c.model_name}</span></div>
         <div className="flex flex-col gap-2">
@@ -144,6 +154,7 @@ export default function Optics() {
           <p className="mt-2 text-[11px] text-text-3">◆ FOV optiktir, değişmez; k yalnız px/m ve menzili ölçekler.</p>
         </Panel>
       </div>
+      </>)}
     </div>
   );
 }

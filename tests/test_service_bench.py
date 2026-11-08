@@ -103,3 +103,28 @@ def test_scene_frame_uses_the_perspective_engine():
     fog = ok("scene.render", camera=dataclasses.asdict(cam), focal_mm=6.0, width=320, height=180,
              target_dist_m=200.0, weather="Yoğun sis")
     assert fog["transmittance"] < r["transmittance"]
+
+
+def test_anpr_analyse_and_optimize_match_the_engine():
+    from cctv_simulator.anpr import AnprSetup, analyse, optimize
+
+    cam = CameraConfig(focal_min_mm=8.0, focal_max_mm=32.0)
+    setup = {"height_m": 6.0, "pole_x_m": -1.5, "lanes": 2, "aim_y_m": 30.0, "speed_kmh": 90.0, "night_ir": False}
+    r = ok("anpr.analyse", camera=dataclasses.asdict(cam), focal_mm=16.0, setup=setup)
+    want = analyse(cam, 16.0, AnprSetup(**setup))
+    assert r["lanes_ok"] == want.lanes_ok and r["pan_deg"] == pytest.approx(want.pan_deg)
+    assert [ln["zone_len_m"] for ln in r["lanes"]] == [ln.zone_len_m for ln in want.lanes]
+    o = ok("anpr.optimize", camera=dataclasses.asdict(cam), setup=setup)
+    best = optimize(cam, AnprSetup(**setup))
+    assert o["focal_mm"] == pytest.approx(best.focal_mm) and o["setup"]["aim_y_m"] == best.setup.aim_y_m
+    assert o["lanes_ok"] == best.lanes_ok
+
+
+def test_anpr_rejects_out_of_range_setup():
+    out = io.StringIO()
+    server = Server(METHODS, out=out)
+    server.handle_line(json.dumps({"jsonrpc": "2.0", "id": 1, "method": "anpr.analyse",
+                                   "params": {"camera": {}, "setup": {"speed_kmh": -5}}}))
+    server.wait_idle()
+    reply = next(json.loads(x) for x in out.getvalue().splitlines() if json.loads(x).get("id") == 1)
+    assert reply["error"]["code"] == -32602 and "speed_kmh" in reply["error"]["message"]

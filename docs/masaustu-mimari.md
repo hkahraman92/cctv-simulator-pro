@@ -23,7 +23,7 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
 - **API v1** (`cctv_simulator/service/__init__.py: API_VERSION`). Yöntem
   eklemek / isteğe bağlı alan eklemek küçük sürüm; yeniden adlandırma ya da
   silme büyük sürüm. `system.describe` güncel listeyi verir.
-- Yöntemler (68; modül başına):
+- Yöntemler (70; modül başına):
   - `methods.py`: `system.info|ping|describe`, `catalog.get`,
     `library.list|get|camera`, `optics.calculate`, `project.load|save`
   - `library_methods.py`: `library.fields|record|auth|save|delete|set_password`
@@ -33,7 +33,8 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
     `perimeter.plan|coverage|minimize_poles|optimize`, `area.plan` (alan hedefi:
     poligonda en az kamera, motorla doğrulanır), `focal.sweep`
   - `ptz_methods.py`: `ptz.sweep|cue|tour`, `perimeter.mixed`
-  - `bench_methods.py`: `optics.project|bench`, `plan.image`, `iq.measure`, `scene.render`
+  - `bench_methods.py`: `optics.project|bench`, `plan.image`, `iq.measure`, `scene.render`,
+    `anpr.analyse|optimize` (düz yolda plaka okuma: şerit başına bölge, kare, bulanıklık)
   - `spec_methods.py`: `spec.read_file|engines|analyze|override|templates|
     template_save|template_run|template_delete|statement`, `training.export`
   - `report_methods.py`: `report.optics|engineering|open`

@@ -39,6 +39,7 @@ cctv_dual_view_simulator.py          giriş noktası
   pole_optimizer.py                  çit hedefini tutan en az direk: aralık araması + direk başına odak
   area_planner.py                    alan hedefi: poligonda DORI seviyesini tutan en az kamera / direk
   approach.py                        gizli yaklaşma: görünmeden ne kadar yaklaşılır, uyarı süresi
+  anpr.py                            plaka okuma: şerit başına okuma bölgesi, kare / hız, bulanıklık, açı
   raster_smooth.py                   sınıf bindirmelerini yalnız görüntüde yumuşatır, FOV kamasına kırpar
   compliance.py                      Gemini/Ollama + kural tabanlı şartname analizi
   compliance_optics.py               şartname DORI/menzil isteri → optik motorla doğrula
@@ -72,7 +73,7 @@ desktop/                             yeni arayüz: Tauri 2 (Rust) + React/TS/Tai
 
 **Yeni masaüstü kabuğu.** `desktop/` Python çekirdeği (`python -m
 cctv_simulator.service`, yayında `cctv-core.exe`) alt süreç olarak başlatır,
-satır başına bir JSON-RPC nesnesi taşır (API v1, 68 yöntem; liste ve
+satır başına bir JSON-RPC nesnesi taşır (API v1, 70 yöntem; liste ve
 sözleşme `docs/masaustu-mimari.md`). Ekran fizik türetmez; her sayı bir API
 yönteminden gelir. Yeni özellik için: önce `service/*_methods.py`'ye yöntem +
 `tests/test_service_*.py`'ye motorla birebir eşlik testi, sonra
@@ -531,6 +532,10 @@ sayısıyla ağırlıklı, DORI metrikleri yalnız parse edilenler üzerinden). 
   algılama halkasında uyarı = halkanın dış kenarı, halkadaki görülmeyen
   koridor = ihlal o tarafta, bandın arkasındaki kör şerit ihlal değil, bina
   sırası dolanmaya zorlar, sınır modunda yalnız izlenen taraftan gelinir.
+- `test_anpr.py` — karşıdan bakışta bölge sonu = hedef px/m mesafesi, kare =
+  bölge / hız × fps, görüş hattı boyunca hareket bulanıklık vermez ve en uzun
+  pozlamada bulanıklık tam sınırda, yan direkte okuma açı sınırından sonra
+  başlar, gece IR menzili bölgeyi keser, optimizasyon geçen nişanı bulur.
 - `test_pole_optimizer.py` — `spacing_m` geçersizleştirmesi (None bit-aynı),
   ulaşılabilir hedefte planlayıcıdan az direk, planlayıcı üstü hedefte
   sıklaşma ve en seyrek geçen deneme, imkânsız hedefte en iyi çaba + not.
@@ -713,6 +718,25 @@ karşılaştırılır; hedef hat 50 m kesimlere bölünür, her kesimin en köt�
 kameralar, geometrik algılama; algılama olasılığı / kamuflaj yok. Ölçüldü
 (2 km tepelik, 10 m hücre, varsayılan 40 px/m tesis planı): ilk görülme
 çite 14 m kala — koşan sızmacıya 4 sn; 0,4 sn.
+
+**Plaka okuma (`anpr.analyse` / `optimize`).** Piksel yoğunluğu tek başına
+okunur plaka demek değil. Düz yol (+y boyunca, direk y = 0), şeritler yol
+kenarından (x = 0) dışa numaralı; direk `pole_x_m` (eksi = banket, yol
+içinde = portal). Kameranın yönü nişan noktasından (mesafe + şerit) türetilir.
+Şerit merkezinde 0,25 m örneklerle okunur: kadrajda (yatay + dikey FOV),
+yatay / dikey plaka açısı ≤ sınır (vars. 30°), etkin px/m = `ppm_at(eğik
+mesafe)` × cos(yatay açı) ≥ hedef (vars. 143 = `models` "TR Plaka / ANPR";
+plaka 0,52 m), gece seçiliyse eğik mesafe ≤ `ir_range_m`. En uzun kesintisiz
+aralık = okuma bölgesi; kare = bölge / hız × fps, en yüksek hız = bölge × fps
+/ en az kare. Bulanıklık = hızın görüş hattına dik bileşeni × pozlama ×
+px/m; en uzun pozlama bunu sınıra (vars. 2 px) eşitler. Optik yalnız
+`camera_optics`'ten (Kural 1). Optimizasyon: 24 odak × nişan mesafesi × nişan
+şeridi; puan = geçen şerit, sonra kare payı (2× ile sınırlı — ötesinde uzun
+bölge bir şey kazandırmaz), sonra en zayıf şeridin plaka pikseli (yakın,
+daha az örtülen nişan). Yan şerit aracının örtmesi modellenmez. Ölçüldü
+(4 MP 8–32 mm, 6 m direk banket 1,5 m, 2 şerit, 90 km/sa, 1/1000): 9,3 mm,
+her iki şerit ~9 kare, bulanıklık ≤ 2 px; 1,6 sn. Masaüstü: Optik
+Laboratuvarı → "Plaka okuma (ANPR)".
 
 **Sürekli PTZ taraması (`ptz_schedule.py`).** `SectorPatrol` (a→b→a, hız,
 uçlarda bekleme) ve `Rotation360`; `evaluate_sweep(...)` → `SweepResult`.

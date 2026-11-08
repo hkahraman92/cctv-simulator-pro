@@ -63,7 +63,7 @@ def test_a_closed_detection_ring_gives_its_inner_edge_as_warning_distance():
     # first seen at the ring's outer edge: ~150 m walk to the fence
     assert 145.0 <= r.warning_m <= 160.0
     assert r.warning_s["Yürüyerek"] == pytest.approx(r.warning_m / 1.4)
-    assert r.sufficient["Yürüyerek"] and not r.sufficient["Araçla (40 km/s)"]
+    assert r.sufficient["Yürüyerek"] and not r.sufficient["Araçla (40 km/sa)"]
     assert r.dash_path[0] == r.breakout_xy and len(r.dash_path) > 10
     assert all(math.isfinite(s.warning_m) for s in r.sectors)
 

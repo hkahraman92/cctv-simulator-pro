@@ -44,7 +44,7 @@ import numpy as np
 
 from .terrain_loader import TerrainData
 
-DEFAULT_SPEEDS: Dict[str, float] = {"Yürüyerek": 1.4, "Koşarak": 4.0, "Araçla (40 km/s)": 11.1}
+DEFAULT_SPEEDS: Dict[str, float] = {"Yürüyerek": 1.4, "Koşarak": 4.0, "Araçla (40 km/sa)": 11.1}
 SECTOR_M = 50.0
 
 _NEIGH = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]

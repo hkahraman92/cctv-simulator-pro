@@ -8,7 +8,7 @@ import { Button, Panel, Slider, fmt } from "./ui";
 type Job = ReturnType<typeof useJob>;
 
 /** Intruder speeds (m/s). The UI owns them so the sector colours and the table use the same numbers. */
-export const SPEEDS: Record<string, number> = { "Yürüyerek": 1.4, "Koşarak": 4.0, "Araçla (40 km/s)": 11.1 };
+export const SPEEDS: Record<string, number> = { "Yürüyerek": 1.4, "Koşarak": 4.0, "Araçla (40 km/sa)": 11.1 };
 
 export type Tone = "danger" | "warn" | "ok";
 export interface ApproachMarks {

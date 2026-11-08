@@ -203,7 +203,65 @@ def plan_image(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
             "source_width_px": w, "source_height_px": h, "aspect": h / w if w else 1.0}
 
 
+# (field, lo, hi): every AnprSetup number the shell may send, range-checked by name
+_ANPR_FIELDS = (("height_m", 0.3, 60), ("pole_x_m", -100, 100), ("lane_width_m", 2, 6), ("aim_y_m", 1, 500),
+                ("plate_height_m", 0.2, 3), ("target_ppm", 20, 2000), ("max_h_deg", 1, 89), ("max_v_deg", 1, 89),
+                ("speed_kmh", 1, 400), ("fps", 1, 240), ("exposure_s", 1e-6, 0.1), ("blur_px", 0.1, 20),
+                ("max_y_m", 10, 1000))
+
+
+def _anpr_setup(params: Dict[str, Any]):
+    from ..anpr import AnprSetup
+
+    raw = params.get("setup") or {}
+    if not isinstance(raw, dict):
+        raise RpcError(INVALID_PARAMS, "'setup' bir nesne olmalı.")
+    vals: Dict[str, Any] = {}
+    for name, lo, hi in _ANPR_FIELDS:
+        if name in raw:
+            vals[name] = _num(raw, name, lo=lo, hi=hi)
+    if "lanes" in raw:
+        vals["lanes"] = int(_num(raw, "lanes", lo=1, hi=8))
+    if "min_frames" in raw:
+        vals["min_frames"] = int(_num(raw, "min_frames", lo=1, hi=100))
+    if raw.get("aim_x_m") is not None:
+        vals["aim_x_m"] = _num(raw, "aim_x_m", lo=-100, hi=100)
+    if "night_ir" in raw:
+        vals["night_ir"] = bool(raw["night_ir"])
+    return AnprSetup(**vals)
+
+
+def _anpr_json(r) -> Dict[str, Any]:
+    import dataclasses
+
+    def fin(v):
+        return v if v is None or math.isfinite(v) else None
+    lanes = [{k: (fin(v) if isinstance(v, float) else v) for k, v in dataclasses.asdict(ln).items()} for ln in r.lanes]
+    return {"focal_mm": r.focal_mm, "pan_deg": r.pan_deg, "tilt_deg": r.tilt_deg, "hfov_deg": r.hfov_deg,
+            "vfov_deg": r.vfov_deg, "lanes_ok": r.lanes_ok, "lanes": lanes, "setup": dataclasses.asdict(r.setup)}
+
+
+def anpr_analyse(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """Plate reading on a straight road: readable zone per lane, frames at speed, motion blur, angles."""
+    from ..anpr import analyse
+
+    cam = _camera_from(params.get("camera", {}))
+    focal = _num(params, "focal_mm", cam.focal_max_mm, lo=cam.focal_min_mm, hi=max(cam.focal_max_mm, cam.focal_min_mm))
+    return _anpr_json(analyse(cam, focal, _anpr_setup(params)))
+
+
+def anpr_optimize(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """Best focal and aim point for the given pole: all lanes readable at the speed if possible."""
+    from ..anpr import optimize
+
+    cam = _camera_from(params.get("camera", {}))
+    r = optimize(cam, _anpr_setup(params), progress=lambda d, n: ctx.progress(d, n, f"Odak {d}/{n}"))
+    return _anpr_json(r)
+
+
 METHODS = {
+    "anpr.analyse": anpr_analyse,
+    "anpr.optimize": anpr_optimize,
     "optics.project": optics_project,
     "plan.image": plan_image,
     "optics.bench": optics_bench,

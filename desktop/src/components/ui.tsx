@@ -39,7 +39,7 @@ export function Tile({ label, value, unit, tone = "text-text" }: {
   );
 }
 
-export function Slider({ label, value, min, max, step, unit, onChange, disabled }: {
+export function Slider({ label, value, min, max, step, unit, onChange, disabled, digits }: {
   label: string;
   value: number;
   min: number;
@@ -48,13 +48,15 @@ export function Slider({ label, value, min, max, step, unit, onChange, disabled 
   unit: string;
   onChange: (v: number) => void;
   disabled?: boolean;
+  /** decimals shown (default: fmt's rule) */
+  digits?: number;
 }) {
   return (
     <label className="block">
       <div className="mb-1 flex justify-between">
         <span className="label">{label}</span>
         <span className="font-mono text-[12px] font-semibold">
-          {fmt(value)} {unit}
+          {fmt(value, digits)} {unit}
         </span>
       </div>
       <input

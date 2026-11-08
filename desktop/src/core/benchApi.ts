@@ -66,8 +66,63 @@ export interface ProjectCamera {
   target: { distance: number; ppm: number; angle_diff: number; status: string; inside_angle: boolean; ppm_ok: boolean } | null;
 }
 
+/** Straight-road ANPR setup (anpr.AnprSetup); omitted fields take the engine defaults. */
+export interface AnprSetup {
+  height_m: number;
+  pole_x_m: number;
+  lanes: number;
+  lane_width_m: number;
+  aim_y_m: number;
+  aim_x_m: number | null;
+  plate_height_m: number;
+  target_ppm: number;
+  max_h_deg: number;
+  max_v_deg: number;
+  speed_kmh: number;
+  fps: number;
+  min_frames: number;
+  exposure_s: number;
+  blur_px: number;
+  max_y_m: number;
+  night_ir: boolean;
+}
+
+export interface AnprLane {
+  lane: number;
+  x_m: number;
+  zone_y0_m: number | null;
+  zone_y1_m: number | null;
+  zone_len_m: number;
+  frames: number | null;
+  max_speed_kmh: number;
+  ppm_min: number;
+  ppm_max: number;
+  plate_px_min: number;
+  h_angle_max_deg: number;
+  v_angle_max_deg: number;
+  blur_px_max: number;
+  max_exposure_s: number | null;
+  ok: boolean;
+  reasons: string[];
+}
+
+export interface AnprResult {
+  focal_mm: number;
+  pan_deg: number;
+  tilt_deg: number;
+  hfov_deg: number;
+  vfov_deg: number;
+  lanes_ok: number;
+  lanes: AnprLane[];
+  setup: AnprSetup;
+}
+
 export function benchApi(rpc: RpcClient) {
   return {
+    anpr: (p: { camera: CameraConfig; focal_mm: number; setup: Partial<AnprSetup> }, opts?: CallOptions) =>
+      rpc.call<AnprResult>("anpr.analyse", p, opts),
+    anprOptimize: (p: { camera: CameraConfig; setup: Partial<AnprSetup> }, opts?: CallOptions) =>
+      rpc.call<AnprResult>("anpr.optimize", p, { timeoutMs: 0, ...opts }),
     project: (p: { cameras: CameraConfig[]; focals: number[]; target?: { x_m: number; y_m: number }; level_key?: string; levels?: import("./api").PPMLevel[] }, opts?: CallOptions) =>
       rpc.call<{ cameras: ProjectCamera[]; level: { key: string; name: string; ppm: number } | null }>("optics.project", p, opts),
     planImage: (path: string) =>
