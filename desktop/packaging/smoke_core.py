@@ -15,8 +15,26 @@ from pathlib import Path
 CAM = {"name": "Duman", "focal_min_mm": 2.8, "focal_max_mm": 12.0}
 
 
+def _cog(path: Path) -> bool:
+    """A tiled, deflate + floating-point-predictor GeoTIFF (UTM 36N): the
+    frozen core must read it through tifffile + imagecodecs."""
+    try:
+        import numpy as np
+        import tifffile
+    except ImportError:
+        return False
+    z = (np.add.outer(np.arange(64), np.arange(64)) + 800.0).astype("float32")
+    keys = (1, 1, 0, 3, 1024, 0, 1, 1, 1025, 0, 1, 1, 3072, 0, 1, 32636)
+    tifffile.imwrite(path, z, tile=(32, 32), compression="zlib", predictor=3, extratags=[
+        (33550, 12, 3, (10.0, 10.0, 0.0), False), (33922, 12, 6, (0.0, 0.0, 0.0, 480000.0, 4420000.0, 0.0), False),
+        (34735, 3, 16, keys, False)])
+    return True
+
+
 def main(exe: str) -> int:
     out_dir = tempfile.mkdtemp(prefix="cctv-smoke-")
+    cog = Path(out_dir) / "cog.tif"
+    has_cog = _cog(cog)
     calls = [
         ("system.describe", {}),
         ("library.list", {}),
@@ -32,7 +50,14 @@ def main(exe: str) -> int:
         ("spec.analyze", {"text": "Madde 1: 30 m mesafede teşhis sağlanmalıdır.", "engine": "rule"}),
         ("report.optics", {"cameras": [CAM], "formats": ["pdf", "xlsx", "csv"], "out_dir": out_dir, "stem": "duman"}),
         ("report.engineering", {"terrain_id": "t1", "camera": CAM, "formats": ["pdf"], "out_dir": out_dir, "stem": "duman"}),
+        ("network.plan", {"terrain_id": "t1", "prices": {"camera": 1000}}),
+        ("night.coverage", {"terrain_id": "t1", "datetime": "2024-01-11T23:00", "lat": 39.92, "lon": 32.85, "max_px": 300}),
+        ("scenario.snapshot", {"terrain_id": "t1", "label": "A"}),
+        ("export.site", {"terrain_id": "t1", "path": str(Path(out_dir) / "duman.dxf")}),
+        ("export.package", {"terrain_id": "t1", "path": str(Path(out_dir) / "duman.zip"), "project_name": "Duman"}),
     ]
+    if has_cog:
+        calls.append(("terrain.geotiff", {"path": str(cog)}))
     # one request at a time: the server works on two in parallel, and the
     # terrain calls depend on the terrain created by an earlier one
     proc = subprocess.Popen([exe], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -60,7 +85,12 @@ def main(exe: str) -> int:
             print(f"FAIL {m}: {r and r['error']['message']}")
         else:
             print(f"ok   {m}")
-    for f in ("duman.pdf", "duman.xlsx", "duman.csv", "duman-gorusalani.pdf"):
+    if has_cog:
+        r = replies.get(len(calls) - 1, {}).get("result", {})
+        if not r.get("is_measured"):
+            bad += 1
+            print("FAIL terrain.geotiff: COG not read as a measured DEM")
+    for f in ("duman.pdf", "duman.xlsx", "duman.csv", "duman-gorusalani.pdf", "duman.dxf", "duman.zip"):
         if not (Path(out_dir) / f).is_file():
             bad += 1
             print(f"FAIL file {f}")

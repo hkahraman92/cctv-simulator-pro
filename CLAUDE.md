@@ -28,7 +28,12 @@ cctv_dual_view_simulator.py          giriş noktası
   online_map_loader.py               karo indirme, ortofoto mozaik, GERÇEK DEM
   region_library.py                  kayıtlı bölgeler: DEM + ortofoto diskte, çevrimdışı aç
   surface_obstacles.py               OSM bina/ağaç → yüzey modeli (DEM + engel), Overpass; yerel nDSM/DSM
-  geotiff_reader.py                  rasterio'suz GeoTIFF: etiketlerden georeferans, UTM/TUREF TM/WebMerc
+  geotiff_reader.py                  rasterio'suz GeoTIFF: etiketlerden georeferans, UTM/TUREF TM/WebMerc; yerel DEM → ölçülmüş arazi
+  geo_export.py                      KML / KMZ (+ kapsama katmanı) ve DXF R12 yerleşim çıktısı
+  night.py                           gece senaryosu: güneş + ay → ortam lux, IR / beyaz ışık menzil sınırı
+  network_plan.py                    switch / bakır / fiber / PoE / NVR planı + maliyet
+  model_selection.py                 kütüphane modellerini aynı çit hedefinde karşılaştırma
+  offer.py                           senaryo özeti + karşılaştırma, paylaşım HTML'i, teklif paketi (ZIP)
   ptz_animation.py                   PTZ görsel tarama: anlık bakış + iz + gölge, kesit
   focal_optimizer.py                 varifokal/PTZ: tüm odak taraması, zarf, sabit+PTZ dizilim optimizasyonu
   pole_optimizer.py                  çit hedefini tutan en az direk: aralık araması + direk başına odak
@@ -65,7 +70,7 @@ desktop/                             yeni arayüz: Tauri 2 (Rust) + React/TS/Tai
 
 **Yeni masaüstü kabuğu.** `desktop/` Python çekirdeği (`python -m
 cctv_simulator.service`, yayında `cctv-core.exe`) alt süreç olarak başlatır,
-satır başına bir JSON-RPC nesnesi taşır (API v1, 54 yöntem; liste ve
+satır başına bir JSON-RPC nesnesi taşır (API v1, 66 yöntem; liste ve
 sözleşme `docs/masaustu-mimari.md`). Ekran fizik türetmez; her sayı bir API
 yönteminden gelir. Yeni özellik için: önce `service/*_methods.py`'ye yöntem +
 `tests/test_service_*.py`'ye motorla birebir eşlik testi, sonra
@@ -267,8 +272,35 @@ Transverse Mercator kapalı formül (Snyder), WGS84 ≈ GRS80 ≈ ETRS89 ≈ ITR
 çıkarılır, dikey referans farkı = kapsanan alanda (DSM − DEM)'in %10'luk
 dilimi (açık zemin) → çıkarılır ve not edilir; tür otomatik tahmin edilemezse
 arayüz sorar. <1 m gürültü atılır. Veri olan yerde OSM katmanının yerine
-geçer (`KIND_SURFACE`), dışında OSM kalır. rasterio/pyproj/GDAL yok; döşemeli
-/ sıkıştırılmış TIFF'i Pillow okuyamazsa hata, şeritli yazmayı önerir.
+geçer (`KIND_SURFACE`), dışında OSM kalır. rasterio/pyproj/GDAL yok; Pillow
+okuyamazsa (döşemeli / deflate / LZW / zstd / kayan nokta öngörücü — COG)
+`tifffile` + `imagecodecs` okur; ikisi de yoksa hata şeritli yazmayı önerir.
+
+**Yerel DEM GeoTIFF (`geotiff_reader.terrain_from_geotiff`).** rasterio yokken
+(paketli çekirdekte yok) `load_geotiff_or_dem` georeferanslı bir DEM'i gri
+tonlamalı heightmap yoluna düşürüyordu: ölçülmemiş, hücre boyu uydurma
+(2000 m / genişlik), konum yok. Artık etiketlerden okunur: `is_measured=True`,
+kuzey-yukarı raster `flipud`, kare hücre (projeksiyonlu: piksel boyu; coğrafi:
+merkez enlemde metreye yeniden örnekleme; > 1200 hücre ortalamayla küçültme),
+merkez enlem/boylam **ters projeksiyonla** (`Projection.inverse`, Snyder TM),
+gerçek konum `TerrainData.georef`'te (`epsg`, güneybatı köşe `x0/y0`, piksel,
+`resampled`). Yerel çerçeve yine 0,0 (indirilen DEM'lerle aynı). Georeferansı
+hiç olmayan TIFF heightmap olarak kalır (ölçülmemiş). Başsız CLI göreli arazi
+dosyasını proje dosyasının yanında arar.
+
+**Teslim çıktıları ve gece.** `geo_export`: KML/KMZ direk, FOV kaması (planın
+kendi menzili), PTZ devriye yayı, çit, boşluk, switch; KMZ'de birleşik DORI
+`GroundOverlay` (projeksiyonlu georef'te `gx:LatLonQuad`). Konumu olmayan
+(prosedürel) arazide KML açık hatayla reddedilir, DXF yerel metrede yazılır;
+`real_world=True` DXF'i raster CRS'inde yazar. Açılar pusula (0 = kuzey,
+saat yönü) — planlayıcı ve viewshed ile aynı. `night`: güneş (NOAA) + ay
+(düşük hassasiyetli kuram, ~0,3°) → yatay lux tablosu; kamera `min_lux`'ü
+tutmuyorsa menzil IR (`ir_range_m`) ya da ek beyaz ışıkla sınırlanır; sınır
+motorun kendi `CameraPlacement.max_range_m`'i üzerinden uygulanır
+(`band_area(transform=)`), fizik yeniden türetilmez. `offer`: senaryo özeti
+(hesaplanmamış alan `None` → "—", tahmin yok), betiksiz/internetsiz paylaşım
+HTML'i (renkler `design_tokens`'tan), teklif ZIP'i (her parça bağımsız; eksik
+olan BENİOKU'da adıyla yazılır).
 
 **Kırpma global Mercator piksel uzayında.** Enlemde doğrusal interpolasyon yanlış;
 Mercator Y = `asinh(tan(lat))`.
@@ -476,6 +508,14 @@ sayısıyla ağırlıklı, DORI metrikleri yalnız parse edilenler üzerinden). 
   küçük bina, duvar gölgesi yalnız yüzeyle, direk bina üstünde de zeminde,
   ayna sunucuya düşme + önbellek, yüksek sesle hata, alan sınırı, kayıtlı
   bölge çıplak DEM + engel roundtrip, rapor yüzey satırı.
+- `test_geotiff_dem.py` — TM ters dönüşüm, rasterio'suz UTM DEM ölçülmüş +
+  güney-yukarı + konumlu, coğrafi DEM kare metreye, döşemeli/sıkıştırılmış
+  COG (tifffile), georeferanssız TIFF ölçülmemiş, başsız CLI `--viewshed`.
+- `test_geo_export.py` / `test_night.py` / `test_service_delivery.py` —
+  pusula kaması, KML konumu `calculate_bbox` çerçevesinde, KMZ katmanı, DXF
+  R12 yapısı + Türkçe kaçış, projeksiyonlu georef tam; ay evreleri yayımlanmış
+  tarihlerle, lux düzeyleri, ışık kaynağı seçimi; gece kapsaması = motor +
+  IR sınırı, yeni plan eski sonuçları düşürür, teklif paketi parçaları.
 - `test_focal_optimizer.py` — odak adımları log, optimum iki uçtan kötü
   değil, alanlar `view_mask` ile birebir, açık arazide teşhis için tele kazanır,
   yön araması tepenin açık tarafını bulur, zarf her tekil bakışı kapsar (PTZ
@@ -842,9 +882,11 @@ Modu" satırı.
   ~+3 ms, direk raster'ı ~2× (sivri arazide). `compute_coverage_grid` (≤1
   hücre, `n_samp` tavanı 90) bu düzeltmeyi almadı; otorite tekil
   `calculate_3d_viewshed`.
-- `load_geotiff_or_dem` yerel GeoTIFF için `origin`'i 0,0 yapar (gerçek dünya
-  koordinatını atar) — indirilen DEM'lerle tutarlı ama gerçek jeoreferans
-  gerekirse dönüştürülmeli.
+- Yerel GeoTIFF arazisi yerel çerçevede 0,0'dan başlar; gerçek konum
+  `TerrainData.georef`'te (KML / DXF onu kullanır). Izgara yakınsaması
+  (UTM'de birkaç onda bir derece) yok sayılır.
+- Gece modeli IR huzme açısını (geniş uçta FOV'dan dar olabilir) ve hedef
+  yansıtıcılığını modellemez; IR menzili tüm DORI seviyelerini aynı yerde keser.
 - Şartname görev sözlüğü (`_TASK_TR`) kısaltıldı; nadir eş anlamlılar
   ("gözetim", "seçme") kaçabilir — few-shot LLM yolu yakalar.
 
@@ -940,9 +982,10 @@ yazar, 25 px/m diye etiketlemez.
 
 - **PTZ geçiş modeli** artık `_transition_s`: pan/tilt slew + optik zoom süresi
   (`zoom_full_sweep_s` × odak farkı / zoom aralığı) + `settle_s` oturma. Preset
-  `focal_mm` ile ara zoom (`calculate_3d_viewshed(focal_mm_override=)`). Hâlâ
-  yok: ivme profili, alarm-tetikli slew, operatör müdahalesi (revizit sabit
-  döngü varsayar).
+  `focal_mm` ile ara zoom (`calculate_3d_viewshed(focal_mm_override=)`).
+  İvme profili isteğe bağlı (`slew_accel_deg_s2`, yamuk/üçgen hız; `None` =
+  eski sabit hız, bit-aynı). Hâlâ yok: alarm-tetikli slew, operatör müdahalesi
+  (revizit sabit döngü varsayar).
 - **Perf.** `calculate_multi_camera_viewshed` her kamera için `calculate_3d_
   viewshed(with_profile=False)` (kesit atlanır). Üç bit-aynı hızlandırma
   (`test_perf_paths_are_bit_identical`, `test_range_window_keeps_the_whole_cone`):

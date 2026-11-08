@@ -23,19 +23,28 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
 - **API v1** (`cctv_simulator/service/__init__.py: API_VERSION`). Yöntem
   eklemek / isteğe bağlı alan eklemek küçük sürüm; yeniden adlandırma ya da
   silme büyük sürüm. `system.describe` güncel listeyi verir.
-- Yöntemler (54; modül başına):
+- Yöntemler (66; modül başına):
   - `methods.py`: `system.info|ping|describe`, `catalog.get`,
     `library.list|get|camera`, `optics.calculate`, `project.load|save`
   - `library_methods.py`: `library.fields|record|auth|save|delete|set_password`
     (her yazım yönetici şifresini denetler)
   - `terrain_methods.py`: `terrain.catalog|procedural|geotiff|download|image`,
     `regions.list|open|save|delete`, `surface.osm|raster`, `viewshed.single`,
-    `perimeter.plan|coverage|minimize_poles`, `focal.sweep`
+    `perimeter.plan|coverage|minimize_poles|optimize`, `focal.sweep`
   - `ptz_methods.py`: `ptz.sweep|cue|tour`, `perimeter.mixed`
   - `bench_methods.py`: `optics.project|bench`, `plan.image`, `iq.measure`, `scene.render`
   - `spec_methods.py`: `spec.read_file|engines|analyze|override|templates|
     template_save|template_run|template_delete|statement`, `training.export`
   - `report_methods.py`: `report.optics|engineering|open`
+  - `planning_methods.py`: `network.plan` (switch / kablo / PoE / NVR + maliyet),
+    `perimeter.compare_models|compare_use`
+  - `delivery_methods.py`: `export.site` (KML / KMZ / DXF), `export.share_html`,
+    `export.package` (teklif ZIP), `night.condition|timeline|coverage`,
+    `scenario.snapshot|compare`
+- Plandan türetilmiş sonuçlar (`multi`, `band_share`, `network`, `cost`,
+  `night`, `mixed`) yeni bir plan kurulunca düşer (`TerrainEntry.set_plan`):
+  senaryo, KMZ ya da teklif paketi B planını A'nın kapsaması / maliyetiyle
+  eşleştiremez. Arayüz aynı kuralı izler (`replacePlan`).
 - Izgaralar çekirdek oturumunda (`session.py`, en fazla 4 arazi) kalır; kabuğa
   özet + base64 resim gider. Resimler kuzey-yukarı, tam `width_m × height_m`.
 - Motor modülleri tkinter almaz (`test_every_engine_module_imports_without_tk`):
@@ -96,7 +105,12 @@ konsol alt sistemi, onedir → `src-tauri\core\`) → tip denetimi + testler →
   `PYTHONPATH`'i görür; spec kökü ikisine de ekler ve 30'dan az modül
   bulursa derlemeyi durdurur (ilk denemede sessizce 0 modül toplamıştı).
 - Spec `desktop/packaging` altında — kökte yalnız klasik iki spec kalır.
-- Ölçüldü: kurulum 26,9 MB, çekirdek açık hâlde 72 MB; sessiz kurulum
+- Duman testi (`smoke_core.py`) paketli çekirdekte 20 ağır yolu koşar —
+  ağ planı, gece kapsaması, teklif paketi ve döşemeli + sıkıştırılmış (kayan
+  nokta öngörücülü) bir GeoTIFF dahil. `imagecodecs`'in yalnız GeoTIFF
+  codec'leri pakete girer (tam tekerlek ~46 MB; AVIF tek başına 16 MB).
+- Ölçüldü (2026-11-08): kurulum 29,7 MB, çekirdek klasörü 78 MB. Önceki
+  ölçüm: kurulum 26,9 MB, çekirdek açık hâlde 72 MB; sessiz kurulum
   (`/S /D=<klasör>`) → çalıştır → çekirdek bağlandı, değerler geliştirme
   sürümüyle aynı → pencere kapanınca `cctv-core.exe` de kapandı → kaldırma
   temiz. Norton bu derlemede `cctv-core.exe`'ye dokunmadı.

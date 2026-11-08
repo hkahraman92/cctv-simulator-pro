@@ -1,3 +1,53 @@
+## -37. Motor ve analiz derinleştirme + 7 yeni özellik — ✅ (2026-11-08)
+
+**Motor / analiz**
+- Araziye göre direk yerleşimi: optimizasyon direkleri çit boyunca
+  kaydırabilir (`position_steps`); binayla kesilen 500 m çitte bant Algılama
+  0,62 → 1,65 ha (otoriter motor).
+- Kamera modeli seçimi (`model_selection`): kütüphaneden ≤12 model aynı en az
+  direk aramasından + ağ planı + maliyetten geçer; tutan ve ucuz olan önde.
+- PTZ ivme profili (`slew_accel_deg_s2`, yamuk/üçgen hız); `None` bit-aynı.
+- İnce sırt / duvar: ışın örnekleri arasındaki düğüm çizgisi kesişimleri ufka
+  katılır; 1 m'lik duvar arkasında sızan 219 örnek → 0.
+- Yerel GeoTIFF DEM: rasterio'suz paketli çekirdekte gerçek DEM ölçülmemiş
+  heightmap'e düşüyordu (uydurma hücre, konum yok) — **hata**, düzeltildi.
+  Artık ölçülmüş, güney-yukarı, kare hücre, ters projeksiyonla merkez
+  enlem/boylam, `georef`. COG (döşemeli + deflate/LZW/zstd + kayan nokta
+  öngörücü) `tifffile` + `imagecodecs` ile; pakete yalnız gereken codec'ler.
+  Başsız CLI geotiff yolu artık test ediliyor.
+
+**Yeni özellikler (masaüstü)**
+1. KML / KMZ (+ birleşik DORI katmanı) ve DXF R12 (yerel ya da raster CRS).
+2. Tek tık teklif paketi (ZIP): metraj + maliyet CSV/XLSX, direk ve switch
+   listesi, mühendislik raporu, uygunluk beyanı (şartname sonucu varsa),
+   KMZ + DXF, paylaşım sayfası, BENİOKU (eklenemeyenler adıyla).
+3. Maliyet ve 4. ağ/kablo planı (PoE switch, bakır/fiber, NVR, kayıt).
+5. Gece senaryosu: güneş + ay konumu ve evresi → ortam lux; IR / beyaz ışık
+   menzili motorun menzilini sınırlar. Prosedürel 2,4 km çit, yeniay gecesi,
+   IR 30 m: bant Algılama %71,9 (gündüz) → %30,7.
+6. Senaryo karşılaştırma: plan + çalıştırılan sonuçlar anlık kaydedilir,
+   proje dosyasına yazılır, yan yana tablo, ölçüt başına en iyi.
+7. Paylaşılabilir salt-okunur HTML: tek dosya, betik ve ağ isteği yok.
+
+**Bulunan hatalar**
+- Yeni plan kurulunca çekirdek eski planın kapsama / ağ / maliyet / gece
+  sonuçlarını tutuyordu: senaryo, KMZ, rapor B planını A'nın sayılarıyla
+  eşleştirebilirdi. `TerrainEntry.set_plan` türetilmişleri düşürür; arayüz de.
+- `ProjectProvider.setTerrainBlock` her değişimde yeni kimlik + aynı içerikle
+  yeni durum üretiyordu → Arazi sayfasında sonsuz efekt döngüsü ("Maximum
+  update depth", arazi yüklüyken sürekli). Sabit + eşit blokta işlemsiz.
+
+**Doğrulama**
+- pytest tamamı + ruff temiz; arayüz canlı sürüldü (gece, senaryo, optimize
+  9 sn: 15,16 → 18,56 ha, model karşılaştırma 26 sn, ağ planı, Raporlar).
+- Paketli çekirdek duman testi 20/20 (COG dahil); kurulum 29,7 MB, sessiz
+  kurulum → kurulu çekirdekte duman testi → kaldırma temiz.
+
+**Kalan**
+- Gece: IR huzme açısı ve hedef yansıtıcılığı yok.
+- Şartname sonucu proje dosyasına yazılmıyor (oturum içinde pakete girer).
+- KML'de kapsama yalnız görüntü (vektör kontur yok).
+
 ## -36. Yeni masaüstü uygulaması: Tauri 2 + React/TS + Python çekirdek servisi — ✅ (2026-11-07)
 
 - Mimari: `desktop/` (Rust kabuk + WebView2 arayüzü) Python çekirdeğini
