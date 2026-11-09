@@ -3176,9 +3176,13 @@ class TerrainViewshedWindow:
         if len(self.fence_points) < 2:
             return
 
-        self.perimeter_plan = generate_perimeter_plan(
-            terrain=self.terrain, fence_points=self.fence_points, camera=self.current_camera,
-            **self._plan_kwargs())
+        try:
+            self.perimeter_plan = generate_perimeter_plan(
+                terrain=self.terrain, fence_points=self.fence_points, camera=self.current_camera,
+                **self._plan_kwargs())
+        except ValueError as exc:            # the target px/m holds nowhere on the ground
+            messagebox.showwarning("Hedef tutulamıyor", str(exc), parent=self.window)
+            return
         self._refresh_plan_stats()
 
     def _plan_kwargs(self) -> dict:

@@ -311,3 +311,29 @@ def test_coverage_grid_keeps_terrain_occlusion_for_many_cameras(cam):
                                    cam, target_ppm=250.0)
     assert len(plan.placed_cameras) > 250
     assert compute_coverage_grid(plan, cam, terrain=terr).occlusion_applied
+
+
+def test_dead_zone_is_where_the_steepest_ray_meets_the_ground():
+    """The bottom of the picture is the STEEPEST ray (tilt + vfov/2); the old
+    code took the shallowest one and listed 7.2 m for a 12 mm camera whose
+    frame really starts 33 m out."""
+    import math
+
+    from cctv_simulator.calculations import camera_optics
+    from cctv_simulator.perimeter_planner import aim_tilt_deg, calculate_optimal_spacing, dead_zone_for
+
+    cam = CameraConfig(focal_min_mm=2.8, focal_max_mm=12.0)
+    for lens, ppm in (("max", 25.0), ("max", 125.0), ("min", 25.0)):
+        reach, dz, _ = calculate_optimal_spacing(cam, target_ppm=ppm, mast_height_m=6.0, lens_mode=lens)
+        opt = camera_optics(cam, cam.focal_max_mm if lens == "max" else cam.focal_min_mm)
+        steep = aim_tilt_deg(reach, 6.0) + opt.vfov_deg / 2
+        assert dz == pytest.approx(6.0 / math.tan(math.radians(steep)))
+    assert dead_zone_for(6.0, 80.0, 30.0) == 0.0               # looking straight down: none
+
+
+def test_a_target_that_holds_nowhere_is_refused_not_floored():
+    from cctv_simulator.perimeter_planner import calculate_optimal_spacing
+
+    cam = CameraConfig(focal_min_mm=2.8, focal_max_mm=2.8)
+    with pytest.raises(ValueError, match="hiçbir yerde tutmuyor"):
+        calculate_optimal_spacing(cam, target_ppm=400.0, mast_height_m=12.0)

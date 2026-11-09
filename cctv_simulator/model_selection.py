@@ -48,8 +48,13 @@ def compare_models(terrain: TerrainData, fence_points: Sequence[Tuple[float, flo
         if progress:
             progress(k, len(candidates), name)
         t0 = time.perf_counter()
-        res = minimize_poles(terrain, list(fence_points), cam, plan_kwargs=plan_kwargs, goal_frac=goal_frac,
-                             level=level, band_m=band_m, inside_m=inside_m, position_steps=position_steps)
+        try:
+            res = minimize_poles(terrain, list(fence_points), cam, plan_kwargs=plan_kwargs, goal_frac=goal_frac,
+                                 level=level, band_m=band_m, inside_m=inside_m, position_steps=position_steps)
+        except ValueError as exc:            # this model cannot hold the target at all
+            out.append(ModelOption(model_name=name, met=False, poles=0, band_frac=0.0,
+                                   seconds=time.perf_counter() - t0, notes=[str(exc)]))
+            continue
         best = res.best
         plan = res.best_plan
         if plan is not None and res.best_layout is not None:

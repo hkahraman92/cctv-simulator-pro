@@ -488,7 +488,10 @@ def perimeter_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     kw = _plan_kwargs(params)
     if params.get("spacing_m") is not None:
         kw["spacing_m"] = _num(params, "spacing_m", lo=2, hi=5000)
-    plan = generate_perimeter_plan(t, fence, cam, **kw)
+    try:
+        plan = generate_perimeter_plan(t, fence, cam, **kw)
+    except ValueError as exc:
+        raise RpcError(APP_ERROR, str(exc)) from None
     entry.set_plan((plan, cam, kw, fence))
     return {**_plan_json(plan), "warnings": _ptz_main_warning(cam)}
 
@@ -636,10 +639,13 @@ def perimeter_minimize_poles(params: Dict[str, Any], ctx: Context) -> Dict[str, 
         raise RpcError(INVALID_PARAMS, "'level' detect, observe, recognize ya da identify olmalı.")
     goal = _num(params, "goal_frac", 0.95, lo=0.05, hi=1.0)
     band, inside = _band_params(params)
-    res = minimize_poles(t, fence, cam, plan_kwargs=kw, goal_frac=goal, level=level,
-                         band_m=band, inside_m=inside,
-                         position_steps=int(_num(params, "position_steps", 0, lo=0, hi=4)),
-                         progress=lambda d, n: ctx.progress(d, n, f"Deneme {d}/{n}"))
+    try:
+        res = minimize_poles(t, fence, cam, plan_kwargs=kw, goal_frac=goal, level=level,
+                             band_m=band, inside_m=inside,
+                             position_steps=int(_num(params, "position_steps", 0, lo=0, hi=4)),
+                             progress=lambda d, n: ctx.progress(d, n, f"Deneme {d}/{n}"))
+    except ValueError as exc:
+        raise RpcError(APP_ERROR, str(exc)) from None
     plan = None
     if res.met and res.best_plan is not None:
         # The search scored per-pole focal / tilt choices: apply them, so the

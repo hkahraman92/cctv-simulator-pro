@@ -137,8 +137,15 @@ def calculate_optimal_spacing(camera: CameraConfig,
     # Fog / rain / haze cap the range where target contrast survives the path.
     band = _atm.band_for_camera(camera.sensor_name, camera.model_name)
     max_slant_dist = _atm.usable_range_m(max_slant_dist, visibility_km, band, weather)
-    # Ground reach (Pythagoras with mast height)
-    ground_reach = math.sqrt(max(max_slant_dist**2 - mast_height_m**2, 100.0))
+    # Ground reach (Pythagoras with mast height). No floor: a 10 m floor used
+    # to report a reach where the target px/m does not hold (2.8 mm at
+    # 125 px/m: "10 m" while the engine gives 115 px/m there).
+    if max_slant_dist <= mast_height_m:
+        raise ValueError(
+            f"{target_ppm:g} px/m hedefi bu lensle ({focal_mm:g} mm) {mast_height_m:g} m direkten zeminde "
+            f"hiçbir yerde tutmuyor (en çok {max_slant_dist:.1f} m eğik mesafe). Daha uzun odak, daha "
+            "yüksek çözünürlük, daha alçak direk ya da daha düşük hedef seçin.")
+    ground_reach = math.sqrt(max_slant_dist**2 - mast_height_m**2)
 
     # Dead zone under the pole. BUGFIX: this used to assume a flat 15 deg
     # downward tilt regardless of lens/mast, while generate_perimeter_plan
@@ -148,25 +155,40 @@ def calculate_optimal_spacing(camera: CameraConfig,
     # match the cameras it went on to place. Mirror the same aim convention
     # here (the dead_zone*2.0 floor term generate_perimeter_plan also applies
     # isn't known yet at this point and is a rare-case clamp, not the driver).
-    vfov_deg = optics.vfov_deg
-    aim_dist = max(ground_reach * 0.55, 5.0)
-    tilt_deg = max(1.5, min(25.0, math.degrees(math.atan(mast_height_m / aim_dist))))
-    top_ray_angle_deg = tilt_deg + (vfov_deg / 2.0)
-    bottom_ray_angle_deg = tilt_deg - (vfov_deg / 2.0)
-
-    # Distance to where bottom of picture touches the ground
-    if bottom_ray_angle_deg > 2.0:
-        dead_zone_m = mast_height_m / math.tan(math.radians(bottom_ray_angle_deg))
-    else:
-        dead_zone_m = mast_height_m * 1.2
-
-    dead_zone_m = max(1.5, min(dead_zone_m, ground_reach * 0.25))
+    tilt = aim_tilt_deg(ground_reach, mast_height_m)
+    dead_zone_m = dead_zone_for(mast_height_m, tilt, optics.vfov_deg)
+    # The frame's top edge can meet the ground before the optical reach
+    # (steep tilt, narrow vertical FOV): the pole sees nothing past it.
+    top = tilt - optics.vfov_deg / 2.0
+    framed_reach = min(ground_reach, mast_height_m / math.tan(math.radians(top))) if top > 0.05 else ground_reach
 
     # Effective inter-pole spacing with safety overlap
-    raw_span = max(ground_reach - dead_zone_m, 10.0)
+    raw_span = max(framed_reach - dead_zone_m, 10.0)
     optimal_spacing_m = raw_span * (1.0 - overlap_pct)
 
     return ground_reach, dead_zone_m, optimal_spacing_m
+
+
+def aim_tilt_deg(ground_reach_m: float, mast_height_m: float) -> float:
+    """Downward tilt (deg, positive down) aiming the optical axis at ~55 % of
+    the ground reach, clamped to a sane surveillance band. The planner places
+    every regular pole with this tilt, so its dead zone uses it too."""
+    aim_dist = max(ground_reach_m * 0.55, 5.0)
+    return max(1.5, min(25.0, math.degrees(math.atan(mast_height_m / aim_dist))))
+
+
+def dead_zone_for(mast_height_m: float, tilt_down_deg: float, vfov_deg: float) -> float:
+    """Ground distance to where the bottom of the picture meets the ground.
+
+    The bottom edge is the STEEPEST ray, ``tilt + vfov/2`` below the horizon.
+    BUGFIX: this used ``tilt - vfov/2`` (the shallowest ray, the top of the
+    frame); below 2 deg it fell back to mast x 1.2 -- a 12 mm camera on a 6 m
+    mast was listed with 7.2 m of dead zone instead of 33.3 m, and the pole
+    spacing (reach - dead zone) came out far too sparse."""
+    steep = tilt_down_deg + vfov_deg / 2.0
+    if steep >= 89.9:
+        return 0.0
+    return mast_height_m / math.tan(math.radians(max(steep, 0.1)))
 
 
 def generate_perimeter_plan(terrain: TerrainData,
@@ -259,8 +281,7 @@ def generate_perimeter_plan(terrain: TerrainData,
     # frame actually lands on the fence line, instead of a fixed -14 deg that
     # only frames a few metres of ground with a tele lens. Clamped to a sane
     # surveillance band.
-    aim_dist = max(ground_reach * 0.55, dead_zone * 2.0, 5.0)
-    default_tilt = -max(1.5, min(25.0, math.degrees(math.atan(mast_height_m / aim_dist))))
+    default_tilt = -aim_tilt_deg(ground_reach, mast_height_m)     # same aim as the dead zone above
 
     placed_cameras: List[PlacedCamera] = []
     pole_counter = 1
