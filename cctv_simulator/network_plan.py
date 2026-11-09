@@ -247,8 +247,9 @@ def plan_network(plan, *, camera_model: Optional[Dict] = None, ptz_model: Option
         + (" Hat dışındaki direklere sınırdan dik hendek eklenir." if lateral_any or remote else "")
         + (f" Sınıra bakırla ulaşamayan {len(by_pole)} direğe direk üstü switch + fiber." if remote else ""),
         f"Switch: {switch_ports} port, PoE bütçesi {poe_budget_w:.0f} W.",
-        f"Kamera gücü: sabit {fixed_w:g} W ({'broşür' if fixed_ds else 'varsayılan'})"
-        + (f", PTZ {ptz_w:g} W ({'broşür' if ptz_ds else 'varsayılan'})" if getattr(plan, "ptz_cameras", []) else "") + ".",
+        f"Kamera gücü: sabit {fixed_dev:g} W ({'broşür' if fixed_ds else 'varsayılan'}; port {fixed_w:g} W)"
+        + (f", PTZ {ptz_dev:g} W ({'broşür' if ptz_ds else 'varsayılan'}; port {ptz_w:g} W)"
+           if getattr(plan, "ptz_cameras", []) else "") + ".",
         f"Kayıt: {retention_days} gün, RAID payı %{raid_overhead * 100:.0f}; görünür kameralar gece IR "
         f"gürültüsüyle ×{night_factor:g} bit hızı (günün %{night_share * 100:.0f}'si) — depolama ortalamayla, "
         f"NVR girişi gece tepesiyle ({peak:.0f} Mbps).",
