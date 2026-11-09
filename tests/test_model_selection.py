@@ -26,7 +26,10 @@ def test_each_model_gets_the_pole_search_and_better_resolution_needs_fewer_poles
 
 
 def test_ranking_uses_cost_only_when_everything_is_priced():
-    book = PriceBook(pole=8000, switch=6000, copper_per_m=40, fibre_per_m=20, nvr_per_tb=4000, nvr_base=20000)
+    book = PriceBook(pole=8000, switch=6000, copper_per_m=40, fibre_per_m=20, nvr_per_tb=4000, nvr_base=20000,
+                     trench_per_m=150, power_cable_per_m=30, cabinet=9000, ups_per_kwh=12000, grounding_set=2500,
+                     vms_licence=1500, workstation=40000, bracket=600, install_per_camera=2000,
+                     maintenance_per_camera_year=800)
     opts = compare_models(T, FENCE, [("2MP", WIDE, {}), ("8MP", SHARP, {})], plan_kwargs=KW, goal_frac=0.6,
                           level=ZONE_DETECT, price_book=book, prices={"2MP": 3000, "8MP": 60000})
     met = [o for o in opts if o.met]

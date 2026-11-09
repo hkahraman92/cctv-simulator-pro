@@ -68,7 +68,10 @@ def network_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         switch_ports=int(_num(params, "switch_ports", 8, lo=1, hi=48)),
         poe_budget_w=_num(params, "poe_budget_w", 120.0, lo=10, hi=2000),
         nvr_at_m=_num(params, "nvr_at_m", 0.0, lo=0),
-        retention_days=int(_num(params, "retention_days", 30, lo=1, hi=3650)))
+        retention_days=int(_num(params, "retention_days", 30, lo=1, hi=3650)),
+        night_factor=_num(params, "night_factor", 2.0, lo=1, hi=5),
+        autonomy_h=_num(params, "autonomy_h", 1.0, lo=0, hi=72),
+        fibre_ring=bool(params.get("fibre_ring", False)))
     cost = estimate_cost(plan, net, _prices(params.get("prices")))
     entry.results["network"] = net
     entry.results["cost"] = cost

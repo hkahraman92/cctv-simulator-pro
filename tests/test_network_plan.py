@@ -40,13 +40,38 @@ def test_rounding_at_the_copper_limit_is_not_an_over_budget_pole():
 
 
 def test_storage_and_power_are_the_stated_formulas(plan):
-    net = plan_network(plan, bitrate_fixed_mbps=4.0, retention_days=30, raid_overhead=0.15)
+    from cctv_simulator.network_plan import pse_w
+
     n = len(plan.placed_cameras)
-    assert net.bitrate_mbps == pytest.approx(4.0 * n)
-    assert net.storage_tb == pytest.approx(4.0 * n * 1e6 / 8 * 86400 * 30 / 1e12 * 1.15)
-    assert net.poe_total_w == pytest.approx(12.0 * n)                     # default 12 W, stated
+    day = plan_network(plan, bitrate_fixed_mbps=4.0, retention_days=30, raid_overhead=0.15, night_factor=1.0)
+    assert day.bitrate_mbps == pytest.approx(4.0 * n) and day.peak_bitrate_mbps == pytest.approx(4.0 * n)
+    assert day.storage_tb == pytest.approx(4.0 * n * 1e6 / 8 * 86400 * 30 / 1e12 * 1.15)
+    # visible cameras under IR: x2 for half the day -> storage on the average, NVR input on the peak
+    net = plan_network(plan, bitrate_fixed_mbps=4.0, retention_days=30, raid_overhead=0.15)
+    assert net.peak_bitrate_mbps == pytest.approx(8.0 * n)
+    assert net.storage_tb == pytest.approx(6.0 * n * 1e6 / 8 * 86400 * 30 / 1e12 * 1.15)
+    # PoE is budgeted at the PSE: 12 W device + 10 % cable loss -> class 15.4 W
+    assert pse_w(12.0) == 15.4 and pse_w(60.0) == 75.0
+    assert net.poe_total_w == pytest.approx(15.4 * n)
     assert camera_power_w({"power_consumption": "≤ 12,5 W"}) == (12.5, True)
-    assert camera_power_w({}, ptz=True) == (30.0, False)
+    assert camera_power_w({}, ptz=True) == (60.0, False)                  # IR + heater + motors
+
+
+def test_bill_names_every_tender_item_and_never_guesses_a_price(plan):
+    from cctv_simulator.network_plan import PriceBook, estimate_cost
+
+    net = plan_network(plan, autonomy_h=2.0, fibre_ring=True)
+    assert net.trench_m > 0 and net.power_cable_m == net.trench_m and net.cabinets == len(net.switches)
+    assert net.ups_wh == pytest.approx(net.ups_load_w * 2.0 / 0.85)
+    chain = plan_network(plan)
+    assert net.fibre_m > chain.fibre_m                                    # the ring's return path
+    cost = estimate_cost(plan, net, PriceBook(camera=1000))
+    items = {ln.item for ln in cost.lines}
+    for want in ("Hendek (kazı + boru + dolgu)", "Enerji kablosu", "Saha kabini (switch + parafudr + enerji)",
+                 "Topraklama + parafudr seti", "VMS / analitik lisansı", "Operatör iş istasyonu",
+                 "Montaj aparatı", "Kamera montajı + devreye alma", "Bakım (1 yıl)"):
+        assert want in items and want in cost.unpriced
+    assert "Sabit kamera" not in cost.unpriced
 
 
 def test_cost_names_what_is_not_priced(plan):

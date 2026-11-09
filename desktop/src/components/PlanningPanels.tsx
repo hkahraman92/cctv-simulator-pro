@@ -9,9 +9,16 @@ type Job = ReturnType<typeof useJob>;
 
 export interface PriceBook {
   camera: number; ptz: number; pole: number; switch: number; copper_per_m: number; fibre_per_m: number;
-  nvr_per_tb: number; nvr_base: number; currency: string;
+  nvr_per_tb: number; nvr_base: number;
+  trench_per_m: number; power_cable_per_m: number; cabinet: number; ups_per_kwh: number; grounding_set: number;
+  vms_licence: number; workstation: number; bracket: number; install_per_camera: number; maintenance_per_camera_year: number;
+  currency: string;
 }
-export const EMPTY_PRICES: PriceBook = { camera: 0, ptz: 0, pole: 0, switch: 0, copper_per_m: 0, fibre_per_m: 0, nvr_per_tb: 0, nvr_base: 0, currency: "TL" };
+export const EMPTY_PRICES: PriceBook = {
+  camera: 0, ptz: 0, pole: 0, switch: 0, copper_per_m: 0, fibre_per_m: 0, nvr_per_tb: 0, nvr_base: 0,
+  trench_per_m: 0, power_cable_per_m: 0, cabinet: 0, ups_per_kwh: 0, grounding_set: 0,
+  vms_licence: 0, workstation: 0, bracket: 0, install_per_camera: 0, maintenance_per_camera_year: 0, currency: "TL",
+};
 
 export interface SwitchMark { index: number; x_m: number; y_m: number; poles: number[]; ports_used: number; poe_w: number; over_budget: boolean }
 
@@ -19,6 +26,7 @@ export interface NetworkResult {
   network: {
     switches: SwitchMark[]; copper_m: number; fibre_m: number; longest_copper_m: number; cameras: number;
     bitrate_mbps: number; storage_tb: number; retention_days: number; poe_total_w: number; warnings: string[]; assumptions: string[];
+    peak_bitrate_mbps: number; trench_m: number; cabinets: number; ups_load_w: number; ups_wh: number; autonomy_h: number; fibre_ring: boolean;
   };
   cost: { lines: { item: string; qty: number; unit: string; unit_price: number; total: number }[]; total: number; unpriced: string[]; currency: string };
 }
@@ -27,6 +35,10 @@ const money = (v: number, cur: string) => `${v.toLocaleString("tr-TR", { maximum
 const PRICE_FIELDS: [keyof PriceBook, string][] = [
   ["camera", "Sabit kamera (adet)"], ["ptz", "PTZ (adet)"], ["pole", "Direk + temel (adet)"], ["switch", "PoE switch (adet)"],
   ["copper_per_m", "Bakır kablo (m)"], ["fibre_per_m", "Fiber (m)"], ["nvr_per_tb", "Kayıt (TB)"], ["nvr_base", "NVR / sunucu"],
+  ["trench_per_m", "Hendek (m)"], ["power_cable_per_m", "Enerji kablosu (m)"], ["cabinet", "Saha kabini (adet)"],
+  ["ups_per_kwh", "UPS (kWh)"], ["grounding_set", "Topraklama + parafudr (set)"], ["vms_licence", "VMS lisansı (kamera)"],
+  ["workstation", "İş istasyonu (adet)"], ["bracket", "Montaj aparatı (adet)"], ["install_per_camera", "Montaj + devreye alma (kamera)"],
+  ["maintenance_per_camera_year", "Bakım (kamera·yıl)"],
 ];
 
 /** Cabling, PoE, NVR sizing and the priced bill of quantities of the current plan. */
@@ -34,22 +46,25 @@ export function NetworkPanel({ T, job, terrainId, useObstacles, prices, onPrices
   T: TerrainApi; job: Job; terrainId: string; useObstacles: boolean; resetKey: number;
   prices: PriceBook; onPrices: (p: PriceBook) => void; onResult: (r: NetworkResult | null) => void;
 }) {
-  const [cfg, setCfg] = useState({ switch_ports: 8, poe_budget_w: 120, max_copper_m: 90, retention_days: 30 });
+  const [cfg, setCfg] = useState({ switch_ports: 8, poe_budget_w: 120, max_copper_m: 90, retention_days: 30, autonomy_h: 1, night_factor: 2 });
+  const [ring, setRing] = useState(false);
   const [res, setRes] = useState<NetworkResult | null>(null);
   const [showPrices, setShowPrices] = useState(false);
   useEffect(() => { setRes(null); }, [resetKey]);       // a new plan: the old network no longer applies
-  const run = () => void job.run("Ağ planı ve maliyet", () => T.network({ terrain_id: terrainId, use_obstacles: useObstacles, ...cfg, prices }))
+  const run = () => void job.run("Ağ planı ve maliyet", () => T.network({ terrain_id: terrainId, use_obstacles: useObstacles, ...cfg, fibre_ring: ring, prices }))
     .then((r) => { if (r) { setRes(r); onResult(r); } });
   const n = res?.network;
   return (
     <Panel title="Ağ, kablo & maliyet" icon={<Cable size={16} className="text-secondary" />}>
       <div className="grid grid-cols-2 gap-2 text-[12px]">
-        {([["switch_ports", "Switch port"], ["poe_budget_w", "PoE bütçesi (W)"], ["max_copper_m", "Bakır sınırı (m)"], ["retention_days", "Kayıt süresi (gün)"]] as const).map(([k, l]) => (
+        {([["switch_ports", "Switch port"], ["poe_budget_w", "PoE bütçesi (W)"], ["max_copper_m", "Bakır sınırı (m)"], ["retention_days", "Kayıt süresi (gün)"],
+          ["autonomy_h", "UPS otonomi (saat)"], ["night_factor", "Gece bit hızı (×)"]] as const).map(([k, l]) => (
           <label key={k}><span className="label">{l}</span>
             <input type="number" value={cfg[k]} min={1} onChange={(e) => setCfg({ ...cfg, [k]: Number(e.target.value) || cfg[k] })}
               className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 font-mono" /></label>
         ))}
       </div>
+      <label className="mt-2 flex items-center gap-2 text-[12px]"><input type="checkbox" checked={ring} onChange={(e) => setRing(e.target.checked)} /> Fiber halka (çift yol)</label>
       <button type="button" className="mt-2 text-[11px] text-text-2 underline" onClick={() => setShowPrices((s) => !s)}>{showPrices ? "Birim fiyatları gizle" : "Birim fiyatlar…"}</button>
       {showPrices && (
         <div className="mt-1 grid grid-cols-2 gap-1.5 text-[11px]">
@@ -70,10 +85,13 @@ export function NetworkPanel({ T, job, terrainId, useObstacles, prices, onPrices
             <span className="text-text-3">Bakır / fiber</span><span className="text-right">{fmt(n.copper_m, 0)} / {fmt(n.fibre_m, 0)} m</span>
             <span className="text-text-3">En uzun bakır</span><span className="text-right">{fmt(n.longest_copper_m, 0)} m</span>
             <span className="text-text-3">PoE toplam</span><span className="text-right">{fmt(n.poe_total_w, 0)} W</span>
-            <span className="text-text-3">NVR girişi</span><span className="text-right">{fmt(n.bitrate_mbps, 0)} Mbps</span>
+            <span className="text-text-3">NVR girişi (gece tepe)</span><span className="text-right">{fmt(n.peak_bitrate_mbps || n.bitrate_mbps, 0)} Mbps</span>
+            <span className="text-text-3">Hendek</span><span className="text-right">{fmt(n.trench_m, 0)} m</span>
+            <span className="text-text-3">Kabin / UPS</span><span className="text-right">{n.cabinets} · {fmt(n.ups_wh / 1000, 1)} kWh</span>
             <span className="text-text-3">Kayıt ({n.retention_days} gün)</span><span className="text-right">{fmt(n.storage_tb, 1)} TB</span>
           </div>
           {n.warnings.map((w) => <div key={w} className="mt-1 text-warn">▲ {w}</div>)}
+          {n.assumptions.map((a) => <div key={a} className="mt-0.5 font-sans text-[10px] text-text-3">◆ {a}</div>)}
           <table className="mt-2 w-full border-collapse">
             <tbody>
               {res.cost.lines.map((l) => (
