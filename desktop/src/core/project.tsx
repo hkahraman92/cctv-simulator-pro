@@ -50,11 +50,16 @@ interface ProjectCtx {
 const Ctx = createContext<ProjectCtx | null>(null);
 
 export const DEFAULT_PLAN: PlanSettings = {
-  plan_path: "", plan_width_m: 45, target: { x_m: 12, y_m: 0, active: false }, level_key: "Characterize",
+  plan_path: "", plan_width_m: 45, target: { x_m: 20, y_m: 14, active: false }, level_key: "Characterize",
 };
 
+/** Where a new project's first camera stands: left side, halfway up the default
+ *  45 m plan (height 0.62 x width), looking east into it -- (0, 0) is the plan's
+ *  corner, so the camera started on the edge with half its view clipped. */
+const FIRST_AT = { x: 8, y: 14 };
+
 export const newSite = (n: number, at?: { x: number; y: number }): Site => ({
-  camera: { ...DEFAULT_CAMERA, name: `Kamera ${n}`, pos_x_m: at?.x ?? 0, pos_y_m: at?.y ?? 0 },
+  camera: { ...DEFAULT_CAMERA, name: `Kamera ${n}`, pos_x_m: (at ?? FIRST_AT).x, pos_y_m: (at ?? FIRST_AT).y },
   focal: DEFAULT_CAMERA.focal_min_mm,
 });
 

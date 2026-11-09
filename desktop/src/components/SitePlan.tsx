@@ -31,6 +31,14 @@ export default function SitePlan(p: Props) {
   const [drag, setDrag] = useState<{ kind: "move" | "turn"; i: number } | null>(null);
   const pad = Math.max(p.widthM, p.heightM) * 0.04;
   const W = p.widthM + 2 * pad, H = p.heightM + 2 * pad;
+  // wheel zoom / background-drag pan: the visible window in SVG units (k = 1 shows the whole plan)
+  const [vw, setVw] = useState({ x: 0, y: 0, k: 1 });
+  const [pan, setPan] = useState<{ cx: number; cy: number; x: number; y: number; s: number } | null>(null);
+  useEffect(() => setVw({ x: 0, y: 0, k: 1 }), [W, H]);
+  const VW = W / vw.k, VH = H / vw.k;
+  const clampView = (x: number, y: number, k: number) => ({
+    k, x: Math.min(Math.max(x, 0), W - W / k), y: Math.min(Math.max(y, 0), H - H / k),
+  });
   const X = (x: number) => x + pad;
   const Y = (y: number) => p.heightM - y + pad;              // y up in the world, down in SVG
   // one screen pixel in plan metres, from the drawn size (markers / text stay legible at any plan width)
@@ -42,17 +50,43 @@ export default function SitePlan(p: Props) {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const px = 1 / Math.min(shown.w / W, shown.h / H);
+  const px = 1 / Math.min(shown.w / VW, shown.h / VH);
 
-  const world = (e: React.PointerEvent) => {
+  /** screen point -> SVG units of the current window (+ screen px per SVG unit) */
+  const svgAt = (clientX: number, clientY: number) => {
     const r = svg.current!.getBoundingClientRect();
-    const k = Math.min(r.width / W, r.height / H);
-    const ox = (r.width - W * k) / 2, oy = (r.height - H * k) / 2;
-    const u = (e.clientX - r.left - ox) / k, v = (e.clientY - r.top - oy) / k;
+    const k = Math.min(r.width / VW, r.height / VH);
+    const ox = (r.width - VW * k) / 2, oy = (r.height - VH * k) / 2;
+    return { u: vw.x + (clientX - r.left - ox) / k, v: vw.y + (clientY - r.top - oy) / k, s: k };
+  };
+  const world = (e: React.PointerEvent) => {
+    const { u, v } = svgAt(e.clientX, e.clientY);
     return { x: u - pad, y: p.heightM - (v - pad) };
   };
 
+  // native, non-passive: the wheel zooms the plan only, never scrolls the page under it
+  const zoomRef = useRef<(e: WheelEvent) => void>(() => undefined);
+  zoomRef.current = (e: WheelEvent) => {
+    e.preventDefault();
+    const k = Math.min(Math.max(vw.k * Math.exp(-e.deltaY * 0.0015), 1), 40);
+    if (k === vw.k) return;
+    const { u, v } = svgAt(e.clientX, e.clientY);          // keep the point under the cursor still
+    const f = vw.k / k;
+    setVw(clampView(u - (u - vw.x) * f, v - (v - vw.y) * f, k));
+  };
+  useEffect(() => {
+    const el = svg.current;
+    if (!el) return;
+    const h = (e: WheelEvent) => zoomRef.current(e);
+    el.addEventListener("wheel", h, { passive: false });
+    return () => el.removeEventListener("wheel", h);
+  }, []);
+
   const onMove = (e: React.PointerEvent) => {
+    if (pan) {
+      setVw(clampView(pan.x - (e.clientX - pan.cx) / pan.s, pan.y - (e.clientY - pan.cy) / pan.s, vw.k));
+      return;
+    }
     if (!drag) return;
     const w = world(e);
     if (drag.kind === "move") p.onMove(drag.i, round(w.x), round(w.y));
@@ -61,17 +95,24 @@ export default function SitePlan(p: Props) {
       p.onHeading(drag.i, Math.round(((Math.atan2(w.y - c.pos_y_m, w.x - c.pos_x_m) * 180) / Math.PI + 360) % 360));
     }
   };
-  const end = () => { if (drag) { setDrag(null); p.onDragEnd(); } };
+  const end = () => { setPan(null); if (drag) { setDrag(null); p.onDragEnd(); } };
 
   const step = niceStep(p.widthM);
   const gridX = Array.from({ length: Math.floor(p.widthM / step) + 1 }, (_, i) => i * step);
   const gridY = Array.from({ length: Math.floor(p.heightM / step) + 1 }, (_, i) => i * step);
 
   return (
-    <svg ref={svg} viewBox={`0 0 ${W} ${H}`} className="block h-full w-full touch-none rounded bg-bg-2"
+    <div className="relative h-full w-full">
+    <svg ref={svg} viewBox={`${vw.x} ${vw.y} ${VW} ${VH}`}
+      className={`block h-full w-full touch-none rounded bg-bg-2 ${pan ? "cursor-grabbing" : vw.k > 1 && p.tool === "move" ? "cursor-grab" : ""}`}
       onPointerMove={onMove} onPointerUp={end} onPointerLeave={end} role="img"
       aria-label={`Vaziyet planı, ${p.sites.length} kamera`}
-      onPointerDown={(e) => { if (p.tool === "target" && e.target === e.currentTarget) { const w = world(e); p.onTarget(round(w.x), round(w.y)); } }}>
+      onDoubleClick={(e) => { if (e.target === e.currentTarget || (e.target as Element).tagName !== "circle") setVw({ x: 0, y: 0, k: 1 }); }}
+      onPointerDown={(e) => {
+        if (e.target !== e.currentTarget && (e.target as Element).tagName === "circle") return;
+        if (p.tool === "target") { const w = world(e); p.onTarget(round(w.x), round(w.y)); return; }
+        if (vw.k > 1) { const { s } = svgAt(e.clientX, e.clientY); setPan({ cx: e.clientX, cy: e.clientY, x: vw.x, y: vw.y, s }); }
+      }}>
       <defs><clipPath id="plan-area"><rect x={pad} y={pad} width={p.widthM} height={p.heightM} /></clipPath></defs>
       {p.image && <image href={p.image} x={pad} y={pad} width={p.widthM} height={p.heightM} preserveAspectRatio="none" opacity={0.85} />}
       {gridX.map((g) => <line key={`x${g}`} x1={X(g)} y1={pad} x2={X(g)} y2={pad + p.heightM} stroke="var(--color-line-soft)" strokeWidth={px} pointerEvents="none" />)}
@@ -128,6 +169,10 @@ export default function SitePlan(p: Props) {
         );
       })}
     </svg>
+      <div className="pointer-events-none absolute bottom-1.5 right-2 font-mono text-[10px] text-text-3">
+        {vw.k > 1.01 ? `${fmt(vw.k, 1)}× · sürükle: kaydır · çift tık: sığdır` : "tekerlek: yakınlaştır"}
+      </div>
+    </div>
   );
 }
 
