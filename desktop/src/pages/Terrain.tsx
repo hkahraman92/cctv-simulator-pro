@@ -8,7 +8,7 @@ import { DEFAULT_CAMERA, type CameraConfig, type ModelSummary } from "../core/ap
 import { useCoalesced, useCore } from "../core/CoreProvider";
 import { usePageActive } from "../core/pageActive";
 import type {
-  AreaPlanResult, CityInfo, CoverageLayer, CoverageResult, DoriLevel, FocalSweep, LegendRow, NightCoverage, PlanResult, PoleSearch, RegionInfo, Scenario,
+  AreaPlanResult, CityInfo, CoverageLayer, CoverageResult, DoriLevel, FocalSweep, PlaybackPtz, LegendRow, NightCoverage, PlanResult, PoleSearch, RegionInfo, Scenario,
   SingleViewshed, TerrainCatalog, TerrainInfo,
 } from "../core/terrainApi";
 import { useJob } from "../core/useJob";
@@ -18,6 +18,7 @@ import MapView from "../components/MapView";
 import JobBar from "../components/JobBar";
 import { FocalCurve, ProfileChart } from "../components/charts";
 import { MixedPanel, PtzPanel, type Layer } from "../components/PtzPanels";
+import PtzSweep from "../components/PtzSweep";
 import { ComparePanel, EMPTY_PRICES, NetworkPanel, type NetworkResult, type PriceBook } from "../components/PlanningPanels";
 import { NightPanel, ScenarioPanel } from "../components/DeliveryPanels";
 import { ApproachPanel, type ApproachMarks } from "../components/ApproachPanel";
@@ -70,6 +71,11 @@ export default function Terrain() {
   const [covLayer, setCovLayer] = useState<CoverageLayer>("target");
   const [covLevel, setCovLevel] = useState<"plan" | DoriLevel>("plan");
   const [showFov, setShowFov] = useState(true);
+  // live PTZ sweep: pictures from the core once, the map turns the cones
+  const [play, setPlay] = useState<{ ptz: PlaybackPtz[]; tab: Tab; camera: string } | null>(null);
+  const [playing, setPlaying] = useState(true);
+  const [rate, setRate] = useState(1);
+  const [playT, setPlayT] = useState(0);
   // area goal: the drawn polygon itself is what must be seen (car park, yard, square)
   const [area, setArea] = useState<{ level: DoriLevel; goal: number; interior: boolean; perPole: number; streetsOnly: boolean; maxHole: number }>(
     { level: "recognize", goal: 95, interior: true, perPole: 2, streetsOnly: false, maxHole: 0 });
@@ -94,7 +100,7 @@ export default function Terrain() {
   const [planVer, setPlanVer] = useState(0);       // remounts panels that hold results of the old plan
   const replacePlan = useCallback((p: PlanResult | null) => {
     setPlanVer((v) => v + 1);
-    setPlanRes(p); setCoverage(null); setNetwork(null); setNight(null); setMixedLayer(null); setApproachMarks(null);
+    setPlanRes(p); setCoverage(null); setNetwork(null); setNight(null); setMixedLayer(null); setApproachMarks(null); setPlay(null);
     if (!p) setAreaRes(null);
   }, []);
 
@@ -148,6 +154,12 @@ export default function Terrain() {
     else if (drawing) setFence((f) => [...f, [x, y]]);
   };
 
+  const startPlayback = async (args: Record<string, unknown>) => {
+    if (!info) return;
+    const r = await job.run("Canlı PTZ taraması hazırlanıyor", (o) => T.ptzPlayback({ terrain_id: info.terrain_id, use_obstacles: useObstacles,
+      max_px: 900, speed_deg_s: 20, ...args }, o));
+    if (r) { setPlay({ ptz: r.ptz, tab, camera: r.camera_name }); setPlaying(true); setPlayT(0); }
+  };
   const ptzArgs = () => (mixedPtz.camera ? { ptz_camera: mixedPtz.camera, ptz_every_n: mixedPtz.everyN, ptz_patrol_span_deg: mixedPtz.span } : {});
   // band widths every band-scored call sends (coverage, optimise, fewest poles, model compare, night)
   const bandArgs = () => (isArea ? {} : { band_m: band.out, ...(plan.closed && band.in !== band.out ? { band_in_m: band.in } : {}) });
@@ -317,6 +329,25 @@ export default function Terrain() {
           </div>
         )}
         <JobBar job={job} onCancel={job.cancel} onDismiss={job.clearError} />
+        {play && play.tab === tab && (
+          <div className="flex flex-wrap items-center gap-2 rounded bg-bg-2 px-3 py-1.5 text-[12px]">
+            <span className="font-semibold text-ptz">● Canlı tarama</span>
+            <span className="text-text-2">{play.ptz.length} PTZ · {play.camera}</span>
+            <span className="font-mono text-text-2">t = {fmt(playT, 1)} sn</span>
+            <span className="font-mono text-[11px] text-text-3">
+              {play.ptz.length === 1
+                ? `${fmt(play.ptz[0].focal_mm, 1)} mm · FOV ${fmt(play.ptz[0].hfov_deg, 1)}° · ${fmt(play.ptz[0].speed_deg_s, 0)}°/sn · tur ${fmt(play.ptz[0].period_s, 1)} sn`
+                : `${fmt(Math.min(...play.ptz.map((p) => p.focal_mm)), 1)} mm · FOV ${fmt(play.ptz[0].hfov_deg, 1)}° · tur ${fmt(Math.max(...play.ptz.map((p) => p.period_s)), 1)} sn`}
+            </span>
+            <div className="flex-1" />
+            {[1, 4, 10].map((k) => (
+              <button key={k} type="button" onClick={() => setRate(k)}
+                className={`h-6 rounded px-2 text-[11px] font-semibold ${rate === k ? "bg-bg-6 text-ptz" : "bg-bg-5 text-text-2"}`}>{k}×</button>
+            ))}
+            <Button onClick={() => setPlaying((v) => !v)}>{playing ? "Duraklat" : "Devam"}</Button>
+            <Button onClick={() => setPlay(null)}>Kapat</Button>
+          </div>
+        )}
         <div className="min-h-0 flex-1">
           {info ? (
             <MapView widthM={info.width_m} heightM={info.height_m} base={base} overlay={overlay}
@@ -324,6 +355,7 @@ export default function Terrain() {
               fence={tab === "perimeter" ? fence : []} fenceClosed={plan.closed || isArea}
               poles={tab === "perimeter" ? planRes?.poles : []} ptz={tab === "perimeter" ? planRes?.ptz : []}
               gaps={tab === "perimeter" ? planRes?.gaps : []} showFov={showFov}
+              inMap={play && play.tab === tab ? <PtzSweep ptz={play.ptz} heightM={info.height_m} playing={playing} rate={rate} onTime={setPlayT} /> : null}
               switches={tab === "perimeter" ? network?.network.switches : []}
               approach={tab === "perimeter" && mixedLayer?.title === "Gizli yaklaşma" ? approachMarks : null}
               tool={tab === "single" ? "camera" : drawing ? "fence" : "none"} onPick={pick}>
@@ -411,7 +443,7 @@ export default function Terrain() {
             {isPtz && (
               <>
                 <PtzPanel T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} camera={camera}
-                  mount={mount} weather={weather} onLayer={setPtzLayer} />
+                  mount={mount} weather={weather} onLayer={setPtzLayer} onPlay={startPlayback} />
                 {ptzLayer && <Button className="w-full" onClick={() => setPtzLayer(null)}>Tekil görüş alanına dön</Button>}
               </>
             )}
@@ -553,7 +585,7 @@ export default function Terrain() {
               </Panel>
             )}
             {<MixedPanel T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} models={models}
-              value={mixedPtz} onChange={setMixedPtz} hasPlanWithPtz={!!planRes?.ptz.length} onLayer={setMixedLayer}
+              value={mixedPtz} onChange={setMixedPtz} hasPlanWithPtz={!!planRes?.ptz.length} onLayer={setMixedLayer} onPlay={startPlayback}
               ptzModelFor={async (n) => (await api.cameraFor(n, undefined, true)).camera} />}
             {mixedLayer && <Button className="w-full" onClick={() => setMixedLayer(null)}>Birleşik kapsamaya dön</Button>}
             {planRes && (

@@ -32,6 +32,8 @@ interface Props {
   tool: "camera" | "fence" | "none";
   onPick?: (x: number, y: number) => void;
   children?: ReactNode; // glass overlays (legend …)
+  /** drawn inside the map's SVG, in map user space (x, H - y), above the overlay (live PTZ sweep) */
+  inMap?: ReactNode;
 }
 
 /**
@@ -125,6 +127,7 @@ export default function MapView(p: Props) {
         {p.base && <image href={p.base} x={0} y={0} width={W} height={H} preserveAspectRatio="none" />}
         {p.overlay && <image href={p.overlay} x={0} y={0} width={W} height={H} preserveAspectRatio="none" />}
         <rect x={0} y={0} width={W} height={H} fill="none" stroke="var(--color-bg-6)" strokeWidth={2 * px} />
+        {p.inMap}
 
         {cam && <path d={fan} fill="none" stroke="var(--color-primary)" strokeWidth={1.5 * px} strokeDasharray={`${6 * px} ${4 * px}`} />}
 

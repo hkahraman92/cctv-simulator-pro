@@ -203,8 +203,99 @@ def perimeter_mixed(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     }
 
 
+def _playback_layers(t, x, y, mast, cam, sweep, max_range_m, vis, weather, max_px):
+    """One PTZ's pan-independent pictures for the shell's live sweep: DORI
+    where the line of sight is clear, shadow where terrain / buildings hide
+    the ground inside the frame -- both over the mount's window, north-up."""
+    from .. import map_render
+    from ..design_tokens import rgba
+    from ..mount_visibility import mount_visibility, view_layers
+    from ..raster_smooth import smooth_overlay
+    from ..viewshed_3d import ZONE_OCCLUDED
+
+    mv = mount_visibility(t, x, y, mast, max_range_m=max_range_m)
+    lay = view_layers(mv, cam, tilt_deg=sweep.tilt_deg, focal_mm=sweep.focal_mm, lens_mode=sweep.lens_mode,
+                      max_range_m=max_range_m, visibility_km=vis, weather=weather)
+    lit = np.zeros(lay.zone.shape + (4,), np.uint8)
+    for lo, _hi, col, _txt in map_render.LAYER_BANDS["dori"][1]:
+        if lo != ZONE_OCCLUDED:
+            lit[(lay.zone == lo) & lay.visible] = tuple(col[:3]) + (215,)
+    shadow = np.zeros_like(lit)
+    shadow[lay.in_frame & ~lay.visible & (lay.zone == ZONE_OCCLUDED)] = rgba("bg-0", 185)
+    rows, cols = mv.window
+    cell = t.cell_size_m
+    box = [cols.start * cell, rows.start * cell, cols.stop * cell, rows.stop * cell]   # x0, y0, x1, y1 (m)
+    h, w = lit.shape[:2]
+    k = max(1.0, min(4.0, max_px / max(h, w, 1)))
+    size = (max(1, round(w * k)), max(1, round(h * k)))
+    pics = [_image(smooth_overlay(np.flipud(a), size), max_px=max_px) for a in (lit, shadow)]
+    cell_a = cell ** 2
+    return {"box_m": box, "lit": pics[0], "shadow": pics[1], "hfov_deg": lay.hfov_deg,
+            "reach_m": float(min(lay.effective_max_range_m, max_range_m)),
+            "visible_area_m2": float(lay.visible.sum() * cell_a)}
+
+
+def ptz_playback(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """Live 360° / sector sweep for the shell: every PTZ of the last plan (or
+    one given camera), at the focal and tilt the plan put it on. Pictures are
+    computed once; the shell turns the cone itself (no round trip per frame).
+    Pan motion is ``ptz_animation.pan_at`` (constant speed, instant reversal)."""
+    from ..perimeter_ptz import _ptz_range, _sweep_reach, patrol_for
+    from ..ptz_animation import sweep_period_s
+    from ..ptz_schedule import Rotation360, SectorPatrol
+
+    entry, t = _terrain_of(params)
+    speed = _num(params, "speed_deg_s", 20.0, lo=0.5, hi=400)
+    dwell = _num(params, "end_dwell_s", 2.0, lo=0, hi=600)
+    max_px = int(_num(params, "max_px", 900, lo=100, hi=2048))
+    items = []
+    if params.get("source", "plan") == "plan":
+        if "plan" not in entry.results:
+            raise RpcError(APP_ERROR, "Önce PTZ'li bir plan oluşturun.")
+        plan, _cam, kw, _fence = entry.results["plan"]
+        ptz_cam = kw.get("ptz_camera")
+        if ptz_cam is None or not plan.ptz_cameras:
+            raise RpcError(APP_ERROR, "Planda PTZ yok: PTZ modeli ve 'her N direkte bir' seçip planı yeniden kurun.")
+        weather, vis = kw["weather"], kw["visibility_km"]
+        reach = _sweep_reach(ptz_cam, vis, weather)
+        for p in plan.ptz_cameras:
+            sw = patrol_for(p, speed, dwell)
+            start = p.pan_deg if isinstance(sw, Rotation360) else sw.start_pan_deg
+            items.append((f"PTZ {p.pole_id}", p.x_m, p.y_m, p.mast_height_m, ptz_cam, sw, start,
+                          _ptz_range(p, reach, 3000.0), p.focal_mm, p.tilt_deg))
+    else:
+        cam = _camera_from(params.get("camera", {}))
+        weather, vis = _weather(params)
+        tilt = _num(params, "tilt_deg", -5.0, lo=-89, hi=30)
+        focal = params.get("focal_mm")
+        focal = cam.focal_min_mm if focal is None else _num(params, "focal_mm", lo=cam.focal_min_mm, hi=cam.focal_max_mm)
+        if params.get("mode", "rotation") == "rotation":
+            sw = Rotation360(speed_deg_s=speed, tilt_deg=tilt, focal_mm=focal)
+            start = _num(params, "start_pan_deg", 0.0) % 360.0
+        else:
+            sw = SectorPatrol(start_pan_deg=_num(params, "start_pan_deg", 0.0) % 360.0,
+                              end_pan_deg=_num(params, "end_pan_deg", 90.0) % 360.0, speed_deg_s=speed,
+                              end_dwell_s=dwell, tilt_deg=tilt, focal_mm=focal)
+            start = sw.start_pan_deg
+        items.append(("PTZ", _num(params, "x_m"), _num(params, "y_m"), _num(params, "mast_m", 8.0, lo=0.5, hi=200),
+                      cam, sw, start, _num(params, "range_m", 1500.0, lo=50, hi=20000), focal, tilt))
+    out = []
+    for i, (label, x, y, mast, cam, sw, start, rng, focal, tilt) in enumerate(items):
+        ctx.progress(i, len(items), f"{label}: görünürlük ({i + 1}/{len(items)})")
+        lay = _playback_layers(t, x, y, mast, cam, sw, rng, vis, weather, max_px)
+        rotation = isinstance(sw, Rotation360)
+        out.append({
+            "label": label, "x_m": x, "y_m": y, "mast_m": mast, "focal_mm": focal, "tilt_deg": tilt,
+            "mode": "rotation" if rotation else "sector", "start_pan_deg": start,
+            "span_deg": 360.0 if rotation else sw.span_deg, "speed_deg_s": sw.speed_deg_s,
+            "end_dwell_s": 0.0 if rotation else sw.end_dwell_s, "period_s": sweep_period_s(sw), **lay,
+        })
+    return {"ptz": out, "camera_name": (items[0][4].model_name or items[0][4].name) if items else ""}
+
+
 METHODS = {
     "ptz.sweep": ptz_sweep,
+    "ptz.playback": ptz_playback,
     "ptz.cue": ptz_cue,
     "ptz.tour": ptz_tour,
     "perimeter.mixed": perimeter_mixed,

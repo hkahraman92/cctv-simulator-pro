@@ -300,6 +300,29 @@ export interface PlanParams {
   ptz_patrol_span_deg?: number;
 }
 
+/** One PTZ's live-sweep data (ptz.playback): pictures once, the shell turns the cone. */
+export interface PlaybackPtz {
+  label: string;
+  x_m: number;
+  y_m: number;
+  mast_m: number;
+  focal_mm: number;
+  tilt_deg: number;
+  mode: "rotation" | "sector";
+  start_pan_deg: number;
+  span_deg: number;
+  speed_deg_s: number;
+  end_dwell_s: number;
+  period_s: number;
+  hfov_deg: number;
+  reach_m: number;
+  visible_area_m2: number;
+  /** x0, y0, x1, y1 (m, local frame) the pictures span */
+  box_m: [number, number, number, number];
+  lit: Picture;
+  shadow: Picture;
+}
+
 export interface SweepResult {
   period_s: number;
   focal_mm: number;
@@ -454,6 +477,8 @@ export function terrainApi(rpc: RpcClient) {
       rpc.call<{ options: { model_name: string; met: boolean; poles: number; band_frac: number; seconds: number; switches: number; copper_m: number; storage_tb: number; cost: import("../components/PlanningPanels").NetworkResult["cost"] | null }[] }>(
         "perimeter.compare_models", p, { timeoutMs: 0, ...opts }),
     compareUse: (p: T & Record<string, unknown>) => rpc.call<{ plan: PlanResult; camera: CameraConfig }>("perimeter.compare_use", p),
+    ptzPlayback: (p: T & { source?: "plan" | "single"; speed_deg_s: number; end_dwell_s?: number; max_px?: number } & Record<string, unknown>, opts?: CallOptions) =>
+      rpc.call<{ ptz: PlaybackPtz[]; camera_name: string }>("ptz.playback", p, { timeoutMs: 0, ...opts }),
     mixed: (p: T & { speed_deg_s: number; layer?: "fused" | "cue"; cue_target_ppm?: number; max_px?: number }, opts?: CallOptions) =>
       rpc.call<MixedResult>("perimeter.mixed", p, { timeoutMs: 0, ...opts }),
     nightCoverage: (p: T & NightParams & { band_m?: number; band_in_m?: number; max_px?: number }, opts?: CallOptions) =>

@@ -16,15 +16,17 @@ const ha = (m2: number) => `${fmt(m2 / 1e4, 2)} ha`;
 const sec = (s: number | null) => (s == null ? "∞" : `${fmt(s, 1)} sn`);
 
 /** Single-camera tab, PTZ model: sweep (360° / sector) or alarm -> identify time. */
-export function PtzPanel({ T, job, terrainId, useObstacles, camera, mount, weather, onLayer }: {
+export function PtzPanel({ T, job, terrainId, useObstacles, camera, mount, weather, onLayer, onPlay }: {
   T: TerrainApi;
   job: Job;
   terrainId: string;
   useObstacles: boolean;
   camera: CameraConfig;
-  mount: { x: number; y: number; mast: number; pan: number; tilt: number; range: number; focal?: number };
+  mount: { x: number; y: number; mast: number; pan: number; tilt: number; range: number; focal?: number; lens?: "min" | "max" };
   weather: string;
   onLayer: (l: Layer | null) => void;
+  /** live sweep of this camera with the panel's settings */
+  onPlay?: (args: Record<string, unknown>) => void;
 }) {
   const [mode, setMode] = useState<"rotation" | "sector" | "cue" | "tour">("rotation");
   const [presets, setPresets] = useState<{ name: string; pan_deg: number; tilt_deg: number; focal_mm?: number; dwell_s: number }[]>([]);
@@ -93,6 +95,15 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, mount, weath
       </div>
       {mode !== "tour" && <p className="mt-2 text-[11px] text-text-3">◆ Eğim ve odak yukarıdaki kaydırıcılardan; {mode === "cue" ? "ev konumu = yön/eğim." : "bakışı 0,5 sn'den kısa hücreler kapsama sayılmaz."}</p>}
       <Button className="mt-2 w-full" disabled={job.running || (mode === "tour" && presets.length < 2)} onClick={run}><Play size={14} /> {mode === "tour" ? "Turu Çöz" : "Hesapla"}</Button>
+      {(mode === "rotation" || mode === "sector") && onPlay && (
+        <Button className="mt-1.5 w-full" disabled={job.running} onClick={() => onPlay({
+          source: "single", camera, x_m: mount.x, y_m: mount.y, mast_m: mount.mast, range_m: mount.range, weather, mode,
+          speed_deg_s: speed, tilt_deg: mount.tilt, end_dwell_s: dwell,
+          // the zoom the map shows: an applied optimum, else the lens end the single view uses
+          focal_mm: mount.focal ?? (mount.lens === "min" ? camera.focal_min_mm : camera.focal_max_mm),
+          start_pan_deg: mode === "rotation" ? mount.pan : (mount.pan - span / 2 + 360) % 360, end_pan_deg: (mount.pan + span / 2) % 360,
+        })}><RotateCw size={14} /> Canlı taramayı başlat</Button>
+      )}
       {tour && mode === "tour" && (
         <div className="mt-2 grid grid-cols-2 gap-1.5">
           <Tile label="Tur süresi" value={fmt(tour.tour_period_s, 1)} unit="sn" />
@@ -126,7 +137,7 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, mount, weath
 }
 
 /** Perimeter tab: co-mount a PTZ on every Nth pole and evaluate fixed + PTZ together. */
-export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onChange, hasPlanWithPtz, onLayer, ptzModelFor }: {
+export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onChange, hasPlanWithPtz, onLayer, ptzModelFor, onPlay }: {
   T: TerrainApi;
   job: Job;
   terrainId: string;
@@ -137,6 +148,8 @@ export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onC
   hasPlanWithPtz: boolean;
   onLayer: (l: Layer | null) => void;
   ptzModelFor: (name: string) => Promise<CameraConfig>;
+  /** live sweep of every PTZ in the plan */
+  onPlay?: (args: Record<string, unknown>) => void;
 }) {
   const [res, setRes] = useState<MixedResult | null>(null);
   const [layer, setLayer] = useState<"fused" | "cue">("fused");
@@ -169,6 +182,11 @@ export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onC
             <Button className="flex-1" disabled={job.running || !hasPlanWithPtz} onClick={() => run("fused")}>Sabit + PTZ</Button>
             <Button className="flex-1" disabled={job.running || !hasPlanWithPtz} onClick={() => run("cue")}>Tespit→Teşhis</Button>
           </div>
+          {onPlay && (
+            <Button primary className="mt-1.5 w-full" disabled={job.running || !hasPlanWithPtz} onClick={() => onPlay({ source: "plan", speed_deg_s: 20, end_dwell_s: 2 })}>
+              <RotateCw size={14} /> Taramayı Başlat (tüm PTZ'ler)
+            </Button>
+          )}
         </>
       )}
       {res && (

@@ -74,7 +74,7 @@ desktop/                             yeni arayüz: Tauri 2 (Rust) + React/TS/Tai
 
 **Yeni masaüstü kabuğu.** `desktop/` Python çekirdeği (`python -m
 cctv_simulator.service`, yayında `cctv-core.exe`) alt süreç olarak başlatır,
-satır başına bir JSON-RPC nesnesi taşır (API v1, 72 yöntem; liste ve
+satır başına bir JSON-RPC nesnesi taşır (API v1, 73 yöntem; liste ve
 sözleşme `docs/masaustu-mimari.md`). Ekran fizik türetmez; her sayı bir API
 yönteminden gelir. Yeni özellik için: önce `service/*_methods.py`'ye yöntem +
 `tests/test_service_*.py`'ye motorla birebir eşlik testi, sonra
@@ -634,6 +634,19 @@ yok); raster görünür tuvale kırpılıp büyütülür, `map_raster`'ın hemen
 konur; okuma kutusu camda. Kesit şeridi her 3 karede o anki pan'ı izler
 (`sight_profile`: zemin + bina/ağaç + görülen/engel arkası). Kamera/arazi
 ayarı değişince (`_anim_key`) oynatma durur. Ölçüldü: kare çizimi 6–12 ms.
+
+**Masaüstünde canlı PTZ taraması (`ptz.playback` + `PtzSweep.tsx`).** Tk'deki
+`SweepPlayback`'in çok kameralı karşılığı: çekirdek her PTZ için pan'dan
+bağımsız iki resmi BİR KEZ üretir (direk raster'ı + `view_layers`, planın
+kendi odak / eğimi — `patrol_for`, kapsama ile aynı tarama; görüş hattı açık
+yerde DORI rengi, çerçevede kalıp arazi / bina arkasında kalan yerde gölge),
+pencere kutusunu metre olarak verir. Kabuk koniyi kendisi döndürür:
+`panAt` = `ptz_animation.pan_at` (test), şimdiki koni + yön ardındaki sönen
+iz (3 kama) + taranmış alanın silik hafızası SVG clip path'leri,
+`requestAnimationFrame`'de ref'lerle güncellenir (kare başına React render'ı
+ya da çekirdeğe gidiş yok). Planın tüm PTZ'leri birlikte ("Taramayı Başlat",
+karma panel) ya da tekil sekmedeki PTZ ("Canlı taramayı başlat", haritanın
+gösterdiği odak). 1× / 4× / 10× hız, duraklat; yeni plan oynatmayı kapatır.
 
 **Varifokal / PTZ: tüm odak uzunlukları (`focal_optimizer.py`).** Viewshed bir
 varifokali yalnız iki uçta (`min`/`max`) değerlendiriyordu; belirli bir DORI
