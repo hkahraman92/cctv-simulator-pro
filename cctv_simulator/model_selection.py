@@ -31,7 +31,8 @@ class ModelOption:
 
 def compare_models(terrain: TerrainData, fence_points: Sequence[Tuple[float, float]],
                    candidates: Sequence[Tuple[str, CameraConfig, Dict]], *, plan_kwargs: Dict,
-                   goal_frac: float = 0.95, level: int, band_m: float = 40.0, position_steps: int = 0,
+                   goal_frac: float = 0.95, level: int, band_m: float = 40.0,
+                   inside_m: Optional[float] = None, position_steps: int = 0,
                    prices: Optional[Dict[str, float]] = None, price_book: Optional[PriceBook] = None,
                    progress: Optional[Callable[[int, int, str], None]] = None) -> List[ModelOption]:
     """``prices``: per-model camera unit price (overrides ``price_book.camera``)."""
@@ -48,7 +49,7 @@ def compare_models(terrain: TerrainData, fence_points: Sequence[Tuple[float, flo
             progress(k, len(candidates), name)
         t0 = time.perf_counter()
         res = minimize_poles(terrain, list(fence_points), cam, plan_kwargs=plan_kwargs, goal_frac=goal_frac,
-                             level=level, band_m=band_m, position_steps=position_steps)
+                             level=level, band_m=band_m, inside_m=inside_m, position_steps=position_steps)
         best = res.best
         plan = res.best_plan
         if plan is not None and res.best_layout is not None:

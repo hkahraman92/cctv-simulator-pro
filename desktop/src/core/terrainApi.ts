@@ -121,7 +121,13 @@ export interface PlanResult {
   estimated_storage_30days_tb: number;
   line_mode: string;
   watch_side: string;
+  ptz_count?: number;
+  /** e.g. a PTZ chosen as the main camera is planned as a fixed lens */
+  warnings?: string[];
 }
+
+export type CoverageLayer = "target" | "dori" | "overlap";
+type Shares = Record<"identify" | "recognize" | "observe" | "detect", number>;
 
 export interface CoverageResult {
   camera_count: number;
@@ -133,8 +139,19 @@ export interface CoverageResult {
   single_cover_area_m2: number;
   zone_areas_m2: ZoneAreas;
   band_m: number;
+  /** inner width of a closed fence's band; null = same as band_m */
+  band_in_m: number | null;
   band_area_m2: number;
-  band_share: Record<"identify" | "recognize" | "observe" | "detect", number>;
+  /** fixed cameras = continuous coverage */
+  band_share: Shares;
+  /** reached ONLY by a PTZ patrol (intermittent), on top of band_share */
+  band_share_ptz: Shares;
+  ptz_count: number;
+  ptz_worst_revisit_s: number;
+  /** the protected area split by the target: held (fixed) / only a PTZ / seen below it / not seen */
+  target: { label: string; ppm: number; held: number; ptz_only: number; below: number; unseen: number };
+  /** the fence line itself (null for an area plan) */
+  fence_line: { held: number; with_ptz: number; detect: number } | null;
   /** "area": the shares are of the drawn polygon (area plan), "band": of the ±band_m fence band */
   roi_kind: "area" | "band";
   overlay: Picture;
@@ -156,6 +173,11 @@ export interface AreaPlanResult {
   sites_skipped_obstacle: number;
   curve: { cameras: number; poles: number; frac: number }[];
   notes: string[];
+  holes_count: number;
+  largest_hole_m2: number;
+  uncovered_m2: number;
+  hole_cameras: number;
+  warnings: string[];
   plan: PlanResult;
 }
 
@@ -188,6 +210,11 @@ export interface AreaParams {
   weather?: string;
   /** target = the polygon's streets, poles stand on streets (needs city.osm first) */
   streets_only?: boolean;
+  /** close every uncovered hole larger than this (m2) after the goal is met */
+  max_hole_m2?: number;
+  ptz_camera?: CameraConfig;
+  ptz_every_n?: number;
+  ptz_patrol_span_deg?: number;
 }
 
 export interface CityPlace { name: string; kind: string; x_m: number; y_m: number }
@@ -266,6 +293,8 @@ export interface PlanParams {
   watch_side: "left" | "right";
   weather?: string;
   spacing_m?: number;
+  /** lens end the planner spaces poles for: "min" wide, "max" tele */
+  lens_mode?: "min" | "max";
   ptz_camera?: CameraConfig;
   ptz_every_n?: number;
   ptz_patrol_span_deg?: number;
@@ -388,7 +417,7 @@ export function terrainApi(rpc: RpcClient) {
       opts?: CallOptions,
     ) => rpc.call<SingleViewshed>("viewshed.single", p, opts),
     plan: (p: T & PlanParams & { camera: CameraConfig }) => rpc.call<PlanResult>("perimeter.plan", p),
-    coverage: (p: T & { layer?: "dori" | "overlap"; band_m?: number; max_px?: number }, opts?: CallOptions) =>
+    coverage: (p: T & { layer?: CoverageLayer; level?: "plan" | DoriLevel; band_m?: number; band_in_m?: number; max_px?: number }, opts?: CallOptions) =>
       rpc.call<CoverageResult>("perimeter.coverage", p, { timeoutMs: 0, ...opts }),
     approach: (p: T & { depth_m: number; response_s?: number; speeds?: Record<string, number>; max_px?: number }, opts?: CallOptions) =>
       rpc.call<ApproachResult>("approach.analyse", p, { timeoutMs: 0, ...opts }),
@@ -398,10 +427,10 @@ export function terrainApi(rpc: RpcClient) {
       rpc.call<CityAnalysis>("city.analyse", p, { timeoutMs: 0, ...opts }),
     areaPlan: (p: T & AreaParams & { camera: CameraConfig }, opts?: CallOptions) =>
       rpc.call<AreaPlanResult>("area.plan", p, { timeoutMs: 0, ...opts }),
-    optimize: (p: T & { level: string; position_steps: number; pan_search_deg?: number; n_focals?: number }, opts?: CallOptions) =>
+    optimize: (p: T & { level: string; position_steps: number; pan_search_deg?: number; n_focals?: number; band_m?: number; band_in_m?: number }, opts?: CallOptions) =>
       rpc.call<{ before_m2: number; after_m2: number; band_area_m2: number; changed: number; moved: number; max_move_m: number; notes: string[]; plan: PlanResult }>(
         "perimeter.optimize", p, { timeoutMs: 0, ...opts }),
-    minimizePoles: (p: T & PlanParams & { camera: CameraConfig; goal_frac: number; level: string; position_steps?: number }, opts?: CallOptions) =>
+    minimizePoles: (p: T & PlanParams & { camera: CameraConfig; goal_frac: number; level: string; position_steps?: number; band_m?: number; band_in_m?: number }, opts?: CallOptions) =>
       rpc.call<PoleSearch>("perimeter.minimize_poles", p, { timeoutMs: 0, ...opts }),
     focalSweep: (
       p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; pan_deg: number; level: string; pan_search_deg?: number; weather?: string; n_focals?: number },
@@ -427,7 +456,7 @@ export function terrainApi(rpc: RpcClient) {
     compareUse: (p: T & Record<string, unknown>) => rpc.call<{ plan: PlanResult; camera: CameraConfig }>("perimeter.compare_use", p),
     mixed: (p: T & { speed_deg_s: number; layer?: "fused" | "cue"; cue_target_ppm?: number; max_px?: number }, opts?: CallOptions) =>
       rpc.call<MixedResult>("perimeter.mixed", p, { timeoutMs: 0, ...opts }),
-    nightCoverage: (p: T & NightParams & { band_m?: number; max_px?: number }, opts?: CallOptions) =>
+    nightCoverage: (p: T & NightParams & { band_m?: number; band_in_m?: number; max_px?: number }, opts?: CallOptions) =>
       rpc.call<NightCoverage>("night.coverage", p, { timeoutMs: 0, ...opts }),
     nightTimeline: (p: Partial<T> & Omit<NightParams, "datetime"> & { date: string; step_min?: number }) =>
       rpc.call<NightTimeline>("night.timeline", p),

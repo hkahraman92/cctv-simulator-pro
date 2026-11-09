@@ -53,8 +53,9 @@ def test_higher_overlap_gives_more_poles(cam):
 
     assert len(few.placed_cameras) >= 4
     assert len(many.placed_cameras) >= len(few.placed_cameras)
-    # pole ids are 1..N with no gaps
-    assert [c.pole_id for c in many.placed_cameras] == list(range(1, len(many.placed_cameras) + 1))
+    # pole ids are 1..N with no gaps (a corner guard shares its vertex pole)
+    ids = sorted({c.pole_id for c in many.placed_cameras})
+    assert ids == list(range(1, len(ids) + 1)) and many.pole_count == len(ids)
 
 
 def test_plan_needs_two_points(cam):
@@ -169,8 +170,15 @@ def test_closed_perimeter_is_well_covered_with_corner_guards(cam):
     # hair lower (94.7 measured) but still well covered.
     assert plan.coverage_percentage >= 94.0
     assert any("köşe" in c.camera_model for c in plan.placed_cameras)
-    # pole ids stay contiguous even with the extra guards
-    assert [c.pole_id for c in plan.placed_cameras] == list(range(1, len(plan.placed_cameras) + 1))
+    # a corner guard is a second camera on the vertex pole, not a new pole
+    ids = sorted({c.pole_id for c in plan.placed_cameras})
+    assert ids == list(range(1, len(ids) + 1))
+    guards = [c for c in plan.placed_cameras if "köşe" in c.camera_model]
+    for g in guards:
+        host = [c for c in plan.placed_cameras if c.pole_id == g.pole_id and c is not g]
+        assert len(host) == 1 and (host[0].x_m, host[0].y_m) == (g.x_m, g.y_m)
+    assert plan.pole_count == len(ids) == len(plan.placed_cameras) - len(guards)
+    assert plan.camera_count == len(plan.placed_cameras)
 
 
 def test_open_perimeter_flags_gap_and_adds_end_pole(cam):

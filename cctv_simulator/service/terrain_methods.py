@@ -440,11 +440,13 @@ def _plan_json(plan) -> Dict[str, Any]:
         "estimated_bandwidth_mbps": plan.estimated_bandwidth_mbps,
         "estimated_storage_30days_tb": plan.estimated_storage_30days_tb,
         "line_mode": plan.line_mode, "watch_side": plan.watch_side,
+        "ptz_count": len(plan.ptz_cameras),
     }
 
 
-def _plan_roi(t, fence, kw: Dict[str, Any], band_m: float) -> np.ndarray:
-    """What a plan protects: the drawn polygon for an area plan, else the fence band."""
+def _plan_roi(t, fence, kw: Dict[str, Any], band_m: float, inside_m: Optional[float] = None) -> np.ndarray:
+    """What a plan protects: the drawn polygon for an area plan, else the fence
+    band (``band_m`` outside, ``inside_m`` inside a closed fence; None = same)."""
     if kw.get("line_mode") == "area":
         from ..area_planner import polygon_mask
         roi = polygon_mask(t, fence)
@@ -452,7 +454,23 @@ def _plan_roi(t, fence, kw: Dict[str, Any], band_m: float) -> np.ndarray:
             roi &= kw["roi_mask"]
         return roi
     from ..focal_optimizer import fence_roi
-    return fence_roi(t, fence, kw["is_closed_loop"], band_m)
+    return fence_roi(t, fence, kw["is_closed_loop"], band_m, inside_m)
+
+
+def _band_params(params: Dict[str, Any]) -> Tuple[float, Optional[float]]:
+    """(outside / symmetric band width, inside width or None) from a request."""
+    band = _num(params, "band_m", 40.0, lo=5, hi=500)
+    inside = params.get("band_in_m")
+    return band, (None if inside is None else _num(params, "band_in_m", lo=0, hi=500))
+
+
+def _ptz_main_warning(cam) -> List[str]:
+    """A PTZ chosen as the main (fixed) camera is planned as a fixed lens: say so."""
+    from ..database import is_ptz_camera
+    if is_ptz_camera({"camera_type": cam.camera_type, "model_name": cam.model_name}):
+        return [f"{cam.model_name or cam.name} bir PTZ: plan onu sabit kamera gibi (tek odak, tek yön) "
+                "dizer. PTZ'yi 'Karma dizilim' ile sabit direklere ekleyin."]
+    return []
 
 
 def _levels_table() -> Dict[str, int]:
@@ -472,13 +490,47 @@ def perimeter_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         kw["spacing_m"] = _num(params, "spacing_m", lo=2, hi=5000)
     plan = generate_perimeter_plan(t, fence, cam, **kw)
     entry.set_plan((plan, cam, kw, fence))
-    return _plan_json(plan)
+    return {**_plan_json(plan), "warnings": _ptz_main_warning(cam)}
+
+
+_LEVEL_LABEL = {"detect": "Algılama", "observe": "Gözlem", "recognize": "Tanıma", "identify": "Teşhis"}
+
+
+def _target_level(params: Dict[str, Any], plan, kw: Dict[str, Any]) -> Tuple[str, float, int]:
+    """(label, px/m, DORI zone a PTZ must reach) for the coverage target.
+
+    ``level="plan"`` (default): an area plan's own DORI level, a fence plan's
+    target px/m. A PTZ patrol is judged by DORI zone only (no px/m grid), at
+    the lowest level that is at least the target -- never in its favour."""
+    from ..focal_optimizer import LEVEL_PPM
+    from ..viewshed_3d import ZONE_DETECT, ZONE_IDENT
+
+    want = params.get("level", "plan")
+    levels = _levels_table()
+    if want == "plan":
+        if kw.get("line_mode") == "area" and kw.get("level") in LEVEL_PPM:
+            z = kw["level"]
+            name = next(k for k, v in levels.items() if v == z)
+            return _LEVEL_LABEL[name], LEVEL_PPM[z], z
+        ppm = float(plan.target_ppm)
+        zone = next((z for z in sorted(LEVEL_PPM) if LEVEL_PPM[z] >= ppm - 1e-9), ZONE_IDENT)
+        return f"{ppm:g} px/m".replace(".", ","), ppm, max(zone, ZONE_DETECT)
+    if want not in levels:
+        raise RpcError(INVALID_PARAMS, "'level' plan, detect, observe, recognize ya da identify olmalı.")
+    z = levels[want]
+    return _LEVEL_LABEL[want], LEVEL_PPM[z], z
 
 
 def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
-    """The last plan through the authoritative multi-camera viewshed: DORI map + fence-band shares."""
+    """The last plan through the authoritative multi-camera viewshed.
+
+    Layers: ``target`` (inside what the plan protects: target held by fixed
+    cameras / only by a PTZ patrol / seen below target / not seen), ``dori``
+    and ``overlap`` (faded outside the protected area). Shares: DORI levels
+    over the band (fixed = continuous; ``band_share_ptz`` = only a PTZ
+    patrol reaches it), the target split, and the fence line itself."""
     from .. import map_render
-    from ..focal_optimizer import band_area
+    from ..focal_optimizer import band_area, fence_roi
     from ..viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_OBSERVE, ZONE_RECOG
 
     entry, t = _terrain_of(params)
@@ -487,34 +539,84 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     plan, cam, kw, fence = entry.results["plan"]
     if not plan.placed_cameras:
         raise RpcError(APP_ERROR, "Planda kamera yok.")
-    ctx.progress(0, 1, f"{len(plan.placed_cameras)} kamera hesaplanıyor")
     is_area = kw.get("line_mode") == "area"
-    band = 0.0 if is_area else _num(params, "band_m", 40.0, lo=5, hi=500)
-    roi = _plan_roi(t, fence, kw, band)
+    band, inside = (0.0, None) if is_area else _band_params(params)
+    roi = _plan_roi(t, fence, kw, band, inside)
+    ptz_cam = kw.get("ptz_camera")
+    n_ptz = len(plan.ptz_cameras) if ptz_cam is not None else 0
+    ctx.progress(0, 1 + n_ptz, f"{len(plan.placed_cameras)} kamera hesaplanıyor")
     # Each pole is evaluated out to its Detection reach: the plan caps it at
     # the fence target (e.g. 40 px/m), which would cut the lower DORI bands.
     mv, _ = band_area(t, plan, cam, roi, ZONE_DETECT, visibility_km=kw["visibility_km"], weather=kw["weather"])
     entry.results["multi"] = mv
     cell = t.cell_size_m ** 2
     roi_area = float(roi.sum() * cell)
+    named = (("identify", ZONE_IDENT), ("recognize", ZONE_RECOG), ("observe", ZONE_OBSERVE), ("detect", ZONE_DETECT))
     band_share = {name: (float(((mv.dori_grid >= z) & roi).sum() * cell) / roi_area if roi_area else 0.0)
-                  for name, z in (("identify", ZONE_IDENT), ("recognize", ZONE_RECOG),
-                                  ("observe", ZONE_OBSERVE), ("detect", ZONE_DETECT))}
+                  for name, z in named}
     entry.results["band_share"] = (band, band_share)
+
+    # PTZ patrols: intermittent coverage on top of the fixed (continuous) one
+    ptz_zone = np.zeros(mv.dori_grid.shape, np.int8)       # best DORI zone any PTZ reliably reaches
+    worst_revisit = 0.0
+    if n_ptz:
+        from ..perimeter_ptz import ptz_sweeps
+        ctx.progress(1, 1 + n_ptz, f"{n_ptz} PTZ devriyesi hesaplanıyor")
+        for sw in ptz_sweeps(t, plan, ptz_cam, speed_deg_s=_num(params, "ptz_speed_deg_s", 20.0, lo=1, hi=360),
+                             visibility_km=kw["visibility_km"], weather=kw["weather"]):
+            seen = np.isfinite(sw.revisit_grid) & (sw.dori_grid >= ZONE_DETECT)
+            ptz_zone = np.where(seen, np.maximum(ptz_zone, sw.dori_grid), ptz_zone).astype(np.int8)
+            if (seen & roi).any():
+                worst_revisit = max(worst_revisit, float(sw.revisit_grid[seen & roi].max()))
+    band_share_ptz = {name: (float(((ptz_zone >= z) & ~(mv.dori_grid >= z) & roi).sum() * cell) / roi_area
+                             if roi_area else 0.0) for name, z in named}
+
+    label, ppm, zone = _target_level(params, plan, kw)
+    held = (mv.ppm_grid >= ppm - 1e-6) & mv.visibility_mask
+    ptz_only = ~held & (ptz_zone >= zone)
+    seen_any = mv.visibility_mask | (ptz_zone >= ZONE_DETECT)
+    cls = np.zeros(roi.shape, np.int8)
+    cls[roi & held] = 1
+    cls[roi & ptz_only] = 2
+    cls[roi & ~held & ~ptz_only & seen_any] = 3
+    cls[roi & (cls == 0)] = 4
+    target = {"label": label, "ppm": ppm,
+              **{k: (float((cls == c).sum() * cell) / roi_area if roi_area else 0.0)
+                 for k, c in (("held", 1), ("ptz_only", 2), ("below", 3), ("unseen", 4))}}
+    fence_line = None
+    if not is_area:
+        line = fence_roi(t, fence, kw["is_closed_loop"], max(0.75 * t.cell_size_m, 1.0))
+        n = int(line.sum())
+        if n:
+            fence_line = {"held": float((held & line).sum()) / n,
+                          "with_ptz": float(((held | ptz_only) & line).sum()) / n,
+                          "detect": float(((mv.dori_grid >= ZONE_DETECT) & line).sum()) / n}
+
     max_px = int(_num(params, "max_px", _DISPLAY_PX, lo=200, hi=4096))
     layer = params.get("layer", "dori")
-    if layer not in ("dori", "overlap"):
-        raise RpcError(INVALID_PARAMS, "'layer' dori ya da overlap olmalı.")
-    grid = mv.dori_grid if layer == "dori" else mv.seen_count_grid
-    overlay = map_render.zone_overlay(grid, _overlay_size(t, max_px), mode=layer)
+    if layer not in ("target", "dori", "overlap"):
+        raise RpcError(INVALID_PARAMS, "'layer' target, dori ya da overlap olmalı.")
+    size = _overlay_size(t, max_px)
+    if layer == "target":
+        overlay = map_render.zone_overlay(cls, size, mode="target")
+    else:
+        grid = mv.dori_grid if layer == "dori" else mv.seen_count_grid
+        overlay = map_render.dim_outside(map_render.zone_overlay(grid, size, mode=layer), roi)
+    legend = map_render.legend(layer)[1]
+    if layer == "target":
+        legend = [(f"{txt} — {label}" if i == 0 else txt, rgba) for i, (txt, rgba) in enumerate(legend)]
+        if not n_ptz:
+            legend = [row for i, row in enumerate(legend) if i != 1]
     return {
         "camera_count": mv.camera_count, "fov_area_m2": mv.fov_area_m2, "visible_area_m2": mv.visible_area_m2,
         "occluded_area_m2": mv.occluded_area_m2, "coverage_pct": mv.coverage_pct,
         "overlap_area_m2": mv.overlap_area_m2, "single_cover_area_m2": mv.single_cover_area_m2,
         "zone_areas_m2": _zone_areas(mv.dori_grid, cell),
-        "band_m": band, "band_area_m2": roi_area, "band_share": band_share,
+        "band_m": band, "band_in_m": inside, "band_area_m2": roi_area, "band_share": band_share,
+        "band_share_ptz": band_share_ptz, "ptz_count": n_ptz, "ptz_worst_revisit_s": worst_revisit,
+        "target": target, "fence_line": fence_line,
         "roi_kind": "area" if is_area else "band",
-        "overlay": _image(overlay, max_px=max_px), "legend": map_render.legend(layer)[1],
+        "overlay": _image(overlay, max_px=max_px), "legend": legend,
         "measured": bool(t.is_measured),
     }
 
@@ -533,8 +635,9 @@ def perimeter_minimize_poles(params: Dict[str, Any], ctx: Context) -> Dict[str, 
     if level is None:
         raise RpcError(INVALID_PARAMS, "'level' detect, observe, recognize ya da identify olmalı.")
     goal = _num(params, "goal_frac", 0.95, lo=0.05, hi=1.0)
+    band, inside = _band_params(params)
     res = minimize_poles(t, fence, cam, plan_kwargs=kw, goal_frac=goal, level=level,
-                         band_m=_num(params, "band_m", 40.0, lo=5, hi=500),
+                         band_m=band, inside_m=inside,
                          position_steps=int(_num(params, "position_steps", 0, lo=0, hi=4)),
                          progress=lambda d, n: ctx.progress(d, n, f"Deneme {d}/{n}"))
     plan = None
@@ -573,8 +676,8 @@ def perimeter_optimize(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     steps = 0 if is_area else int(_num(params, "position_steps", 0, lo=0, hi=4))
     step_m = _num(params, "position_step_m", max(plan.avg_spacing_m / (2 * steps + 2), 1.0) if steps else 0.0,
                   lo=0, hi=500)
-    band = _num(params, "band_m", 40.0, lo=5, hi=500)
-    roi = _plan_roi(t, fence, kw, band)
+    band, inside = _band_params(params)
+    roi = _plan_roi(t, fence, kw, band, inside)
     mounts = mounts_from_plan(plan, cam, pan_search_deg=_num(params, "pan_search_deg", 0.0, lo=0, hi=90),
                               position_step_m=step_m, position_steps=steps)
     res = optimize_layout(t, mounts, roi=roi, level=level, n_focals=int(_num(params, "n_focals", 6, lo=2, hi=16)),
@@ -625,9 +728,14 @@ def area_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
 
         def sites_fn(step):
             return street_sites(city, poly, step)
+    ptz_cam = _camera_from(params["ptz_camera"]) if params.get("ptz_camera") else None
+    max_hole = params.get("max_hole_m2")
     try:
         res = plan_area(t, poly, cam, level=level, goal_frac=_num(params, "goal_frac", 0.95, lo=0.05, hi=1.0),
                         roi_mask=roi_mask, sites_fn=sites_fn,
+                        max_hole_m2=None if max_hole is None else _num(params, "max_hole_m2", lo=1, hi=1e6),
+                        ptz_camera=ptz_cam, ptz_every_n=int(_num(params, "ptz_every_n", 4, lo=1, hi=100)) if ptz_cam else 0,
+                        ptz_span_deg=_num(params, "ptz_patrol_span_deg", 360.0, lo=10, hi=360),
                         mast_height_m=mast, interior=bool(params.get("interior", True)),
                         max_per_pole=int(_num(params, "max_per_pole", 2, lo=1, hi=6)),
                         max_cameras=int(_num(params, "max_cameras", 120, lo=1, hi=500)),
@@ -638,13 +746,18 @@ def area_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     kw = {"target_ppm": res.plan.target_ppm, "mast_height_m": mast, "is_closed_loop": True,
           "visibility_km": vis, "weather": weather, "line_mode": "area", "watch_side": "right", "level": level,
           "roi_mask": roi_mask}
+    if ptz_cam is not None:
+        kw.update(ptz_camera=ptz_cam, ptz_every_n=int(_num(params, "ptz_every_n", 4, lo=1, hi=100)),
+                  ptz_patrol_span_deg=_num(params, "ptz_patrol_span_deg", 360.0, lo=10, hi=360))
     entry.set_plan((res.plan, cam, kw, poly))
     names = {v: k for k, v in levels.items()}
     return {"met": res.met, "level": names[res.level], "goal_frac": res.goal_frac, "area_m2": res.area_m2,
             "engine_frac": res.engine_frac, "estimate_frac": res.estimate_frac,
             "sites_considered": res.sites_considered, "sites_skipped_obstacle": res.sites_skipped_obstacle,
             "curve": [dataclasses.asdict(st) for st in res.steps], "notes": res.notes,
-            "plan": _plan_json(res.plan)}
+            "holes_count": res.holes_count, "largest_hole_m2": res.largest_hole_m2,
+            "uncovered_m2": res.uncovered_m2, "hole_cameras": res.hole_cameras,
+            "warnings": _ptz_main_warning(cam), "plan": _plan_json(res.plan)}
 
 
 def city_osm(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:

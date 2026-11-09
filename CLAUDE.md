@@ -699,8 +699,18 @@ bildirilen pay her zaman motorun. Plan bir `PerimeterPlanResult`
 `pole_id`'yi paylaşabilir): kapsama, ağ/maliyet, gece, senaryo, KML aynen
 çalışır; servis `_plan_roi` ile çit bandı yerine poligonu puanlar,
 `perimeter.optimize` iç direkleri çite kaydırmaz ve çit boşluk analizini
-koşmaz. En az direk / model karşılaştırma / karma PTZ çit içindir, alan
-modunda gizli. Ağ planı: hat dışındaki direğe sınırdan dik hendek eklenir
+koşmaz. En az direk / model karşılaştırma çit içindir, alan modunda gizli.
+**Delikler:** hedef oranı (1 − hedef) kadar açık bırakır ve açgözlü onu
+dağınık bırakır. `max_hole_m2` verilirse hedef tuttuktan sonra açık hücreler
+8-komşulu parçalara ayrılır (`hole_areas`, scipy'siz min-etiket yayılımı) ve
+sınırdan büyük her parçaya görüş eklenir; açık hücre = tahminin VE motorun
+açıkları (ikisi ışınları farklı örnekler, motor tahminin kapalı saydığı bir
+delik bırakabilir), en çok 3 tur. Rapor her zaman motordan delik sayısı / en
+büyük / toplam verir. Ölçüldü (düz, 2 m, 3 ha, Gözlem %90): sınırsız 20 kamera,
+en büyük delik 748 m²; 100 m² → +7 kamera, %96,9; 25 m² → +16, %99,9.
+**PTZ:** `ptz_camera` + `ptz_every_n` her N. direğe poligon merkezine bakan
+devriye PTZ'si takar (`_place_ptz_cameras(centres=)`); sürekli paya sayılmaz.
+Ağ planı: hat dışındaki direğe sınırdan dik hendek eklenir
 (≤0,5 m sapma 0 sayılır → çit planları bit-aynı); hendeği bakır sınırını
 tek başına aşan direğe direk üstü switch + fiber (`Switch.on_pole`).
 Ölçüldü (2 km tepelik, 10 m hücre, 4,75 ha, Gözlem %90, 8 m direk): 35
@@ -771,6 +781,26 @@ seviyenin kendi erişiminde kesmek ışınları farklı örnekleyip aynı plana
 ikinci bir pay veriyordu (%95,4 / %95,8). Ölçüldü (Kızılay 600 m, 3 m hücre,
 OSM bina, 1,13 ha sokak, Gözlem %90, 6 m direk): 27 kamera / 18 direk,
 motor %91,5, yüz yakalanan sokak %2; 15 sn.
+
+**Birleşik kapsama (`perimeter.coverage`).** Korunan alan (`_plan_roi`): alan
+planında poligon, çitte bant — `band_m` dış (açık hatta iki yan), `band_in_m`
+kapalı çitin iç tarafı (`fence_roi(inside_m=)`, None = simetrik, bit-aynı;
+"dışta algılama şeridi + içte dar steril şerit"). Masaüstü aynı bant
+ayarını kapsama, optimizasyon, en az direk, model karşılaştırma ve geceye
+gönderir. Sabit kameralar = sürekli (`band_share`, motor). Plan PTZ
+taşıyorsa her PTZ'nin devriyesi (`perimeter_ptz.ptz_sweeps`, karma
+değerlendirmeyle aynı tarama) **aralıklı** pay olarak ayrı sayılır
+(`band_share_ptz`: yalnız PTZ'nin ulaştığı); sabit pay PTZ'den bağımsız (test).
+`target`: korunan alan hedefe göre dörde bölünür — sabitle tutuyor
+(`ppm_grid` ≥ hedef & görünür) / yalnız PTZ / görülüyor ama altında / hiç
+görülmüyor; hedef `level="plan"` = çitin px/m hedefi ya da alan planının
+seviyesi. PTZ'nin px/m ızgarası yok: hedefe eşit-ya-da-üstü en düşük DORI
+seviyesiyle yargılanır (lehine değil). `fence_line`: çit çizgisinin kendisi
+(±0,75 hücre). Katmanlar: `target` (yalnız korunan alanda boyanır), `dori` /
+`overlap` (korunan alan dışı soluk, `map_render.dim_outside`). Ana kamera bir
+PTZ ise plan uyarı döndürür (`warnings`): sabit lens gibi dizilir. Harita her
+planlı kameranın FOV kamasını (menzil = planın `effective_range_m`), yakında
+odak etiketini, üzerine gelince ayrıntıyı ve PTZ devriye yayını çizer.
 
 **Sürekli PTZ taraması (`ptz_schedule.py`).** `SectorPatrol` (a→b→a, hız,
 uçlarda bekleme) ve `Rotation360`; `evaluate_sweep(...)` → `SweepResult`.
@@ -945,7 +975,10 @@ ve `modern_window` aynı beş değeri kullanır — birini değiştirirsen hepsi
 
 `generate_perimeter_plan` artık: (1) her kameraya menzilin ~%55'ine nişan alan
 gerçekçi tilt, (2) açık perimetrede son noktaya "uç" direği, (3) keskin köşelere
-(>20° dönüş) dışa bakan geniş açı "köşe" guard kamerası (küçük kör nokta),
+(>20° dönüş) dışa bakan geniş açı "köşe" guard kamerası (küçük kör nokta) —
+köşedeki direğin **ikinci kamerası**, yeni direk değil (`pole_id` paylaşılır;
+eskiden her köşe bir direk fazla sayılıp BOM / maliyet / ağa gidiyordu;
+`pole_count` = farklı `pole_id`, optimizasyon iki kameralı direği kaydırmaz),
 (4) **gerçek boşluk tespiti** (`_analyse_fence_coverage`): çit çizgisi 2 m'de bir
 örneklenir, her nokta yerleşik kameraların yatay konisi + kör nokta + hava-kapalı
 menziline göre kapsanıyor mu; ardışık ≥4 m kapsanmayan koşu `FenceGap`.

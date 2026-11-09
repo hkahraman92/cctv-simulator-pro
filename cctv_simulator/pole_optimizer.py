@@ -60,7 +60,8 @@ class PoleSearchResult:
 
 def minimize_poles(terrain: TerrainData, fence_points: Sequence[Tuple[float, float]], camera: CameraConfig,
                    *, plan_kwargs: Optional[Dict] = None, goal_frac: float = 0.95, level: int = ZONE_DETECT,
-                   objective: str = "area", band_m: float = 40.0, n_focals: int = 6, max_trials: int = 9,
+                   objective: str = "area", band_m: float = 40.0, inside_m: Optional[float] = None,
+                   n_focals: int = 6, max_trials: int = 9,
                    position_steps: int = 0,
                    progress: Optional[Callable[[int, int], None]] = None) -> PoleSearchResult:
     """Fewest fixed poles that hold ``goal_frac`` of the fence band at ``level``.
@@ -73,7 +74,7 @@ def minimize_poles(terrain: TerrainData, fence_points: Sequence[Tuple[float, flo
     vis = float(kw.get("visibility_km", 40.0))
     weather = str(kw.get("weather", ""))
     ptz_camera = kw.get("ptz_camera") if kw.get("ptz_every_n") else None
-    roi = fence_roi(terrain, list(fence_points), closed, band_m)
+    roi = fence_roi(terrain, list(fence_points), closed, band_m, inside_m)
     pts = list(fence_points) + ([fence_points[0]] if closed and len(fence_points) > 2 else [])
     fence_len = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(pts[:-1], pts[1:]))
 
@@ -88,7 +89,7 @@ def minimize_poles(terrain: TerrainData, fence_points: Sequence[Tuple[float, flo
 
     def run(spacing: float):
         plan = generate_perimeter_plan(terrain, list(fence_points), camera, spacing_m=spacing, **kw)
-        n = len(plan.placed_cameras)
+        n = plan.pole_count                          # corner guards share their vertex pole
         if n in cache:                                # same pole count -> same layout question
             return cache[n]
         step = spacing / (2 * position_steps + 2) if position_steps else 0.0

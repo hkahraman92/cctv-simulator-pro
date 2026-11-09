@@ -26,6 +26,8 @@ interface Props {
   switches?: { index: number; x_m: number; y_m: number; ports_used: number; over_budget: boolean }[];
   /** hidden-approach result: fence sectors by warning time, the intruder's last dash */
   approach?: ApproachMarks | null;
+  /** draw each planned camera's FOV wedge / PTZ patrol (else dot + heading tick only) */
+  showFov?: boolean;
   /** what a plain click does */
   tool: "camera" | "fence" | "none";
   onPick?: (x: number, y: number) => void;
@@ -91,6 +93,17 @@ export default function MapView(p: Props) {
   };
 
   const px = vb.w / 900; // ~1 screen px in metres, for stroke widths and marker sizes
+  // focal labels only when poles are far enough apart on screen to read them
+  const labels = (() => {
+    const ps = p.poles ?? [];
+    if (!ps.length || p.showFov === false) return false;
+    let near = Infinity;
+    for (let i = 1; i < Math.min(ps.length, 400); i++) {
+      const d = Math.hypot(ps[i].x_m - ps[i - 1].x_m, ps[i].y_m - ps[i - 1].y_m);
+      if (d > 0.5) near = Math.min(near, d);
+    }
+    return near / px > 46;
+  })();
   const fencePts = (p.fence ?? []).map(([x, y]) => `${x},${H - y}`).join(" ");
   const cam = p.camera;
   const fan = cam ? fanPath(cam, H) : "";
@@ -140,11 +153,28 @@ export default function MapView(p: Props) {
         {(p.gaps ?? []).map((g, i) => (
           <line key={i} x1={g.start_x} y1={H - g.start_y} x2={g.end_x} y2={H - g.end_y} stroke="var(--color-danger)" strokeWidth={4 * px} />
         ))}
+        {p.showFov !== false && (p.ptz ?? []).map((c) => (
+          // outline only: dozens of overlapping fills turned the whole map purple
+          <path key={`pz${c.pole_id}`} d={patrolPath(c, H)} fill="none" stroke="var(--color-ptz)" strokeOpacity={0.45}
+            strokeWidth={1 * px} strokeDasharray={`${4 * px} ${5 * px}`} pointerEvents="none" />
+        ))}
+        {p.showFov !== false && (p.poles ?? []).map((c, i) => (
+          <path key={`fov${i}`} d={fanPath({ x: c.x_m, y: c.y_m, pan: c.pan_deg, hfov: c.hfov_deg, range: c.effective_range_m }, H)}
+            fill="var(--color-primary)" fillOpacity={0.07} stroke="var(--color-primary)" strokeOpacity={0.55}
+            strokeWidth={0.9 * px} pointerEvents="none" />
+        ))}
         {(p.poles ?? []).map((c, i) => (
           <g key={i}>
+            <title>{camTitle(c)}</title>
             <line x1={c.x_m} y1={H - c.y_m} x2={c.x_m + Math.sin((c.pan_deg * Math.PI) / 180) * 14 * px}
               y2={H - c.y_m - Math.cos((c.pan_deg * Math.PI) / 180) * 14 * px} stroke="var(--color-primary)" strokeWidth={1.5 * px} />
             <circle cx={c.x_m} cy={H - c.y_m} r={3.5 * px} fill="var(--color-primary)" stroke="var(--color-bg-0)" strokeWidth={1.2 * px} />
+            {/* zoom label: the lens each camera was planned with, once the map is close enough to read it */}
+            {labels && (
+              <text x={c.x_m + Math.sin((c.pan_deg * Math.PI) / 180) * 20 * px} y={H - c.y_m - Math.cos((c.pan_deg * Math.PI) / 180) * 20 * px + 3.5 * px}
+                textAnchor="middle" fontSize={10 * px} fontFamily="var(--font-mono)" fill="var(--color-text)" stroke="var(--color-bg-0)"
+                strokeWidth={2.5 * px} paintOrder="stroke" pointerEvents="none">{fmt(c.focal_mm, 1)} mm</text>
+            )}
           </g>
         ))}
         {(p.switches ?? []).map((s) => (
@@ -154,7 +184,9 @@ export default function MapView(p: Props) {
           </g>
         ))}
         {(p.ptz ?? []).map((c) => (
-          <circle key={`ptz${c.pole_id}`} cx={c.x_m} cy={H - c.y_m} r={7 * px} fill="none" stroke="var(--color-ptz)" strokeWidth={2 * px} />
+          <circle key={`ptz${c.pole_id}`} cx={c.x_m} cy={H - c.y_m} r={7 * px} fill="none" stroke="var(--color-ptz)" strokeWidth={2 * px}>
+            <title>{camTitle(c)}</title>
+          </circle>
         ))}
         {cam && (
           <g>
@@ -194,6 +226,28 @@ function ScaleBar({ metresPerPx }: { metresPerPx: number }) {
   const p = 10 ** Math.floor(Math.log10(target));
   const step = [1, 2, 5, 10].map((k) => k * p).find((s) => s >= target) ?? p * 10;
   return <span>ölçek {step >= 1000 ? `${fmt(step / 1000, step % 1000 ? 1 : 0)} km` : `${fmt(step, 0)} m`}</span>;
+}
+
+/** Hover text for a planned camera: the numbers the plan placed it with. */
+function camTitle(c: PlacedCamera) {
+  const ptz = c.patrol_span_deg > 0;
+  return [
+    `Direk ${c.pole_id}${ptz ? " · PTZ" : ""} — ${c.camera_model}`,
+    ptz ? `devriye ${fmt(c.patrol_span_deg, 0)}° · merkez ${fmt(c.pan_deg, 0)}° · teşhis erişimi ${fmt(c.effective_range_m, 0)} m`
+      : `odak ${fmt(c.focal_mm, 1)} mm · yatay FOV ${fmt(c.hfov_deg, 1)}° · yön ${fmt(c.pan_deg, 0)}°`,
+    ptz ? `geniş uç ${fmt(c.focal_mm, 1)} mm · eğim ${fmt(c.tilt_deg, 1)}°`
+      : `menzil ${fmt(c.effective_range_m, 0)} m · eğim ${fmt(c.tilt_deg, 1)}° · kör nokta ${fmt(c.dead_zone_m, 1)} m`,
+    `direk ${fmt(c.mast_height_m, 1)} m`,
+  ].join("\n");
+}
+
+/** PTZ patrol: the swept sector (or full circle) out to its identification reach. */
+function patrolPath(c: PlacedCamera, H: number) {
+  const r = c.effective_range_m;
+  if (c.patrol_span_deg >= 359.9) {
+    return `M${c.x_m - r} ${H - c.y_m} a${r} ${r} 0 1 0 ${2 * r} 0 a${r} ${r} 0 1 0 ${-2 * r} 0Z`;
+  }
+  return fanPath({ x: c.x_m, y: c.y_m, pan: c.pan_deg, hfov: c.patrol_span_deg, range: r }, H);
 }
 
 /** FOV wedge outline (compass pan: 0 = north, clockwise). */

@@ -113,3 +113,20 @@ def test_fence_roi_is_a_band_around_the_line():
     roi = fo.fence_roi(terr, [(100.0, 250.0), (400.0, 250.0)], closed=False, band_m=20.0)
     assert roi[50, 40] and roi[53, 40]                     # on and next to the fence (y = 250)
     assert not roi[60, 40] and not roi[50, 5]              # 50 m away / past the end
+
+
+def test_fence_band_can_be_narrower_inside():
+    from cctv_simulator.focal_optimizer import fence_roi
+    from cctv_simulator.terrain_loader import TerrainData
+
+    t = TerrainData(z_grid=np.zeros((100, 100)), cell_size_m=2.0)
+    sq = [(50.0, 50.0), (150.0, 50.0), (150.0, 150.0), (50.0, 150.0)]
+    sym = fence_roi(t, sq, True, 20.0)
+    assert np.array_equal(fence_roi(t, sq, True, 20.0, 20.0), sym)       # same width = old band
+    asym = fence_roi(t, sq, True, 20.0, 4.0)
+    r, c = int(100 / 2), int(60 / 2)                                     # (60, 100): 10 m inside the west fence
+    assert sym[r, c] and not asym[r, c]
+    r, c = int(100 / 2), int(40 / 2)                                     # (40, 100): 10 m outside
+    assert asym[r, c]
+    assert asym.sum() < sym.sum()
+    assert np.array_equal(fence_roi(t, sq[:2], False, 20.0, 4.0), fence_roi(t, sq[:2], False, 20.0))  # open line: symmetric

@@ -65,6 +65,12 @@ LAYER_BANDS = {
         (3, 4, _rgba("info", 165), "Cadde"),
         (2, 3, _rgba("info", 130), "Sokak"),
         (1, 2, _rgba("info", 95), "Yaya yolu / meydan"))),
+    # coverage "target" layer: codes painted only inside what the plan protects
+    "target": ("HEDEF — planın koruduğu alanda", (
+        (1, 2, _rgba("dori-identify", 175), "Hedef tutuyor (sabit, sürekli)"),
+        (2, 3, _rgba("ptz", 170), "Yalnız PTZ devriyesiyle (aralıklı)"),
+        (3, 4, _rgba("warn", 165), "Görülüyor, hedefin altında"),
+        (4, 5, _rgba("danger", 165), "Hiç görülmüyor"))),
     "fused": ("ALGILAMA: SABİT + PTZ", (
         (2, 3, _rgba("dori-identify", 140), "Sürekli — sabit kamera"),
         (1, 2, _rgba("warn", 125), "Aralıklı — yalnız PTZ devriyesi"))),
@@ -217,6 +223,16 @@ def obstacle_layer(terrain: TerrainData, size: Tuple[int, int], photo: bool) -> 
         ov[..., 3][bld] = np.clip(110 + (h[bld] // 10.0) * 30.0, 110, 230).astype(np.uint8)
         ov[veg] = _rgba("vegetation", 150)
     return smooth_overlay(ov, size)
+
+
+def dim_outside(img: Image.Image, mask: np.ndarray, factor: float = 0.3) -> Image.Image:
+    """Fade an overlay outside ``mask`` (terrain grid, row 0 = south): what a
+    plan does not protect stays visible but no longer reads as coverage."""
+    m = Image.fromarray(np.flipud(mask).astype(np.uint8) * 255).resize(img.size, Image.Resampling.NEAREST)
+    keep = np.asarray(m) > 0
+    arr = np.array(img.convert("RGBA"))
+    arr[..., 3] = np.where(keep, arr[..., 3], (arr[..., 3] * factor).astype(np.uint8))
+    return Image.fromarray(arr, "RGBA")
 
 
 def zone_overlay(dori_grid: np.ndarray, size: Tuple[int, int], *, mode: str = "dori") -> Image.Image:

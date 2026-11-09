@@ -65,6 +65,31 @@ def patrol_for(ptz: PlacedCamera, speed_deg_s: float, end_dwell_s: float):
                         tilt_deg=ptz.tilt_deg, focal_mm=ptz.focal_mm)
 
 
+def ptz_sweeps(terrain: TerrainData, plan: PerimeterPlanResult, ptz_camera: CameraConfig, *,
+               speed_deg_s: float = 20.0, end_dwell_s: float = 2.0, min_dwell_s: float = 0.5,
+               max_range_cap_m: float = 3000.0, visibility_km: float = 40.0, weather: str = "",
+               earth_curvature: bool = True) -> List[SweepResult]:
+    """Each planned PTZ's patrol, as ``evaluate_mixed_perimeter`` runs it."""
+    reach = _sweep_reach(ptz_camera, visibility_km, weather)
+    return [evaluate_sweep(terrain, p.x_m, p.y_m, p.mast_height_m, ptz_camera,
+                           patrol_for(p, speed_deg_s, end_dwell_s), max_range_m=_ptz_range(p, reach, max_range_cap_m),
+                           min_dwell_s=min_dwell_s, earth_curvature=earth_curvature,
+                           visibility_km=visibility_km, weather=weather)
+            for p in plan.ptz_cameras]
+
+
+def _sweep_reach(ptz_camera: CameraConfig, visibility_km: float, weather: str) -> float:
+    # The patrol (wide end) can see further than the tele identification
+    # reach: a thermal's engine detection floor is Johnson 1.3 px/m, so a
+    # UMA T5 detects to ~1.6 km but identifies to ~75 m. One raster per mast
+    # must cover the longer of the two or the sweep is silently clipped.
+    return view_limits(ptz_camera, ptz_camera.focal_min_mm, math.inf, visibility_km, weather).effective_max_range_m
+
+
+def _ptz_range(p: PlacedCamera, sweep_reach: float, cap_m: float) -> float:
+    return float(min(max(p.effective_range_m, sweep_reach, 50.0), cap_m))
+
+
 @dataclass
 class MixedPerimeterResult:
     static: Optional[MultiViewshedResult]   # fixed poles; None if the plan has none
@@ -109,14 +134,10 @@ def evaluate_mixed_perimeter(terrain: TerrainData, plan: PerimeterPlanResult,
 
     sweeps: List[SweepResult] = []
     cues: List[CueResponse] = []
-    # The patrol (wide end) can see further than the tele identification
-    # reach: a thermal's engine detection floor is Johnson 1.3 px/m, so a
-    # UMA T5 detects to ~1.6 km but identifies to ~75 m. One raster per mast
-    # must cover the longer of the two or the sweep is silently clipped.
     wide_lim = view_limits(ptz_camera, ptz_camera.focal_min_mm, math.inf, visibility_km, weather)
-    sweep_reach = wide_lim.effective_max_range_m
+    sweep_reach = _sweep_reach(ptz_camera, visibility_km, weather)
     for p in plan.ptz_cameras:
-        rng = float(min(max(p.effective_range_m, sweep_reach, 50.0), max_range_cap_m))
+        rng = _ptz_range(p, sweep_reach, max_range_cap_m)
         sweeps.append(evaluate_sweep(
             terrain, p.x_m, p.y_m, p.mast_height_m, ptz_camera,
             patrol_for(p, speed_deg_s, end_dwell_s), max_range_m=rng,

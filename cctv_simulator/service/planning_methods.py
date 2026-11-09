@@ -78,7 +78,7 @@ def network_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
 def compare_models(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """For each candidate model: fewest poles holding the goal, its network and cost; ranked."""
     from ..model_selection import compare_models as run
-    from .terrain_methods import _fence, _plan_kwargs
+    from .terrain_methods import _band_params, _fence, _plan_kwargs
 
     entry, t = _terrain_of(params)
     names = params.get("models")
@@ -104,7 +104,7 @@ def compare_models(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         raise RpcError(INVALID_PARAMS, "'model_prices' nesne olmalı.")
     opts = run(t, _fence(params), cands, plan_kwargs=_plan_kwargs(params),
                goal_frac=_num(params, "goal_frac", 0.95, lo=0.05, hi=1.0), level=level,
-               band_m=_num(params, "band_m", 40.0, lo=5, hi=500),
+               band_m=_band_params(params)[0], inside_m=_band_params(params)[1],
                position_steps=int(_num(params, "position_steps", 0, lo=0, hi=4)),
                prices={k: float(v) for k, v in prices.items() if isinstance(v, (int, float))},
                price_book=_prices(params.get("prices")),

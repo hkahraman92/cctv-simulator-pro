@@ -138,7 +138,7 @@ def night_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     from .. import map_render
     from ..focal_optimizer import band_area
     from ..night import capped_placements, light_condition
-    from .terrain_methods import _plan_roi
+    from .terrain_methods import _band_params, _plan_roi
     from ..viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_OBSERVE, ZONE_RECOG
 
     entry, t = _terrain_of(params)
@@ -151,8 +151,8 @@ def night_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     cond = light_condition(lat, lon, _when(params), **_light_kw(params))
     mode = _mode_for(cam, cond.lux, params)
     is_area = kw.get("line_mode") == "area"
-    band = 0.0 if is_area else _num(params, "band_m", 40.0, lo=5, hi=500)
-    roi = _plan_roi(t, fence, kw, band)
+    band, inside = (0.0, None) if is_area else _band_params(params)
+    roi = _plan_roi(t, fence, kw, band, inside)
     cell = t.cell_size_m ** 2
     roi_area = float(roi.sum() * cell)
     levels = (("identify", ZONE_IDENT), ("recognize", ZONE_RECOG), ("observe", ZONE_OBSERVE), ("detect", ZONE_DETECT))

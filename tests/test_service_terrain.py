@@ -335,3 +335,30 @@ def test_city_layer_street_plan_and_analysis_through_the_api(monkeypatch):
     r = ok("city.analyse", terrain_id=entry.id, level="observe", max_px=300)
     assert r["share_by_level"]["observe"] >= 0.9 - 1e-9 and r["legend"] and len(r["privacy"]) == a["plan"]["camera_count"]
     assert {b["label"] for b in r["by_class"]} <= set(city.CLASS_LABEL.values())
+
+
+def test_coverage_target_layer_and_asymmetric_band_match_the_engine(hills):
+    from cctv_simulator.focal_optimizer import band_area, fence_roi
+    from cctv_simulator.viewshed_3d import ZONE_DETECT
+
+    tid = hills["terrain_id"]
+    fence = [[300, 300], [900, 300], [900, 900], [300, 900]]
+    ok("perimeter.plan", terrain_id=tid, camera=CAM, fence=fence, target_ppm=40, mast_m=6)
+    sym = ok("perimeter.coverage", terrain_id=tid, max_px=300, layer="target")
+    asym = ok("perimeter.coverage", terrain_id=tid, max_px=300, layer="dori", band_m=40, band_in_m=10)
+    assert asym["band_area_m2"] < sym["band_area_m2"] and asym["band_in_m"] == 10
+    # the target split is the engine's px/m grid against the plan's target, inside the band
+    entry = session.SESSION.get(tid)
+    plan, cam, kw, fence_pts = entry.results["plan"]
+    t = entry.bare
+    roi = fence_roi(t, fence_pts, True, 40.0)
+    mv, _ = band_area(t, plan, cam, roi, ZONE_DETECT)
+    held = (mv.ppm_grid >= 40 - 1e-6) & mv.visibility_mask
+    assert sym["target"]["held"] == pytest.approx(float((held & roi).sum()) / float(roi.sum()))
+    assert sym["target"]["label"] == "40 px/m" and sym["target"]["ppm"] == 40
+    line = fence_roi(t, fence_pts, True, max(0.75 * t.cell_size_m, 1.0))
+    assert sym["fence_line"]["held"] == pytest.approx(float((held & line).sum()) / float(line.sum()))
+    obs_ = ok("perimeter.coverage", terrain_id=tid, max_px=300, layer="target", level="observe")
+    assert obs_["target"]["held"] <= sym["target"]["held"]
+    bad, _ = call("perimeter.coverage", terrain_id=tid, layer="target", level="x")
+    assert bad["error"]["code"] == INVALID_PARAMS

@@ -22,8 +22,10 @@ const localNow = (h = 23) => {
 };
 
 /** Night: what lights the scene at a date / time, and the plan's fence band by night vs by day. */
-export function NightPanel({ T, job, terrainId, useObstacles, camera, hasLatLon, onLayer, onResult, resetKey }: {
+export function NightPanel({ T, job, terrainId, useObstacles, camera, hasLatLon, onLayer, onResult, resetKey, band }: {
   T: TerrainApi; job: Job; terrainId: string; useObstacles: boolean; camera: CameraConfig; hasLatLon: boolean; resetKey: number;
+  /** the fence band the plan protects (same as coverage) */
+  band?: { band_m?: number; band_in_m?: number };
   onLayer: (l: Layer | null) => void; onResult: (r: NightCoverage | null) => void;
 }) {
   const [when, setWhen] = useState(localNow());
@@ -39,7 +41,7 @@ export function NightPanel({ T, job, terrainId, useObstacles, camera, hasLatLon,
     cloud_cover: cfg.cloud / 100, sky_glow_lux: cfg.glow, ir_on: cfg.ir_on, white_light_range_m: cfg.white, camera: cam,
     ...(hasLatLon ? {} : pos),
   };
-  const run = () => void job.run("Gece kapsaması", (o) => T.nightCoverage({ terrain_id: terrainId, use_obstacles: useObstacles, datetime: when, max_px: 1200, ...common }, o))
+  const run = () => void job.run("Gece kapsaması", (o) => T.nightCoverage({ terrain_id: terrainId, use_obstacles: useObstacles, datetime: when, max_px: 1200, ...common, ...band }, o))
     .then((r) => {
       if (!r) return;
       setRes(r); onResult(r);

@@ -131,3 +131,16 @@ def test_network_counts_the_trench_to_an_interior_pole():
     if inner:                                   # the plan used interior poles: their trench is in the copper
         assert any("hendek" in a for a in net.assumptions)
     assert net.cameras == rep.plan.camera_count
+
+
+def test_hole_areas_are_8_connected_patches():
+    from cctv_simulator.area_planner import hole_areas
+
+    m = np.zeros((8, 8), bool)
+    m[1:3, 1:3] = True            # 4 cells
+    m[3, 3] = True                # touches diagonally -> same hole
+    m[6, 0:5] = True              # separate, 5 cells
+    lab, areas = hole_areas(m, 4.0)
+    assert sorted(areas) == [20.0, 20.0]
+    assert lab[1, 1] == lab[3, 3] != lab[6, 0] and (lab > 0).sum() == m.sum()
+    assert hole_areas(np.zeros((3, 3), bool), 1.0)[1] == []

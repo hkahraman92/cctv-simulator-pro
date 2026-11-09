@@ -266,11 +266,12 @@ def generate_perimeter_plan(terrain: TerrainData,
     pole_counter = 1
 
     def _place(px: float, py: float, pan_deg: float, *, reach: float = ground_reach,
-               dz: float = dead_zone, tilt: float = default_tilt, note: str = "") -> None:
+               dz: float = dead_zone, tilt: float = default_tilt, note: str = "",
+               on_pole: Optional[int] = None) -> None:
         nonlocal pole_counter
         gz = terrain.ground_elevation_at(px, py)
         placed_cameras.append(PlacedCamera(
-            pole_id=pole_counter,
+            pole_id=pole_counter if on_pole is None else on_pole,
             x_m=round(px, 1), y_m=round(py, 1), ground_z_m=round(gz, 1),
             mast_height_m=mast_height_m,
             pan_deg=round(pan_deg % 360.0, 1), tilt_deg=round(tilt, 1),
@@ -279,7 +280,8 @@ def generate_perimeter_plan(terrain: TerrainData,
             camera_model=camera.name + (f" [{note}]" if note else ""),
             sensor_name=camera.sensor_name, resolution_name=camera.resolution_name,
         ))
-        pole_counter += 1
+        if on_pole is None:
+            pole_counter += 1
 
     def _pole_heading(seg_heading_deg: float) -> float:
         if line_mode == "border":
@@ -346,7 +348,12 @@ def generate_perimeter_plan(terrain: TerrainData,
             if turn < 20.0:
                 continue
             vx, vy = pts[vi]
-            _place(vx, vy, h_out, reach=corner_range, dz=corner_dz, tilt=corner_tilt, note="köşe")
+            # the vertex already carries the outgoing leg's first pole: the
+            # guard is a second camera on that mast, not a new pole (BOM,
+            # trenching and switch ports counted one pole too many per corner)
+            host = next((c.pole_id for c in placed_cameras
+                         if abs(c.x_m - round(vx, 1)) < 0.05 and abs(c.y_m - round(vy, 1)) < 0.05), None)
+            _place(vx, vy, h_out, reach=corner_range, dz=corner_dz, tilt=corner_tilt, note="köşe", on_pole=host)
 
     ptz_cams: List[PlacedCamera] = []
     if ptz_camera is not None and ptz_every_n >= 1 and regular_poles:
@@ -365,7 +372,8 @@ def generate_perimeter_plan(terrain: TerrainData,
 
     # Compute BOM metrics
     num_cams = len(placed_cameras)
-    avg_spacing = (total_len / max(num_cams, 1)) if num_cams > 0 else 0.0
+    num_poles = len({c.pole_id for c in placed_cameras})
+    avg_spacing = (total_len / max(num_poles, 1)) if num_poles > 0 else 0.0
 
     total_bandwidth_mbps = num_cams * _bitrate_mbps(camera)
     if ptz_cams:
@@ -381,7 +389,7 @@ def generate_perimeter_plan(terrain: TerrainData,
         placed_cameras=placed_cameras,
         gaps=gaps,
         camera_count=num_cams + len(ptz_cams),
-        pole_count=num_cams,
+        pole_count=num_poles,
         target_ppm=target_ppm,
         avg_spacing_m=round(avg_spacing, 1),
         coverage_percentage=round(coverage_pct, 1),
@@ -425,17 +433,22 @@ def _place_ptz_cameras(pts: List[Tuple[float, float]],
                        hosts: List[Tuple[PlacedCamera, float]], ptz: CameraConfig, *,
                        line_mode: str, is_closed_loop: bool, span_deg: float,
                        target_ppm: float, visibility_km: float,
-                       weather: str) -> List[PlacedCamera]:
-    """One PTZ per host pole, same pole id and mast (co-mounted)."""
+                       weather: str, centres: Optional[List[float]] = None) -> List[PlacedCamera]:
+    """One PTZ per host pole, same pole id and mast (co-mounted).
+
+    ``centres`` (compass deg, one per host) overrides the patrol centre -- an
+    area plan points it at the polygon's centre instead of off a fence."""
     span = float(min(max(span_deg, 10.0), 360.0))
     wide = camera_optics(ptz, ptz.focal_min_mm)
     tele = camera_optics(ptz, ptz.focal_max_mm)
     band = _atm.band_for_camera(ptz.sensor_name, ptz.model_name)
     wide_det = view_limits(ptz, ptz.focal_min_mm, math.inf, visibility_km, weather).atmospheric_limit_m
     out: List[PlacedCamera] = []
-    for host, seg_heading in hosts:
+    for k, (host, seg_heading) in enumerate(hosts):
         mast = host.mast_height_m
-        if line_mode == "facility":
+        if centres is not None:
+            centre = centres[k]
+        elif line_mode == "facility":
             centre = _outward_normal_deg(seg_heading, pts, (host.x_m, host.y_m), is_closed_loop)
         else:
             centre = host.pan_deg      # border: the watched side; highway: back along the road

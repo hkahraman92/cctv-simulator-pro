@@ -30,8 +30,10 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
     (her yazım yönetici şifresini denetler)
   - `terrain_methods.py`: `terrain.catalog|procedural|geotiff|download|image`,
     `regions.list|open|save|delete`, `surface.osm|raster`, `viewshed.single`,
-    `perimeter.plan|coverage|minimize_poles|optimize`, `area.plan` (alan hedefi:
-    poligonda en az kamera, motorla doğrulanır; `streets_only`), `city.osm|analyse`
+    `perimeter.plan|coverage|minimize_poles|optimize` (bant: `band_m` dış,
+    `band_in_m` iç; kapsama `layer=target|dori|overlap`, `level=plan|…`, PTZ
+    aralıklı pay, çit çizgisi payı), `area.plan` (alan hedefi: poligonda en az
+    kamera, motorla doğrulanır; `streets_only`, `max_hole_m2`, PTZ), `city.osm|analyse`
     (sokak / konut / öncelikli yer; sokak kapsaması, yüz, KVKK), `focal.sweep`
   - `ptz_methods.py`: `ptz.sweep|cue|tour`, `perimeter.mixed`
   - `bench_methods.py`: `optics.project|bench`, `plan.image`, `iq.measure`, `scene.render`,

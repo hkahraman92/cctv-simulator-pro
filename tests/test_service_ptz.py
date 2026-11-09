@@ -88,3 +88,47 @@ def test_mixed_perimeter_needs_ptz_then_reports_continuous_and_intermittent(hill
     assert r["ptz_count"] == len(p["ptz"]) and r["fixed_poles"] == p["pole_count"]
     assert r["continuous_detect_m2"] > 0 and r["intermittent_detect_m2"] >= 0
     assert 0 <= r["identifiable_pct"] <= 100
+
+
+def test_coverage_counts_ptz_as_intermittent_and_never_changes_the_fixed_share(hills):
+    """PTZ patrols enter coverage as their own share; the continuous (fixed) numbers stay the engine's."""
+    fence = [[250, 250], [750, 250], [750, 750], [250, 750]]
+    ok("perimeter.plan", terrain_id=hills, camera=dataclasses.asdict(FIX), fence=fence, target_ppm=40, mast_m=6)
+    plain = ok("perimeter.coverage", terrain_id=hills, max_px=300, layer="target")
+    assert plain["ptz_count"] == 0 and all(v == 0 for v in plain["band_share_ptz"].values())
+    assert len(plain["legend"]) == 3                    # no PTZ row without PTZs
+    p = ok("perimeter.plan", terrain_id=hills, camera=dataclasses.asdict(FIX), fence=fence, target_ppm=40, mast_m=6,
+           ptz_camera=dataclasses.asdict(PTZ), ptz_every_n=6, ptz_patrol_span_deg=360)
+    mixed = ok("perimeter.coverage", terrain_id=hills, max_px=300, layer="target")
+    assert mixed["ptz_count"] == len(p["ptz"]) > 0
+    assert mixed["band_share"] == plain["band_share"]   # fixed = continuous, unchanged by the PTZs
+    assert mixed["band_share_ptz"]["detect"] > 0 and mixed["target"]["ptz_only"] > 0
+    assert len(mixed["legend"]) == 4 and mixed["ptz_worst_revisit_s"] > 0
+    shares = mixed["target"]
+    assert sum(shares[k] for k in ("held", "ptz_only", "below", "unseen")) == pytest.approx(1.0)
+    assert shares["held"] == pytest.approx(plain["target"]["held"])
+    assert mixed["fence_line"]["with_ptz"] >= mixed["fence_line"]["held"]
+
+
+def test_area_plan_takes_ptz_and_closes_holes(hills):
+    poly = [[350, 350], [650, 350], [650, 600], [350, 600]]
+    base = ok("area.plan", terrain_id=hills, camera=dataclasses.asdict(FIX), fence=poly, level="observe",
+              goal_frac=0.85, mast_m=8)
+    closed = ok("area.plan", terrain_id=hills, camera=dataclasses.asdict(FIX), fence=poly, level="observe",
+                goal_frac=0.85, mast_m=8, max_hole_m2=400, ptz_camera=dataclasses.asdict(PTZ), ptz_every_n=3)
+    assert base["holes_count"] >= 1 and base["hole_cameras"] == 0
+    assert closed["largest_hole_m2"] <= max(400.0, base["largest_hole_m2"])
+    assert closed["engine_frac"] >= base["engine_frac"] - 1e-9
+    assert closed["plan"]["ptz_count"] >= 1 and len(closed["plan"]["ptz"]) == closed["plan"]["ptz_count"]
+    cov = ok("perimeter.coverage", terrain_id=hills, max_px=300, layer="target")
+    assert cov["ptz_count"] == closed["plan"]["ptz_count"] and cov["fence_line"] is None
+    assert cov["target"]["held"] == pytest.approx(closed["engine_frac"])
+
+
+def test_a_ptz_as_the_main_camera_is_flagged(hills):
+    fence = [[250, 250], [750, 250], [750, 750]]
+    cam = dataclasses.asdict(dataclasses.replace(PTZ, camera_type="PTZ"))
+    p = ok("perimeter.plan", terrain_id=hills, camera=cam, fence=fence, closed=False, target_ppm=40, mast_m=6)
+    assert any("PTZ" in w for w in p["warnings"])
+    q = ok("perimeter.plan", terrain_id=hills, camera=dataclasses.asdict(FIX), fence=fence, closed=False)
+    assert q["warnings"] == []

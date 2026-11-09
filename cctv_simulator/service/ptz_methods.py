@@ -191,7 +191,7 @@ def perimeter_mixed(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     cell = t.cell_size_m ** 2
     st = res.fused.status["detect"]
     return {
-        "fixed_poles": len(plan.placed_cameras), "ptz_count": len(plan.ptz_cameras),
+        "fixed_poles": plan.pole_count, "ptz_count": len(plan.ptz_cameras),
         "continuous_detect_m2": float((st == 2).sum() * cell), "intermittent_detect_m2": float((st == 1).sum() * cell),
         "worst_intermittent_revisit_s": _fin(res.fused.worst_intermittent_revisit_s.get("detect", math.inf)),
         "detected_area_m2": res.detected_area_m2, "identifiable_area_m2": res.identifiable_area_m2,

@@ -416,9 +416,13 @@ def optimize_layout(terrain: TerrainData, mounts: Sequence[Mount], *, roi: Optio
 
 
 def fence_roi(terrain: TerrainData, fence_points: Sequence[Tuple[float, float]], closed: bool,
-              band_m: float = 40.0) -> Optional[np.ndarray]:
+              band_m: float = 40.0, inside_m: Optional[float] = None) -> Optional[np.ndarray]:
     """Cells within ``band_m`` of the fence line (the band a perimeter plan
-    protects; same rule as perimeter_planner's coverage denominator)."""
+    protects; same rule as perimeter_planner's coverage denominator).
+
+    ``inside_m`` (closed fence only): a different width on the inner side --
+    a detection strip outside the fence and a narrow sterile strip inside is
+    how a compound is usually specified. None = symmetric (bit-identical)."""
     from .perimeter_planner import _fence_band_mask
     pts = list(fence_points)
     if closed and len(pts) > 2 and tuple(pts[0]) != tuple(pts[-1]):
@@ -426,7 +430,12 @@ def fence_roi(terrain: TerrainData, fence_points: Sequence[Tuple[float, float]],
     cols = terrain.origin_x + np.arange(terrain.cols) * terrain.cell_size_m
     rows = terrain.origin_y + np.arange(terrain.rows) * terrain.cell_size_m
     mx, my = np.meshgrid(cols, rows)
-    return _fence_band_mask(mx, my, pts, band_m)
+    if inside_m is None or not closed or len(pts) < 4 or abs(float(inside_m) - band_m) < 1e-9:
+        return _fence_band_mask(mx, my, pts, band_m)
+    from .area_planner import _inside
+    inner = _inside(mx, my, pts)
+    return ((_fence_band_mask(mx, my, pts, band_m) & ~inner)
+            | (_fence_band_mask(mx, my, pts, float(inside_m)) & inner))
 
 
 def fence_shifts(fence_points: Sequence[Tuple[float, float]], x: float, y: float,
@@ -466,7 +475,15 @@ def mounts_from_plan(plan, camera: CameraConfig, ptz_camera: Optional[CameraConf
     each mount's starting candidate); PTZ rows only if a PTZ model is given.
     ``position_steps`` > 0 also lets each fixed pole move ``±k·position_step_m``
     along the fence (terrain-aware placement: around a ridge or a building)."""
+    from collections import Counter
+    # a mast carrying two cameras (corner guard, PTZ host) stays put: moving
+    # one of them would split one pole into two different places
+    per_pole = Counter(c.pole_id for c in plan.placed_cameras)
+    per_pole.update(p.pole_id for p in getattr(plan, "ptz_cameras", []))
+
     def alts(c):
+        if per_pole[c.pole_id] > 1:
+            return []
         return fence_shifts(plan.fence_points, c.x_m, c.y_m, position_step_m, position_steps)
     mounts = [Mount(c.x_m, c.y_m, c.mast_height_m, camera, pan_deg=c.pan_deg, tilt_deg=c.tilt_deg,
                     focal_mm=c.focal_mm, pan_search_deg=pan_search_deg, label=f"Direk {c.pole_id}",

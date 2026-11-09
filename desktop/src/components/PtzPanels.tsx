@@ -164,7 +164,7 @@ export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onC
                 className={`h-7 rounded text-[11px] font-semibold ${value.span === s ? "bg-bg-6 text-ptz" : "bg-bg-5 text-text-2"}`}>{s}°</button>
             ))}
           </div>
-          <p className="mt-2 text-[11px] text-text-3">◆ "Direkleri Diz" PTZ'leri plana ekler; sonra karma kapsamayı hesaplayın.</p>
+          <p className="mt-2 text-[11px] text-text-3">◆ Planı yeniden kurun ("Direkleri Diz" / "Alanı Kapla"): PTZ'ler direklere eklenir ve Birleşik Kapsama onları aralıklı kapsama olarak sayar.</p>
           <div className="mt-2 flex gap-1.5">
             <Button className="flex-1" disabled={job.running || !hasPlanWithPtz} onClick={() => run("fused")}>Sabit + PTZ</Button>
             <Button className="flex-1" disabled={job.running || !hasPlanWithPtz} onClick={() => run("cue")}>Tespit→Teşhis</Button>
