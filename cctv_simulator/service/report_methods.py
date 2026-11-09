@@ -82,6 +82,8 @@ def report_engineering(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     from .. import exporters
 
     entry = _s.SESSION.get(params.get("terrain_id"))
+    from .terrain_methods import _activate
+    _activate(entry)                     # the report states the target height the results used
     terrain = entry.terrain(bool(params.get("use_obstacles", True)))
     formats = _formats(params, {"pdf", "csv"})
     out = _out_dir(params)

@@ -1140,13 +1140,23 @@ def _surface_line(terrain) -> str:
     return line
 
 
+def _target_line() -> str:
+    """What a "seen" cell means in this run (viewshed_3d target height)."""
+    from .viewshed_3d import current_target_height
+    h = current_target_height()
+    if h > 0:
+        return (f" Hedef: {h:.1f} m boyunda insan — görüş hattı ve kadraj başa göre "
+                "(baş kadrajda değilse hücre sayılmaz).").replace(".", ",", 1)
+    return " Hedef: zemin noktası — insan boyu modellenmedi (baş kadraj dışında kalabilir)."
+
+
 def _provenance_line(terrain) -> str:
     if getattr(terrain, "is_measured", False):
         return (f"Yükselti verisi: ÖLÇÜLMÜŞ DEM ({getattr(terrain, 'source_note', '') or terrain.name})."
-                + _surface_line(terrain))
+                + _surface_line(terrain) + _target_line())
     return ("Yükselti verisi: TEMSİLİ / PROSEDÜREL — ölçüm değildir. Görüş alanı, kör nokta "
             "ve kapsama oranları bu arazi üzerinde BAĞLAYICI DEĞİLDİR; gerçek DEM ile "
-            "yeniden hesaplanmalıdır." + _surface_line(terrain))
+            "yeniden hesaplanmalıdır." + _surface_line(terrain) + _target_line())
 
 
 def export_engineering_report_csv(path: str, *, project_name: str, terrain, camera,

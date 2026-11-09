@@ -42,6 +42,7 @@ from .terrain_loader import TerrainData
 from .viewshed_3d import (
     _K_REFRACT,
     _R_EARTH,
+    current_target_height,
     march_rays,
     ray_chunk,
     ray_step_size,
@@ -96,8 +97,11 @@ class ViewGrids:
 
 def compute_mount_visibility(terrain: TerrainData, x_m: float, y_m: float, mast_height_m: float,
                              max_range_m: float = 2000.0, earth_curvature: bool = True,
-                             ray_step_m: float = 3.0) -> MountVisibility:
-    """March rays round the full circle from one mast (uncached)."""
+                             ray_step_m: float = 3.0, target_h: Optional[float] = None) -> MountVisibility:
+    """March rays round the full circle from one mast (uncached). ``target_h``
+    (None = the engine's current target height): sight line and framing angle
+    are the head's, as in calculate_3d_viewshed."""
+    th = current_target_height() if target_h is None else max(0.0, float(target_h))
     rows, cols, cell = terrain.rows, terrain.cols, terrain.cell_size_m
     cam_z = terrain.ground_elevation_at(x_m, y_m) + mast_height_m   # mast stands on the ground
 
@@ -122,12 +126,13 @@ def compute_mount_visibility(terrain: TerrainData, x_m: float, y_m: float, mast_
     chunk = ray_chunk(len(step_dists))
     for start in range(0, num_rays, chunk):
         m = march_rays(terrain, x_m, y_m, cam_z, angles[start:start + chunk],
-                       step_dists, earth_curvature)
+                       step_dists, earth_curvature, target_h=th)
         v = m.valid
         rr, cc = m.rr[v] - r0, m.cc[v] - c0
         written[rr, cc] = True
         los[rr, cc] = m.los_clear[v]
-        tan_g[rr, cc] = m.tan_angle[v]
+        tan = m.tan_angle + th / step_dists[None, :m.tan_angle.shape[1]] if th > 0 else m.tan_angle
+        tan_g[rr, cc] = tan[v]
         slant_g[rr, cc] = m.slant[v]
 
     gx = terrain.origin_x + np.arange(c0, c1) * cell
@@ -135,7 +140,7 @@ def compute_mount_visibility(terrain: TerrainData, x_m: float, y_m: float, mast_
     mx, my = np.meshgrid(gx, gy)
     dx, dy = mx - x_m, my - y_m
     dist = np.hypot(dx, dy)
-    cell_dz = terrain.z_grid[r0:r1, c0:c1].astype(np.float64) - cam_z
+    cell_dz = terrain.z_grid[r0:r1, c0:c1].astype(np.float64) + th - cam_z
     if earth_curvature:
         cell_dz -= (dist ** 2) / (2.0 * _R_EARTH) * (1.0 - _K_REFRACT)
 
@@ -161,16 +166,17 @@ def mount_visibility(terrain: TerrainData, x_m: float, y_m: float, mast_height_m
     """Cached compute_mount_visibility. Keyed by the terrain object and its
     grid geometry (a recalibrated width or a new DEM is a different key) plus
     the mount; least-recently-used entries beyond 16 are dropped."""
+    th = current_target_height()
     key = (id(terrain), id(terrain.z_grid), terrain.z_grid.shape, terrain.cell_size_m,
            terrain.origin_x, terrain.origin_y, float(x_m), float(y_m), float(mast_height_m),
-           float(max_range_m), bool(earth_curvature), float(ray_step_m))
+           float(max_range_m), bool(earth_curvature), float(ray_step_m), th)
     hit = _CACHE.get(key)
     # ids can be reused once an object is freed: confirm it is the same terrain
     if hit is not None and hit[0]() is terrain and hit[1] is terrain.z_grid:
         _CACHE.move_to_end(key)
         return hit[2]
     mv = compute_mount_visibility(terrain, x_m, y_m, mast_height_m, max_range_m,
-                                  earth_curvature, ray_step_m)
+                                  earth_curvature, ray_step_m, target_h=th)
     _CACHE[key] = (weakref.ref(terrain), terrain.z_grid, mv)
     while len(_CACHE) > _CACHE_MAX:
         _CACHE.popitem(last=False)

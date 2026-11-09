@@ -93,7 +93,29 @@ def _register(terrain, photo=None, **kw) -> _s.TerrainEntry:
 
 def _terrain_of(params: Dict[str, Any]):
     entry = _s.SESSION.get(params.get("terrain_id"))
+    if "target_height_m" in params:      # a call may carry it (the live single view does)
+        entry.set_target_height(_num(params, "target_height_m", lo=0.0, hi=5.0))
+    _activate(entry)
     return entry, entry.terrain(bool(params.get("use_obstacles", True)))
+
+
+def _activate(entry) -> None:
+    """Every engine path in this request scores a person of the terrain's
+    target height (viewshed_3d context variable; worker threads are reused,
+    so it is set on every call, never inherited)."""
+    from ..viewshed_3d import set_target_height
+    set_target_height(entry.target_height_m)
+
+
+def terrain_settings(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """Analysis settings kept with the terrain: ``target_height_m`` (a person
+    of this height standing on each cell: sight line and framing to the head;
+    0 = the ground point). Changing it drops results computed with the old one."""
+    entry = _s.SESSION.get(params.get("terrain_id"))
+    changed = False
+    if "target_height_m" in params:
+        changed = entry.set_target_height(_num(params, "target_height_m", lo=0.0, hi=5.0))
+    return {"target_height_m": entry.target_height_m, "changed": changed}
 
 
 # ── catalog ──────────────────────────────────────────────────────────────
@@ -774,6 +796,7 @@ def city_osm(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     from ..city import CLASS_LABEL, fetch_city
 
     entry = _s.SESSION.get(params.get("terrain_id"))
+    _activate(entry)
     t = entry.bare
     if t.lat_center is None:
         raise RpcError(APP_ERROR, "Sokak verisi yalnız konumu bilinen bir arazide (indirilen / kayıtlı bölge) alınabilir.")
@@ -876,6 +899,7 @@ def focal_sweep(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
 
 
 METHODS = {
+    "terrain.settings": terrain_settings,
     "terrain.catalog": terrain_catalog,
     "terrain.procedural": terrain_procedural,
     "terrain.geotiff": terrain_geotiff,

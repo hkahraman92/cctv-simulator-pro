@@ -106,3 +106,30 @@ def test_cache_reuses_and_invalidates():
     other = TerrainData(z_grid=np.zeros((100, 100), np.float32), cell_size_m=5.0)
     assert mount_visibility(other, 250.0, 250.0, MAST, max_range_m=200.0) is not a
     clear_mount_cache()
+
+
+def test_raster_uses_the_same_target_height_as_the_engine():
+    from cctv_simulator.viewshed_3d import target_height
+
+    z = np.zeros((240, 240), np.float32)
+    z[:, 150] = 1.0                                       # low wall
+    terr = TerrainData(z_grid=z, cell_size_m=5.0)
+    x, y = terr.width_m / 2, terr.height_m / 2
+    clear_mount_cache()
+    with target_height(1.8):
+        mv = mount_visibility(terr, x, y, MAST, max_range_m=500.0)
+        xor = union = 0
+        for f, tilt, pan in _views():
+            ref = calculate_3d_viewshed(terr, x, y, MAST, CAM, focal_mm_override=f, pan_deg=pan,
+                                        tilt_deg=tilt, max_range_m=500.0, with_profile=False)
+            vm = view_mask(mv, CAM, pan_deg=pan, tilt_deg=tilt, focal_mm=f, max_range_m=500.0)
+            xor += np.count_nonzero(ref.visibility_mask ^ vm.visibility_mask)
+            union += np.count_nonzero(ref.visibility_mask | vm.visibility_mask)
+    # 96 % (99 % with h = 0): with a target height the frame's top edge is a
+    # line ACROSS the cone (where the top ray passes 1.8 m) instead of the
+    # range end, and the raster (cell centre) and the engine (ray sample)
+    # put that one-cell boundary a cell apart on some rows.
+    assert union > 1000 and 1 - xor / union >= 0.95
+    # the cache keeps ground and person rasters apart
+    mv0 = mount_visibility(terr, x, y, MAST, max_range_m=500.0)
+    assert mv0 is not mv and not np.array_equal(mv0.los_clear, mv.los_clear)

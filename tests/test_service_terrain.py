@@ -372,3 +372,22 @@ def test_border_coverage_scores_the_watched_side(hills):
     cov = ok("perimeter.coverage", terrain_id=tid, max_px=300, band_m=150, layer="target", level="detect")
     assert cov["roi_kind"] == "side" and cov["watch_side"] == "left"
     assert cov["target"]["held"] > 0.05            # the watched side is seen (a ±band around the line read ~0)
+
+
+def test_target_height_is_kept_with_the_terrain_and_rescores(hills):
+    from cctv_simulator.viewshed_3d import calculate_3d_viewshed, target_height
+
+    tid = hills["terrain_id"]
+    args = dict(terrain_id=tid, camera=CAM, x_m=600, y_m=600, mast_m=8, pan_deg=45, tilt_deg=-12, range_m=500,
+                lens_mode="max", max_px=300)
+    ground = ok("viewshed.single", **args)
+    assert ok("terrain.settings", terrain_id=tid, target_height_m=1.8) == {"target_height_m": 1.8, "changed": True}
+    person = ok("viewshed.single", **args)
+    t = session.SESSION.get(tid).bare
+    with target_height(1.8):
+        want = calculate_3d_viewshed(t, 600, 600, 8, CameraConfig(**CAM), lens_mode="max", pan_deg=45,
+                                     tilt_deg=-12, max_range_m=500)
+    assert person["visible_area_m2"] == want.visible_area_m2 != ground["visible_area_m2"]
+    assert ok("terrain.settings", terrain_id=tid, target_height_m=1.8)["changed"] is False
+    # a single call can carry it too, and 0 is the ground point again
+    assert ok("viewshed.single", **args, target_height_m=0)["visible_area_m2"] == ground["visible_area_m2"]

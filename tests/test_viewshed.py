@@ -213,3 +213,41 @@ def test_range_window_keeps_the_whole_cone(pos):
                 & (elev >= np.radians(vs.tilt_deg - vs.vfov_deg / 2))
                 & (elev <= np.radians(vs.tilt_deg + vs.vfov_deg / 2)))
         assert vs.fov_area_m2 == pytest.approx(cone.sum() * terr.cell_size_m ** 2)
+
+
+def test_target_height_sees_a_person_over_a_low_wall_and_cuts_a_headless_frame():
+    """A cell is a person: with 1.8 m the head clears a 1 m wall the ground
+    behind it does not, and a frame whose top ray dips under head height no
+    longer counts the far ground. 0 m = the old ground test, unchanged."""
+    import math
+
+    from cctv_simulator.calculations import camera_optics
+    from cctv_simulator.viewshed_3d import calculate_3d_viewshed, target_height
+
+    z = np.zeros((200, 200), np.float32)
+    z[:, 120] = 1.0                                       # 1 m wall at x = 240 m, camera west of it
+    t = TerrainData(z_grid=z, cell_size_m=2.0)
+    cam = CameraConfig(focal_min_mm=2.8, focal_max_mm=12.0)
+    kw = dict(lens_mode="max", pan_deg=90.0, tilt_deg=-3.0, max_range_m=300.0, with_profile=False)
+    ground = calculate_3d_viewshed(t, 100.0, 200.0, 4.0, cam, **kw)
+    with target_height(1.8):
+        person = calculate_3d_viewshed(t, 100.0, 200.0, 4.0, cam, **kw)
+    behind = (slice(95, 105), slice(122, 130))           # just past the wall
+    assert not ground.visibility_mask[behind].any()
+    assert person.visibility_mask[behind].all()
+    assert calculate_3d_viewshed(t, 100.0, 200.0, 4.0, cam, **kw).visible_area_m2 == ground.visible_area_m2
+
+    # framing: flat ground, the top ray reaches 1.8 m at d_head; past it no head in frame
+    flat = TerrainData(z_grid=np.zeros((200, 200), np.float32), cell_size_m=2.0)
+    tilt = -14.0
+    vfov = camera_optics(cam, cam.focal_max_mm).vfov_deg
+    top = math.radians(tilt + vfov / 2)                   # below the horizon
+    d_head = (6.0 - 1.8) / math.tan(-top)
+    kw2 = dict(lens_mode="max", pan_deg=90.0, tilt_deg=tilt, max_range_m=200.0, with_profile=False)
+    g0 = calculate_3d_viewshed(flat, 100.0, 200.0, 6.0, cam, **kw2)
+    with target_height(1.8):
+        g1 = calculate_3d_viewshed(flat, 100.0, 200.0, 6.0, cam, **kw2)
+    row = 100
+    xs = np.arange(200) * 2.0 - 100.0
+    far = (xs > d_head + 3) & (xs < 6.0 / math.tan(-top) - 3)   # ground still framed, head not
+    assert g0.visibility_mask[row, far].all() and not g1.visibility_mask[row, far].any()

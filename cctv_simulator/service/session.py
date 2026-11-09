@@ -29,6 +29,9 @@ class TerrainEntry:
     region_id: str = ""
     attribution: str = ""
     extra: Dict[str, Any] = field(default_factory=dict)
+    # DORI target: a person this tall (m) standing on the cell; 0 = the ground
+    # point (API default, as the engine). The shell sets 1.8 (terrain.settings).
+    target_height_m: float = 0.0
     # last analysis results, for overlays / exports / follow-up calls
     results: Dict[str, Any] = field(default_factory=dict)
 
@@ -38,6 +41,17 @@ class TerrainEntry:
     # Results computed FROM a plan. A new plan drops them: a scenario snapshot,
     # KMZ or offer package must never pair plan B with plan A's coverage / cost.
     PLAN_DERIVED = ("multi", "band_share", "network", "cost", "night", "mixed", "approach")
+
+    def set_target_height(self, h: float) -> bool:
+        """A new target height re-scores everything: plan-derived results are
+        dropped (the plan itself stays). Returns whether it changed."""
+        h = max(0.0, float(h))
+        if h == self.target_height_m:
+            return False
+        self.target_height_m = h
+        for k in self.PLAN_DERIVED + ("single",):
+            self.results.pop(k, None)
+        return True
 
     def set_plan(self, value) -> None:
         for k in self.PLAN_DERIVED:

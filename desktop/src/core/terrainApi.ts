@@ -437,10 +437,13 @@ export function terrainApi(rpc: RpcClient) {
     surfaceRaster: (terrain_id: string, path: string, mode: "auto" | "ndsm" | "dsm") =>
       rpc.call<TerrainInfo>("surface.raster", { terrain_id, path, mode }, { timeoutMs: 0 }),
     viewshed: (
-      p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; pan_deg: number; tilt_deg: number; range_m: number; lens_mode: "min" | "max"; focal_mm?: number; weather?: string; max_px?: number },
+      p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; pan_deg: number; tilt_deg: number; range_m: number; lens_mode: "min" | "max"; focal_mm?: number; weather?: string; max_px?: number; target_height_m?: number },
       opts?: CallOptions,
     ) => rpc.call<SingleViewshed>("viewshed.single", p, opts),
     plan: (p: T & PlanParams & { camera: CameraConfig }) => rpc.call<PlanResult>("perimeter.plan", p),
+    /** analysis settings kept with the terrain (target height: a person on each cell) */
+    settings: (terrain_id: string, s: { target_height_m?: number }) =>
+      rpc.call<{ target_height_m: number; changed: boolean }>("terrain.settings", { terrain_id, ...s }),
     coverage: (p: T & { layer?: CoverageLayer; level?: "plan" | DoriLevel; band_m?: number; band_in_m?: number; max_px?: number }, opts?: CallOptions) =>
       rpc.call<CoverageResult>("perimeter.coverage", p, { timeoutMs: 0, ...opts }),
     approach: (p: T & { depth_m: number; response_s?: number; speeds?: Record<string, number>; max_px?: number }, opts?: CallOptions) =>

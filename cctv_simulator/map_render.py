@@ -30,8 +30,9 @@ LAYER_BANDS = {
     "dori": ("BİRLEŞİK DORI", (
         (ZONE_IDENT, ZONE_IDENT + 1, _rgba("dori-identify", 185), "Teşhis ≥ 250 px/m"),
         (ZONE_RECOG, ZONE_RECOG + 1, _rgba("dori-recognize", 175), "Tanıma ≥ 125 px/m"),
-        (ZONE_OBSERVE, ZONE_OBSERVE + 1, _rgba("dori-observe", 165), "Gözlem ≥ 62,5 px/m"),
-        (ZONE_DETECT, ZONE_DETECT + 1, _rgba("dori-detect", 160), "Algılama ≥ 25 px/m"),
+        (ZONE_OBSERVE, ZONE_OBSERVE + 1, _rgba("dori-observe", 190), "Gözlem ≥ 62,5 px/m"),
+        # alpha: Algılama is the largest band and sat almost invisible on the dark relief
+        (ZONE_DETECT, ZONE_DETECT + 1, _rgba("dori-detect", 215), "Algılama ≥ 25 px/m"),
         (ZONE_OCCLUDED, ZONE_OCCLUDED + 1, _rgba("bg-0", 200), "Kör nokta (arazi engeli)"))),
     "overlap": ("YEDEKLİLİK (fiziksel kamera)", (
         (1, 2, _rgba("warn", 115), "1 kamera (yedeksiz)"),

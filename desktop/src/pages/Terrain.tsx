@@ -55,7 +55,10 @@ export default function Terrain() {
   const [camera, setCamera] = useState<CameraConfig>({ ...DEFAULT_CAMERA, name: "KAM-01" });
   const [mount, setMount] = useState({ x: 0, y: 0, mast: 8, pan: 0, tilt: -5, range: 600, lens: "max" as "min" | "max", focal: undefined as number | undefined });
   const [weather, setWeather] = useState("Berrak hava");
+  // DORI target: a person this tall on each cell (sight line + framing to the head)
+  const [targetH, setTargetH] = useState(1.8);
   const [sweep, setSweep] = useState<FocalSweep | null>(null);
+  const [sweepLevel, setSweepLevel] = useState<DoriLevel>("recognize");
   const [isPtz, setIsPtz] = useState(false);
   const [ptzLayer, setPtzLayer] = useState<Layer | null>(null);       // single tab: PTZ result replaces the fan
   const [mixedLayer, setMixedLayer] = useState<Layer | null>(null);   // perimeter tab: fixed + PTZ layers
@@ -136,8 +139,15 @@ export default function Terrain() {
   const vsInput = useMemo(() => (info && tab === "single"
     ? { terrain_id: info.terrain_id, use_obstacles: useObstacles, camera, x_m: mount.x, y_m: mount.y, mast_m: mount.mast,
         pan_deg: mount.pan, tilt_deg: mount.tilt, range_m: mount.range, lens_mode: mount.lens, focal_mm: mount.focal,
-        weather, max_px: 1200 }
-    : null), [info, tab, useObstacles, camera, mount, weather]);
+        weather, max_px: 1200, target_height_m: targetH }
+    : null), [info, tab, useObstacles, camera, mount, weather, targetH]);
+  // the core keeps the target height with the terrain; a change drops results scored with the old one
+  useEffect(() => {
+    if (!info || state !== "ready") return;
+    void T.settings(info.terrain_id, { target_height_m: targetH }).then((r) => {
+      if (r.changed) { setCoverage(null); setNetwork(null); setNight(null); setMixedLayer(null); setApproachMarks(null); }
+    }).catch(() => undefined);
+  }, [T, info, targetH, state]);
   const vs = useCoalesced(vsInput, (i) => T.viewshed(i!), !!vsInput && state === "ready" && active);
   const single: SingleViewshed | undefined = vs.value;
 
@@ -194,7 +204,7 @@ export default function Terrain() {
   const runSweep = async () => {
     if (!info) return;
     const r = await job.run("Odak taraması", (o) => T.focalSweep({ terrain_id: info.terrain_id, use_obstacles: useObstacles, camera,
-      x_m: mount.x, y_m: mount.y, mast_m: mount.mast, pan_deg: mount.pan, level: "recognize", weather, n_focals: 10 }, o));
+      x_m: mount.x, y_m: mount.y, mast_m: mount.mast, pan_deg: mount.pan, level: sweepLevel, weather, n_focals: 10 }, o));
     if (r) setSweep(r);
   };
 
@@ -212,14 +222,14 @@ export default function Terrain() {
       terrain_extra: {
         camera_name: camera.name, camera_model: camera.model_name, planner_mode: tab === "perimeter" ? "perimeter" : "single",
         fence_points: fence, fence_closed: plan.closed, line_mode: plan.line_mode, watch_side: plan.watch_side,
-        target_ppm: plan.target_ppm, perimeter_mast_m: plan.mast_m, lens_mode: plan.lens_mode, band_out_m: band.out, band_in_m: band.in,
+        target_ppm: plan.target_ppm, perimeter_mast_m: plan.mast_m, lens_mode: plan.lens_mode, band_out_m: band.out, band_in_m: band.in, target_height_m: targetH,
         area_goal: { level: area.level, goal_pct: area.goal, interior: area.interior, per_pole: area.perPole, streets_only: area.streetsOnly,
           max_hole_m2: area.maxHole },
         mixed_ptz: { camera: mixedPtz.camera?.model_name ?? "", every_n: mixedPtz.everyN, patrol_span_deg: mixedPtz.span },
         prices, scenarios,
       },
     }, { touch: !restoring.current });
-  }, [setTerrainBlock, info, mount, weather, camera, tab, fence, plan, band, area, mixedPtz, prices, scenarios]);
+  }, [setTerrainBlock, info, mount, weather, camera, tab, fence, plan, band, targetH, area, mixedPtz, prices, scenarios]);
 
   useEffect(() => {
     if (!loadedTerrain || state !== "ready") return;
@@ -248,6 +258,7 @@ export default function Terrain() {
         lens_mode: x.lens_mode === "max" ? "max" : "min",
       }));
       setBand((bd) => ({ out: typeof x.band_out_m === "number" ? x.band_out_m : bd.out, in: typeof x.band_in_m === "number" ? x.band_in_m : bd.in }));
+      if (typeof x.target_height_m === "number") setTargetH(x.target_height_m);
       if (x.planner_mode === "perimeter") setTab("perimeter");
       const ag = (x.area_goal ?? {}) as Record<string, unknown>;
       setArea((a) => ({
@@ -352,7 +363,8 @@ export default function Terrain() {
         <div className="min-h-0 flex-1">
           {info ? (
             <MapView widthM={info.width_m} heightM={info.height_m} base={base} overlay={overlay}
-              camera={tab === "single" && single ? { x: mount.x, y: mount.y, pan: mount.pan, hfov: single.hfov_deg, range: mount.range } : null}
+              camera={tab === "single" && single ? { x: mount.x, y: mount.y, pan: mount.pan, hfov: single.hfov_deg,
+                range: Math.min(mount.range, single.max_los_reach_m > 0 ? single.max_los_reach_m : mount.range) } : null}
               fence={tab === "perimeter" ? fence : []} fenceClosed={plan.closed || isArea}
               poles={tab === "perimeter" ? planRes?.poles : []} ptz={tab === "perimeter" ? planRes?.ptz : []}
               gaps={tab === "perimeter" ? planRes?.gaps : []} showFov={showFov}
@@ -406,6 +418,12 @@ export default function Terrain() {
               ))}
             </select>
           </label>
+          <div className="mt-2">
+            <Slider label="Hedef boyu (insan)" unit="m" value={targetH} min={0} max={2.5} step={0.1} onChange={setTargetH} />
+            <p className="mt-1 text-[10px] text-text-3">{targetH > 0
+              ? "Görüş hattı ve kadraj başa göre: baş kadrajda değilse hücre sayılmaz, alçak duvar arkasındaki kişi görülür."
+              : "0 = zemin noktası (insan boyu modellenmez)."}</p>
+          </div>
         </Panel>
 
         {tab === "single" && info && (
@@ -450,12 +468,18 @@ export default function Terrain() {
             )}
             {camera.focal_max_mm > camera.focal_min_mm && (
               <Panel title="Varifokal: tüm odaklar">
-                <Button className="w-full" disabled={job.running} onClick={runSweep}><Play size={14} /> Odakları Tara (Tanıma)</Button>
+                <select className="h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={sweepLevel} aria-label="Varifokal hedef seviyesi"
+                  onChange={(e) => { setSweepLevel(e.target.value as DoriLevel); setSweep(null); }}>
+                  {LEVELS.map(([k, l]) => <option key={k} value={k}>En geniş {l} alanı</option>)}
+                </select>
+                <p className="mt-1 text-[10px] text-text-3">Optimum, seçilen seviyede EN GENİŞ alanı verir; daha düşük seviyelerin alanı küçülebilir.</p>
+                <Button className="mt-2 w-full" disabled={job.running} onClick={runSweep}><Play size={14} /> Odakları Tara</Button>
                 {sweep && (
                   <div className="mt-2">
                     <FocalCurve curve={sweep.curve} best={sweep.best} level={sweep.level} />
                     <div className="mt-1 font-mono text-[11px]">
-                      en iyi {fmt(sweep.best.focal_mm)} mm · eğim {fmt(sweep.best.tilt_deg)}° · {ha(sweep.best.areas_m2.recognize ?? 0)}
+                      en iyi {fmt(sweep.best.focal_mm)} mm · eğim {fmt(sweep.best.tilt_deg)}° · {LEVELS.find(([k]) => k === sweepLevel)?.[1].split(" ")[0]} {ha(sweep.best.areas_m2[sweepLevel] ?? 0)}
+                      {single && <span className="text-text-3"> (şimdi {ha(atLeast(single.zone_areas_m2, sweepLevel))})</span>}
                     </div>
                     <Button primary className="mt-2 w-full" onClick={() => setMount((m) => ({ ...m, focal: sweep.best.focal_mm, tilt: sweep.best.tilt_deg }))}>Optimumu Uygula</Button>
                   </div>
@@ -686,6 +710,12 @@ export default function Terrain() {
       </div>
     </div>
   );
+}
+
+/** Area at the level OR BETTER (sweep areas are cumulative; zone_areas_m2 is per band). */
+function atLeast(z: Record<string, number>, level: DoriLevel) {
+  const order: DoriLevel[] = ["identify", "recognize", "observe", "detect"];
+  return order.slice(0, order.indexOf(level) + 1).reduce((s, k) => s + (z[k] ?? 0), 0);
 }
 
 /** What coverage says, split the way a designer reads it: the fence line, the

@@ -10,6 +10,8 @@ Performs:
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import math
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -82,6 +84,37 @@ _R_EARTH = 6371000.0
 _K_REFRACT = 0.13
 
 
+# ── target height ───────────────────────────────────────────────────────────
+# A DORI cell is a PERSON standing there, not the ground. With a target height
+# h the line of sight is tested to the head (a person behind a 1 m wall is
+# seen) and the person counts as framed only if the head is inside the
+# vertical frame (a shallow frame whose top ray dips below 1.8 m used to paint
+# "Tanıma" where only legs are in the picture). 0 = the ground cell (the
+# engine's behaviour before, bit-identical). A context variable so every
+# engine path (single, multi, mount raster, sweeps, planners) uses the same
+# value without threading a parameter through each; the service sets it per
+# request from the terrain session (``target_height(h)``).
+_TARGET_H = contextvars.ContextVar("cctv_target_height_m", default=0.0)
+
+
+def current_target_height() -> float:
+    return float(_TARGET_H.get())
+
+
+def set_target_height(h: float):
+    """Set for the current context; returns the token (``_TARGET_H.reset``)."""
+    return _TARGET_H.set(max(0.0, float(h)))
+
+
+@contextlib.contextmanager
+def target_height(h: float):
+    tok = set_target_height(h)
+    try:
+        yield
+    finally:
+        _TARGET_H.reset(tok)
+
+
 def ray_step_size(cell_size_m: float, ray_step_m: float = 3.0) -> float:
     """0.35-0.5 of a cell per step so a one-cell-wide ridge cannot fall
     between two samples on a diagonal ray (the old 0.7-cell step could skip it)."""
@@ -129,7 +162,8 @@ def _steps_inside(terrain: TerrainData, x0: float, y0: float, ray_angles: np.nda
 
 def march_rays(terrain: TerrainData, cam_x_m: float, cam_y_m: float, cam_z: float,
                ray_angles: np.ndarray, step_dists: np.ndarray,
-               earth_curvature: bool = True, occluder_crossings: bool = True) -> RayMarch:
+               earth_curvature: bool = True, occluder_crossings: bool = True,
+               target_h: float = 0.0) -> RayMarch:
     """Vectorised radial ray march with a running horizon -- the line-of-sight
     core shared by calculate_3d_viewshed (rays inside one FOV) and the per-mount
     360-degree raster (mount_visibility), so occlusion is decided one way.
@@ -226,7 +260,10 @@ def march_rays(terrain: TerrainData, cam_x_m: float, cam_y_m: float, cam_z: floa
                                                      step_dists[si - 1], step_dists[si], cam_z, earth_curvature)
         # a crossing between samples i-1 and i lies before sample i
         horizon_before[:, 1:] = np.maximum(horizon_before[:, 1:], np.maximum.accumulate(cross, axis=1)[:, 1:])
-    return RayMarch(valid, rr, cc, tan_angle, slant, tan_angle >= horizon_before)
+    # the target's head (target_h above the sample) against the horizon of the
+    # ground before it; tan_angle itself stays the ground's (it builds the horizon)
+    los = (tan_angle + target_h / d) >= horizon_before if target_h > 0 else tan_angle >= horizon_before
+    return RayMarch(valid, rr, cc, tan_angle, slant, los)
 
 
 _CELL_MAX_CACHE: Dict[Tuple[int, Tuple[int, int]], np.ndarray] = {}
@@ -365,6 +402,7 @@ def calculate_3d_viewshed(terrain: TerrainData,
     """
     rows, cols = terrain.rows, terrain.cols
     cell_size = terrain.cell_size_m
+    target_h = current_target_height()
 
     # 1. Camera 3D Position
     cam_ground_z = terrain.ground_elevation_at(cam_x_m, cam_y_m)   # mast on the ground, not a roof
@@ -445,13 +483,15 @@ def calculate_3d_viewshed(terrain: TerrainData,
     chunk = ray_chunk(len(step_dists))
     for start in range(0, len(ray_angles), chunk):
         march = march_rays(terrain, cam_x_m, cam_y_m, cam_z, ray_angles[start:start + chunk],
-                           step_dists, earth_curvature)
+                           step_dists, earth_curvature, target_h=target_h)
         valid, rr, cc = march.valid, march.rr, march.cc
         tan_angle, slant = march.tan_angle, march.slant
         ppm = optics.ppm_at(np.maximum(slant, 1.0))
         ppm_ok = ppm >= min_detect_ppm
 
-        elev_angle = np.arctan(tan_angle)                         # (-pi/2, pi/2)
+        # framed = the head inside the vertical frame (the ground when target_h = 0)
+        elev_angle = np.arctan(tan_angle + target_h / step_dists[None, :tan_angle.shape[1]]
+                               if target_h > 0 else tan_angle)    # (-pi/2, pi/2)
         in_vfov = (elev_angle >= v_lo) & (elev_angle <= v_hi)
         framed = valid & ppm_ok & in_vfov
         visible = framed & march.los_clear
