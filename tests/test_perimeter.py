@@ -337,3 +337,20 @@ def test_a_target_that_holds_nowhere_is_refused_not_floored():
     cam = CameraConfig(focal_min_mm=2.8, focal_max_mm=2.8)
     with pytest.raises(ValueError, match="hiçbir yerde tutmuyor"):
         calculate_optimal_spacing(cam, target_ppm=400.0, mast_height_m=12.0)
+
+
+def test_back_to_back_adds_a_reverse_camera_on_every_regular_pole(cam):
+    import numpy as np
+
+    from cctv_simulator.terrain_loader import TerrainData
+
+    t = TerrainData(z_grid=np.zeros((200, 200)), cell_size_m=2.0)
+    sq = [(50.0, 50.0), (350.0, 50.0), (350.0, 350.0), (50.0, 350.0)]
+    one = generate_perimeter_plan(t, sq, cam, target_ppm=40.0)
+    two = generate_perimeter_plan(t, sq, cam, target_ppm=40.0, back_to_back=True)
+    backs = [c for c in two.placed_cameras if "arka" in c.camera_model]
+    assert two.pole_count == one.pole_count and len(backs) > 0
+    for b in backs:
+        host = [c for c in two.placed_cameras if c.pole_id == b.pole_id and "arka" not in c.camera_model and "köşe" not in c.camera_model]
+        assert abs(((b.pan_deg - host[0].pan_deg) % 360) - 180) < 0.2
+    assert two.coverage_percentage >= one.coverage_percentage

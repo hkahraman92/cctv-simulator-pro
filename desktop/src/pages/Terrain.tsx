@@ -74,8 +74,8 @@ export default function Terrain() {
   // perimeter
   const [fence, setFence] = useState<[number, number][]>([]);
   const [drawing, setDrawing] = useState(false);
-  const [plan, setPlan] = useState<{ closed: boolean; line_mode: LineMode; watch_side: "left" | "right"; target_ppm: number; mast_m: number; lens_mode: "min" | "max" }>(
-    { closed: true, line_mode: "facility", watch_side: "right", target_ppm: 40, mast_m: 6, lens_mode: "min" });
+  const [plan, setPlan] = useState<{ closed: boolean; line_mode: LineMode; watch_side: "left" | "right"; target_ppm: number; mast_m: number; lens_mode: "min" | "max"; back_to_back: boolean }>(
+    { closed: true, line_mode: "facility", watch_side: "right", target_ppm: 40, mast_m: 6, lens_mode: "min", back_to_back: false });
   // the band a fence plan protects: outside / inside widths (inside only for a closed fence)
   const [band, setBand] = useState({ out: 40, in: 40 });
   const [covLayer, setCovLayer] = useState<CoverageLayer>("target");
@@ -87,8 +87,8 @@ export default function Terrain() {
   const [rate, setRate] = useState(1);
   const [playT, setPlayT] = useState(0);
   // area goal: the drawn polygon itself is what must be seen (car park, yard, square)
-  const [area, setArea] = useState<{ level: DoriLevel; goal: number; interior: boolean; perPole: number; streetsOnly: boolean; maxHole: number }>(
-    { level: "recognize", goal: 95, interior: true, perPole: 2, streetsOnly: false, maxHole: 0 });
+  const [area, setArea] = useState<{ level: DoriLevel; goal: number; interior: boolean; perPole: number; streetsOnly: boolean; maxHole: number; minCams: number }>(
+    { level: "recognize", goal: 95, interior: true, perPole: 2, streetsOnly: false, maxHole: 0, minCams: 1 });
   const [city, setCity] = useState<CityInfo | null>(null);   // OSM streets / homes / places of this terrain
   const [areaRes, setAreaRes] = useState<AreaPlanResult | null>(null);
   const isArea = plan.line_mode === "area";
@@ -192,7 +192,8 @@ export default function Terrain() {
     if (!info || fence.length < 3) return;
     const r = await job.run("Alan kapsama planı", (o) => T.areaPlan({ terrain_id: info.terrain_id, use_obstacles: useObstacles, camera,
       fence, level: area.level, goal_frac: area.goal / 100, mast_m: plan.mast_m, interior: area.interior, max_per_pole: area.perPole, weather,
-      streets_only: area.streetsOnly && !!city, ...(area.maxHole > 0 ? { max_hole_m2: area.maxHole } : {}), ...ptzArgs() }, o));
+      streets_only: area.streetsOnly && !!city, ...(area.maxHole > 0 ? { max_hole_m2: area.maxHole } : {}),
+      min_cameras: area.minCams, ...ptzArgs() }, o));
     if (r) { replacePlan(r.plan); setAreaRes(r); setPoleRes(null); setOptLevel(r.level); warn(r.warnings); }
   };
   const runCoverage = async (layer: CoverageLayer = covLayer, level: "plan" | DoriLevel = covLevel) => {
@@ -229,9 +230,9 @@ export default function Terrain() {
       terrain_extra: {
         camera_name: camera.name, camera_model: camera.model_name, planner_mode: tab === "perimeter" ? "perimeter" : "single",
         fence_points: fence, fence_closed: plan.closed, line_mode: plan.line_mode, watch_side: plan.watch_side,
-        target_ppm: plan.target_ppm, perimeter_mast_m: plan.mast_m, lens_mode: plan.lens_mode, band_out_m: band.out, band_in_m: band.in, target_height_m: targetH,
+        target_ppm: plan.target_ppm, perimeter_mast_m: plan.mast_m, lens_mode: plan.lens_mode, back_to_back: plan.back_to_back, band_out_m: band.out, band_in_m: band.in, target_height_m: targetH,
         area_goal: { level: area.level, goal_pct: area.goal, interior: area.interior, per_pole: area.perPole, streets_only: area.streetsOnly,
-          max_hole_m2: area.maxHole },
+          max_hole_m2: area.maxHole, min_cameras: area.minCams },
         mixed_ptz: { camera: mixedPtz.camera?.model_name ?? "", every_n: mixedPtz.everyN, patrol_span_deg: mixedPtz.span },
         prices, scenarios,
       },
@@ -263,6 +264,7 @@ export default function Terrain() {
         target_ppm: typeof x.target_ppm === "number" ? x.target_ppm : p.target_ppm,
         mast_m: typeof x.perimeter_mast_m === "number" ? x.perimeter_mast_m : p.mast_m,
         lens_mode: x.lens_mode === "max" ? "max" : "min",
+        back_to_back: x.back_to_back === true,
       }));
       setBand((bd) => ({ out: typeof x.band_out_m === "number" ? x.band_out_m : bd.out, in: typeof x.band_in_m === "number" ? x.band_in_m : bd.in }));
       if (typeof x.target_height_m === "number") setTargetH(x.target_height_m);
@@ -275,6 +277,7 @@ export default function Terrain() {
         perPole: typeof ag.per_pole === "number" ? ag.per_pole : a.perPole,
         streetsOnly: typeof ag.streets_only === "boolean" ? ag.streets_only : a.streetsOnly,
         maxHole: typeof ag.max_hole_m2 === "number" ? ag.max_hole_m2 : a.maxHole,
+        minCams: typeof ag.min_cameras === "number" ? ag.min_cameras : a.minCams,
       }));
       if (x.prices && typeof x.prices === "object") setPrices({ ...EMPTY_PRICES, ...(x.prices as Partial<PriceBook>) });
       setScenarios(Array.isArray(x.scenarios) ? (x.scenarios as Scenario[]) : []);
@@ -542,6 +545,12 @@ export default function Terrain() {
                         {[1, 2, 3, 4].map((n) => <option key={n} value={n}>{n}</option>)}
                       </select></label>
                   </div>
+                  <label><span className="label">Yedeklilik</span>
+                    <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-1 text-[12px]" value={area.minCams} aria-label="En az kamera"
+                      onChange={(e) => setArea((a) => ({ ...a, minCams: Number(e.target.value) }))}>
+                      <option value={1}>Her hücre en az 1 kamera</option><option value={2}>En az 2 kamera (kritik alan)</option>
+                      <option value={3}>En az 3 kamera</option>
+                    </select></label>
                   <Slider label="Delik sınırı (0 = kapalı)" unit="m²" value={area.maxHole} min={0} max={1000} step={25}
                     onChange={(v) => setArea((a) => ({ ...a, maxHole: v }))} />
                   {area.maxHole > 0 && <p className="-mt-2 text-[11px] text-text-3">Hedef tuttuktan sonra {fmt(area.maxHole, 0)} m²'den büyük her açık kalan parçaya kamera eklenir.</p>}
@@ -567,7 +576,12 @@ export default function Terrain() {
                     <Slider label={plan.line_mode === "border" ? "İzlenen şerit derinliği" : plan.closed ? "Bant · dış" : "Bant (iki yan)"}
                       unit="m" value={band.out} min={5} max={plan.line_mode === "border" ? 1000 : 200} step={5}
                       onChange={(v) => setBand((b) => ({ out: v, in: b.in === b.out ? v : b.in }))} />
-                    {plan.closed && <Slider label="Bant · iç" unit="m" value={band.in} min={0} max={200} step={5} onChange={(v) => setBand((b) => ({ ...b, in: v }))} />}
+                    {plan.closed && <Slider label="Bant · iç (steril alan)" unit="m" value={band.in} min={0} max={200} step={5} onChange={(v) => setBand((b) => ({ ...b, in: v }))} />}
+                    {plan.line_mode === "facility" && (
+                      <label className="flex items-center gap-2 text-[12px]">
+                        <input type="checkbox" checked={plan.back_to_back} onChange={(e) => setPlan((p) => ({ ...p, back_to_back: e.target.checked }))} />
+                        Sırt sırta: direk başına 2 kamera (yedekli, kör bölgesiz)</label>
+                    )}
                   </div>
                   <Button primary className="mt-3 w-full" disabled={job.running || fence.length < 2} onClick={runPlan}><MapPin size={14} /> Direkleri Diz</Button>
                 </>
@@ -747,6 +761,7 @@ function CoverageSummary({ c }: { c: CoverageResult }) {
       )}
       <div className="mt-1 text-text-2">{where} · {t.label}</div>
       {row("hedef tutuyor (sürekli)", pct(t.held), "text-primary")}
+      {row("  …en az 2 kamerayla (yedekli)", pct(t.held_2))}
       {c.ptz_count > 0 && row("yalnız PTZ (aralıklı)", pct(t.ptz_only), "text-secondary")}
       {row("görülüyor, hedef altı", pct(t.below), "text-warn")}
       {row("hiç görülmüyor", pct(t.unseen), "text-danger")}

@@ -144,3 +144,27 @@ def test_hole_areas_are_8_connected_patches():
     assert sorted(areas) == [20.0, 20.0]
     assert lab[1, 1] == lab[3, 3] != lab[6, 0] and (lab > 0).sum() == m.sum()
     assert hole_areas(np.zeros((3, 3), bool), 1.0)[1] == []
+
+
+def test_redundancy_goal_counts_cells_held_by_k_cameras():
+    """min_cameras=2: the reported share is of cells TWO cameras hold at the
+    level (engine, per camera) -- more cameras than the single-cover plan."""
+    from cctv_simulator.area_planner import plan_area
+    from cctv_simulator.models import CameraConfig
+    from cctv_simulator.terrain_loader import TerrainData
+    from cctv_simulator.viewshed_3d import ZONE_OBSERVE
+
+    t = TerrainData(z_grid=np.zeros((150, 150)), cell_size_m=2.0)
+    cam = CameraConfig(focal_min_mm=2.8, focal_max_mm=12.0)
+    poly = [(100.0, 100.0), (200.0, 100.0), (200.0, 180.0), (100.0, 180.0)]
+    one = plan_area(t, poly, cam, level=ZONE_OBSERVE, goal_frac=0.8, mast_height_m=6.0)
+    two = plan_area(t, poly, cam, level=ZONE_OBSERVE, goal_frac=0.8, mast_height_m=6.0, min_cameras=2)
+    assert one.met and two.met and len(two.plan.placed_cameras) > len(one.plan.placed_cameras)
+    from cctv_simulator.area_planner import polygon_mask
+    from cctv_simulator.focal_optimizer import band_area
+    from cctv_simulator.viewshed_3d import ZONE_DETECT
+    roi = polygon_mask(t, poly)
+    mv, _ = band_area(t, two.plan, cam, roi, ZONE_DETECT)
+    n = sum((r.dori_grid >= ZONE_OBSERVE).astype(int) for r in mv.per_camera)
+    assert two.engine_frac == pytest.approx(float(((n >= 2) & roi).sum()) / roi.sum())
+    assert any("Yedeklilik" in s for s in two.notes)

@@ -224,7 +224,7 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
               spacing_m: Optional[float] = None, n_focals: int = 5, visibility_km: float = 40.0,
               weather: str = "", verify: bool = True, roi_mask: Optional[np.ndarray] = None,
               sites_fn: Optional[Callable[[float], List[Tuple[float, float]]]] = None,
-              max_hole_m2: Optional[float] = None,
+              max_hole_m2: Optional[float] = None, min_cameras: int = 1,
               ptz_camera: Optional[CameraConfig] = None, ptz_every_n: int = 0, ptz_span_deg: float = 360.0,
               progress: Optional[Callable[[int, int], None]] = None) -> AreaPlanReport:
     """Fewest cameras (and poles) putting ``goal_frac`` of the polygon at >= ``level``.
@@ -285,13 +285,16 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
 
     focus: List[Optional[np.ndarray]] = [None]      # hole pass: only these cells count
 
+    k = max(1, int(min_cameras))          # redundancy: a cell counts when k cameras hold the level
+
     def gain(i: int) -> float:
         v = views[i]
         if not v.zone.size:
             return 0.0
         if focus[0] is not None:          # cells the focus says are open, whatever the estimate thinks
             return float(((v.zone >= level) & focus[0][v.sl]).sum())
-        return float(sum(w * ((cnt[lv][v.sl] == 0) & (v.zone >= lv)).sum() for lv, w in weights.items() if w))
+        return float(sum(w * ((cnt[lv][v.sl] < (k if lv == level else 1)) & (v.zone >= lv)).sum()
+                         for lv, w in weights.items() if w))
 
     def value(i: int) -> float:
         s = views[i].site
@@ -307,7 +310,7 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
             cnt[lv][v.sl] += sign * (v.zone >= lv)
 
     def frac() -> float:
-        return float((cnt[level] > 0).sum()) / n_roi
+        return float((cnt[level] >= k).sum()) / n_roi
 
     heap = [(-value(i), i) for i in range(len(views))]
     heapq.heapify(heap)
@@ -378,10 +381,19 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
             per_site[s] = per_site.get(s, 0) + 1
             add(best, +1)
             v = views[best]
-            open_cells[v.sl] &= ~(v.zone >= level)
+            open_cells[v.sl] &= ~((v.zone >= level) & (cnt[level][v.sl] >= k))
             steps.append(AreaStep(len(chosen), len(per_site), frac()))
             added += 1
         return added
+
+    def held_by(mv_) -> np.ndarray:
+        """Cells k physical cameras hold at the level (engine, per camera)."""
+        if k == 1:
+            return mv_.dori_grid >= level
+        n = np.zeros(mv_.dori_grid.shape, np.int32)
+        for r in mv_.per_camera:
+            n += (r.dori_grid >= level)
+        return n >= k
 
     def engine(plan_):
         from .focal_optimizer import band_area
@@ -409,7 +421,7 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
             engine_frac = frac()
             break
         mv = engine(plan)
-        a = float(((mv.dori_grid >= level) & roi).sum()) * cell_area
+        a = float((held_by(mv) & roi).sum()) * cell_area
         engine_frac = a / (n_roi * cell_area)
         if engine_frac >= goal_frac or frac() < target - 1e-9 or target >= 1.0:
             break                                  # met, or the greedy has nothing more to give
@@ -419,9 +431,9 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
     if max_hole_m2 is not None and plan is not None and plan.placed_cameras:
         limit = max(float(max_hole_m2), cell_area)
         for _ in range(MAX_ROUNDS):
-            open_cells = cnt[level] == 0
+            open_cells = cnt[level] < k
             if mv is not None:
-                open_cells |= roi & ~(mv.dori_grid >= level)
+                open_cells |= roi & ~held_by(mv)
             got = close_holes(limit, open_cells)
             if not got:
                 break
@@ -432,9 +444,9 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
                 engine_frac = frac()
                 break
             mv = engine(plan)
-            engine_frac = float(((mv.dori_grid >= level) & roi).sum()) / n_roi
+            engine_frac = float((held_by(mv) & roi).sum()) / n_roi
     plan.coverage_percentage = round(engine_frac * 100.0, 1)
-    uncovered = roi & ~(mv.dori_grid >= level) if mv is not None else roi & (cnt[level] == 0)
+    uncovered = roi & ~held_by(mv) if mv is not None else roi & (cnt[level] < k)
     _, holes = hole_areas(uncovered, cell_area)
     if ptz_camera is not None and ptz_every_n >= 1 and plan.placed_cameras:
         plan = _with_ptz(plan, ring, ptz_camera, ptz_every_n, ptz_span_deg, visibility_km, weather)
@@ -446,6 +458,8 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
         best = f"{engine_frac * 100:.1f}".replace(".", ",")
         notes.append(f"Hedef %{goal_frac * 100:.0f} tutmadı ({why}); en iyi %{best}. "
                      f"Daha yüksek direk, daha uzun odak ya da alan içine direk deneyin.")
+    if k > 1:
+        notes.append(f"Yedeklilik: her hücre en az {k} kamerayla sayılır (aynı direkteki iki kamera da iki sayılır).")
     if hole_cams:
         notes.append(f"Delik kapatma: {hole_cams} kamera eklendi (sınır {max_hole_m2:.0f} m²).")
     if max_hole_m2 is not None and holes and max(holes) > max_hole_m2:

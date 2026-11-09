@@ -432,6 +432,8 @@ def _plan_kwargs(params: Dict[str, Any]) -> Dict[str, Any]:
         "visibility_km": WEATHER_PRESETS.get(weather, 40.0), "weather": weather,
         "line_mode": line_mode, "watch_side": watch_side,
     }
+    if params.get("back_to_back"):
+        kw["back_to_back"] = True
     if params.get("ptz_camera"):
         kw["ptz_camera"] = _camera_from(params["ptz_camera"])
         kw["ptz_every_n"] = int(_num(params, "ptz_every_n", 4, lo=1, hi=100))
@@ -607,9 +609,13 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     cls[roi & ptz_only] = 2
     cls[roi & ~held & ~ptz_only & seen_any] = 3
     cls[roi & (cls == 0)] = 4
+    n_held = np.zeros(roi.shape, np.int32)                  # physical fixed cameras holding the target
+    for r in mv.per_camera:
+        n_held += (r.ppm_grid >= ppm - 1e-6) & r.visibility_mask
     target = {"label": label, "ppm": ppm,
               **{k: (float((cls == c).sum() * cell) / roi_area if roi_area else 0.0)
-                 for k, c in (("held", 1), ("ptz_only", 2), ("below", 3), ("unseen", 4))}}
+                 for k, c in (("held", 1), ("ptz_only", 2), ("below", 3), ("unseen", 4))},
+              "held_2": float(((n_held >= 2) & roi).sum() * cell) / roi_area if roi_area else 0.0}
     fence_line = None
     if not is_area:
         line = fence_roi(t, fence, kw["is_closed_loop"], max(0.75 * t.cell_size_m, 1.0))
@@ -766,6 +772,7 @@ def area_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         res = plan_area(t, poly, cam, level=level, goal_frac=_num(params, "goal_frac", 0.95, lo=0.05, hi=1.0),
                         roi_mask=roi_mask, sites_fn=sites_fn,
                         max_hole_m2=None if max_hole is None else _num(params, "max_hole_m2", lo=1, hi=1e6),
+                        min_cameras=int(_num(params, "min_cameras", 1, lo=1, hi=4)),
                         ptz_camera=ptz_cam, ptz_every_n=int(_num(params, "ptz_every_n", 4, lo=1, hi=100)) if ptz_cam else 0,
                         ptz_span_deg=_num(params, "ptz_patrol_span_deg", 360.0, lo=10, hi=360),
                         mast_height_m=mast, interior=bool(params.get("interior", True)),

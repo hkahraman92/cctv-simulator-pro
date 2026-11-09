@@ -151,7 +151,8 @@ export interface CoverageResult {
   ptz_count: number;
   ptz_worst_revisit_s: number;
   /** the protected area split by the target: held (fixed) / only a PTZ / seen below it / not seen */
-  target: { label: string; ppm: number; held: number; ptz_only: number; below: number; unseen: number };
+  /** held_2: the target held by >= 2 fixed cameras (redundant) */
+  target: { label: string; ppm: number; held: number; ptz_only: number; below: number; unseen: number; held_2: number };
   /** the fence line itself (null for an area plan) */
   fence_line: { held: number; with_ptz: number; detect: number } | null;
   /** "area": the drawn polygon, "band": the ±band_m fence band, "side": a border's watched side, band_m deep */
@@ -215,6 +216,8 @@ export interface AreaParams {
   streets_only?: boolean;
   /** close every uncovered hole larger than this (m2) after the goal is met */
   max_hole_m2?: number;
+  /** redundancy: a cell counts when this many cameras hold the level */
+  min_cameras?: number;
   ptz_camera?: CameraConfig;
   ptz_every_n?: number;
   ptz_patrol_span_deg?: number;
@@ -298,6 +301,8 @@ export interface PlanParams {
   spacing_m?: number;
   /** lens end the planner spaces poles for: "min" wide, "max" tele */
   lens_mode?: "min" | "max";
+  /** facility: a second camera per pole looking back along the fence */
+  back_to_back?: boolean;
   ptz_camera?: CameraConfig;
   ptz_every_n?: number;
   ptz_patrol_span_deg?: number;

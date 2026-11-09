@@ -214,7 +214,8 @@ def generate_perimeter_plan(terrain: TerrainData,
                             ptz_every_n: int = 0,
                             ptz_patrol_span_deg: float = 360.0,
                             ptz_target_ppm: float = PPM_IDENT,
-                            spacing_m: Optional[float] = None) -> PerimeterPlanResult:
+                            spacing_m: Optional[float] = None,
+                            back_to_back: bool = False) -> PerimeterPlanResult:
     """Places cameras along fence line ensuring continuous dead-zone overlapping coverage.
 
     ``line_mode`` picks what the poles actually watch — the three use cases
@@ -241,6 +242,11 @@ def generate_perimeter_plan(terrain: TerrainData,
     ``ptz_patrol_span_deg`` (360 = continuous rotation). The PTZ row's
     ``effective_range_m`` is its slew-to-cue reach: the ground distance where
     the longest focal still resolves ``ptz_target_ppm``.
+
+    ``back_to_back`` (facility): every regular pole carries a second camera
+    looking back along the fence -- each stretch is then watched from both
+    ends (one camera failing leaves no gap; the dead zone under a pole is the
+    neighbour's far field). False = one camera per pole, bit-identical.
 
     ``spacing_m`` overrides the computed pole spacing (pole_optimizer searches
     sparser layouts whose per-pole focal / tilt it then optimises). None =
@@ -343,6 +349,10 @@ def generate_perimeter_plan(terrain: TerrainData,
             f = step_idx / num_spans
             _place(p1[0] + f * dx, p1[1] + f * dy, pole_heading)
             regular_poles.append((placed_cameras[-1], seg_heading))
+
+    if back_to_back and line_mode == "facility":
+        for host, seg_heading in list(regular_poles):
+            _place(host.x_m, host.y_m, (seg_heading + 180.0) % 360.0, note="arka", on_pole=host.pole_id)
 
     # Open perimeter: the far endpoint is not the start of any segment, so add a
     # pole there too. Facility mode looks back along the last leg (it's a dead
