@@ -95,6 +95,13 @@ def _lateral(points, cam) -> float:
     return d if d > 0.5 else 0.0
 
 
+def storage_tb(bitrate_mbps: float, retention_days: float = 30.0, raid_overhead: float = 0.15) -> float:
+    """Recording storage in decimal TB (10^12 B), RAID overhead included. The
+    one formula for the plan summary and the network plan (they used to
+    differ: binary 32.0 vs decimal 32.8 TB for the same 88 Mbps)."""
+    return bitrate_mbps * 1e6 / 8 * 86400 * retention_days / 1e12 * (1.0 + raid_overhead)
+
+
 def plan_network(plan, *, camera_model: Optional[Dict] = None, ptz_model: Optional[Dict] = None,
                  bitrate_fixed_mbps: float = 4.0, bitrate_ptz_mbps: float = 4.0,
                  max_copper_m: float = 90.0, slack_frac: float = 0.10, switch_ports: int = 8,
@@ -176,7 +183,7 @@ def plan_network(plan, *, camera_model: Optional[Dict] = None, ptz_model: Option
         fibre = (max(arcs[-1], nvr_at_m) - min(arcs[0], nvr_at_m)) * (1.0 + slack_frac) + lateral_fibre
     bitrate = (len(plan.placed_cameras) * bitrate_fixed_mbps
                + len(getattr(plan, "ptz_cameras", [])) * bitrate_ptz_mbps)
-    storage_tb = bitrate * 1e6 / 8 * 86400 * retention_days / 1e12 * (1.0 + raid_overhead)
+    storage = storage_tb(bitrate, retention_days, raid_overhead)
     assumptions = [
         f"Bakır kablo: çit boyunca + direk boyu + %{slack_frac * 100:.0f} pay, en çok {max_copper_m:.0f} m."
         + (" Hat dışındaki direklere sınırdan dik hendek eklenir." if lateral_any or remote else "")
@@ -187,7 +194,7 @@ def plan_network(plan, *, camera_model: Optional[Dict] = None, ptz_model: Option
         f"Kayıt: {retention_days} gün, RAID payı %{raid_overhead * 100:.0f}.",
     ]
     return NetworkPlan(switches=switches, copper_m=copper, fibre_m=fibre, longest_copper_m=longest,
-                       cameras=len(feeds), bitrate_mbps=bitrate, storage_tb=storage_tb,
+                       cameras=len(feeds), bitrate_mbps=bitrate, storage_tb=storage,
                        retention_days=retention_days, poe_total_w=sum(s.poe_w for s in switches),
                        warnings=warnings, assumptions=assumptions)
 

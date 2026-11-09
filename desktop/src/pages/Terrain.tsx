@@ -549,7 +549,13 @@ export default function Terrain() {
                   ) : (
                     <>
                       <Tile label="Çit uzunluğu" value={fmt(planRes.total_fence_length_m, 0)} unit="m" />
-                      <Tile label="Çit kapsaması" value={`%${fmt(planRes.coverage_percentage, 1)}`} tone={planRes.coverage_percentage < 95 ? "text-warn" : "text-primary"} />
+                      {/* one headline number: the engine's fence line once coverage ran, else the planner's estimate (labelled) */}
+                      {coverage?.fence_line ? (
+                        <Tile label={`Çit çizgisi · motor · ${coverage.target.label}`} value={pct(coverage.fence_line.held)}
+                          tone={coverage.fence_line.held < 0.95 ? "text-warn" : "text-primary"} />
+                      ) : (
+                        <Tile label="Çit · ön tahmin" value={`%${fmt(planRes.coverage_percentage, 1)}`} tone={planRes.coverage_percentage < 95 ? "text-warn" : "text-primary"} />
+                      )}
                     </>
                   )}
                 </div>
@@ -566,7 +572,13 @@ export default function Terrain() {
                   </div>
                 )}
                 <div className="mt-2 font-mono text-[10px] text-text-3">{planRes.line_mode === "area" ? "direkler arası ort." : "ort. aralık"} {fmt(planRes.avg_spacing_m)} m · {fmt(planRes.estimated_bandwidth_mbps, 0)} Mbps · 30 gün {fmt(planRes.estimated_storage_30days_tb, 1)} TB</div>
-                {planRes.gaps.length > 0 && <div className="mt-2 text-[11px] text-danger">■ {planRes.gaps.length} boşluk, toplam {fmt(planRes.gaps.reduce((s, g) => s + g.length_m, 0), 0)} m (haritada kırmızı)</div>}
+                {planRes.line_mode !== "area" && planRes.coverage_percentage < 99.95 && (
+                  <div className="mt-2 text-[11px] text-danger">
+                    ■ Kapsanmayan çit ≈ {fmt((100 - planRes.coverage_percentage) / 100 * planRes.total_fence_length_m, 0)} m
+                    {planRes.gaps.length > 0 ? ` · ${planRes.gaps.length} boşluk ≥ 4 m (haritada kırmızı)` : " · hepsi 4 m'den kısa parçalar"}
+                    {!coverage && <span className="text-text-3"> — ön tahmin; Birleşik Kapsama motorla doğrular</span>}
+                  </div>
+                )}
                 <label className="mt-2 flex items-center gap-2 text-[12px]"><input type="checkbox" checked={showFov} onChange={(e) => setShowFov(e.target.checked)} /> Haritada FOV kamaları, odak ve PTZ devriyesi</label>
                 <div className="mt-2 grid grid-cols-2 gap-2">
                   <label><span className="label">Katman</span>
@@ -678,7 +690,7 @@ function CoverageSummary({ c }: { c: CoverageResult }) {
     : c.band_in_m != null && c.band_in_m !== c.band_m ? `Bant: dış ${fmt(c.band_m, 0)} m · iç ${fmt(c.band_in_m, 0)} m (${ha(c.band_area_m2)})`
     : `±${fmt(c.band_m, 0)} m çit bandı (${ha(c.band_area_m2)})`;
   const row = (label: string, v: string, tone = "") => (
-    <div className="flex justify-between"><span className="text-text-3">{label}</span><span className={tone}>{v}</span></div>);
+    <div key={label} className="flex justify-between"><span className="text-text-3">{label}</span><span className={tone}>{v}</span></div>);
   return (
     <div className="mt-2 flex flex-col gap-0.5 font-mono text-[11px]">
       {c.fence_line && (

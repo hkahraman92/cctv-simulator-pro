@@ -408,7 +408,8 @@ def generate_perimeter_plan(terrain: TerrainData,
         total_bandwidth_mbps += len(ptz_cams) * _bitrate_mbps(ptz_camera)
     # Storage for 30 days continuous recording (TB).
     # 1 Mbps = 1e6/8 B/s -> 10.8 GB/day -> 324 GB per Mbps over 30 days.
-    storage_30days_tb = (total_bandwidth_mbps * 324.0 * 1.15) / 1024.0  # +15% RAID overhead
+    from .network_plan import storage_tb
+    storage_30days_tb = storage_tb(total_bandwidth_mbps)          # same formula as the network plan
 
     return PerimeterPlanResult(
         fence_points=pts,

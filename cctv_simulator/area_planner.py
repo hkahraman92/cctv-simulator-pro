@@ -52,6 +52,7 @@ from .focal_optimizer import LEVEL_NAME, LEVEL_PPM, LEVELS, _cone, _crop, _mount
 from .models import CameraConfig
 from .mount_visibility import mount_visibility, view_layers
 from .perimeter_planner import PerimeterPlanResult, PlacedCamera, _bitrate_mbps
+from .network_plan import storage_tb as _storage_tb
 from .terrain_loader import TerrainData
 from .viewshed_3d import ZONE_RECOG
 
@@ -486,7 +487,7 @@ def _with_ptz(plan: PerimeterPlanResult, ring, ptz: CameraConfig, every_n: int, 
     mbps = plan.estimated_bandwidth_mbps + len(ptz_cams) * _bitrate_mbps(ptz)
     return replace(plan, ptz_cameras=ptz_cams, camera_count=len(plan.placed_cameras) + len(ptz_cams),
                    estimated_bandwidth_mbps=round(mbps, 1),
-                   estimated_storage_30days_tb=round(mbps * 324.0 * 1.15 / 1024.0, 1))
+                   estimated_storage_30days_tb=round(_storage_tb(mbps), 1))
 
 
 def _build_plan(terrain, ring, camera, chosen: List[_View], site_xy, mast, ppm, cov_pct) -> PerimeterPlanResult:
@@ -513,7 +514,7 @@ def _build_plan(terrain, ring, camera, chosen: List[_View], site_xy, mast, ppm, 
         placed_cameras=cams, gaps=[], camera_count=len(cams), pole_count=poles, target_ppm=ppm,
         avg_spacing_m=round(math.sqrt(area / poles), 1) if poles else 0.0,
         coverage_percentage=round(cov_pct, 1), estimated_bandwidth_mbps=round(mbps, 1),
-        estimated_storage_30days_tb=round(mbps * 324.0 * 1.15 / 1024.0, 1), line_mode="area")
+        estimated_storage_30days_tb=round(_storage_tb(mbps), 1), line_mode="area")
 
 
 __all__ = ["AreaPlanReport", "AreaStep", "candidate_sites", "hole_areas", "plan_area", "polygon_mask", "LEVEL_NAME"]
