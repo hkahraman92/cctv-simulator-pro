@@ -416,20 +416,27 @@ def optimize_layout(terrain: TerrainData, mounts: Sequence[Mount], *, roi: Optio
 
 
 def fence_roi(terrain: TerrainData, fence_points: Sequence[Tuple[float, float]], closed: bool,
-              band_m: float = 40.0, inside_m: Optional[float] = None) -> Optional[np.ndarray]:
+              band_m: float = 40.0, inside_m: Optional[float] = None,
+              watch_side: Optional[str] = None) -> Optional[np.ndarray]:
     """Cells within ``band_m`` of the fence line (the band a perimeter plan
     protects; same rule as perimeter_planner's coverage denominator).
 
     ``inside_m`` (closed fence only): a different width on the inner side --
     a detection strip outside the fence and a narrow sterile strip inside is
-    how a compound is usually specified. None = symmetric (bit-identical)."""
-    from .perimeter_planner import _fence_band_mask
+    how a compound is usually specified. None = symmetric (bit-identical).
+
+    ``watch_side`` ("left" / "right"): only that side of the line, ``band_m``
+    deep -- a border plan watches the zone beyond the line, and its cameras
+    look away from it, so a band around the line scored 0 %."""
+    from .perimeter_planner import _fence_band_mask, _side_band_mask
     pts = list(fence_points)
     if closed and len(pts) > 2 and tuple(pts[0]) != tuple(pts[-1]):
         pts = pts + [pts[0]]
     cols = terrain.origin_x + np.arange(terrain.cols) * terrain.cell_size_m
     rows = terrain.origin_y + np.arange(terrain.rows) * terrain.cell_size_m
     mx, my = np.meshgrid(cols, rows)
+    if watch_side in ("left", "right"):
+        return _side_band_mask(mx, my, pts, band_m, watch_side)
     if inside_m is None or not closed or len(pts) < 4 or abs(float(inside_m) - band_m) < 1e-9:
         return _fence_band_mask(mx, my, pts, band_m)
     from .area_planner import _inside

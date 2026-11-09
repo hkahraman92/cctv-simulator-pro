@@ -454,12 +454,13 @@ def _plan_roi(t, fence, kw: Dict[str, Any], band_m: float, inside_m: Optional[fl
             roi &= kw["roi_mask"]
         return roi
     from ..focal_optimizer import fence_roi
-    return fence_roi(t, fence, kw["is_closed_loop"], band_m, inside_m)
+    side = kw.get("watch_side") if kw.get("line_mode") == "border" else None
+    return fence_roi(t, fence, kw["is_closed_loop"], band_m, inside_m, side)
 
 
 def _band_params(params: Dict[str, Any]) -> Tuple[float, Optional[float]]:
     """(outside / symmetric band width, inside width or None) from a request."""
-    band = _num(params, "band_m", 40.0, lo=5, hi=500)
+    band = _num(params, "band_m", 40.0, lo=5, hi=3000)
     inside = params.get("band_in_m")
     return band, (None if inside is None else _num(params, "band_in_m", lo=0, hi=500))
 
@@ -618,7 +619,8 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         "band_m": band, "band_in_m": inside, "band_area_m2": roi_area, "band_share": band_share,
         "band_share_ptz": band_share_ptz, "ptz_count": n_ptz, "ptz_worst_revisit_s": worst_revisit,
         "target": target, "fence_line": fence_line,
-        "roi_kind": "area" if is_area else "band",
+        "roi_kind": "area" if is_area else "side" if kw.get("line_mode") == "border" else "band",
+        "watch_side": kw.get("watch_side"),
         "overlay": _image(overlay, max_px=max_px), "legend": legend,
         "measured": bool(t.is_measured),
     }

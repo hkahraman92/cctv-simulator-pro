@@ -477,7 +477,12 @@ export default function Terrain() {
               <div className="mt-2 grid grid-cols-2 gap-2">
                 <label><span className="label">Hat modu</span>
                   <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-1 text-[12px]" value={plan.line_mode}
-                    onChange={(e) => { const m = e.target.value as LineMode; setPlan((p) => ({ ...p, line_mode: m, closed: m === "facility" || m === "area" ? (m === "area" || p.closed) : false })); }}>
+                    onChange={(e) => {
+                      const m = e.target.value as LineMode;
+                      setPlan((p) => ({ ...p, line_mode: m, closed: m === "facility" || m === "area" ? (m === "area" || p.closed) : false }));
+                      // a border watches a zone beyond the line: a deeper default strip
+                      if (m === "border") setBand((b) => ({ ...b, out: Math.max(b.out, 150) }));
+                    }}>
                     <option value="facility">Tesis</option><option value="border">Sınır</option><option value="highway">Otoyol</option>
                     <option value="area">Alan (poligon)</option>
                   </select></label>
@@ -527,7 +532,8 @@ export default function Terrain() {
                         ))}
                       </div>
                     </div>
-                    <Slider label={plan.closed ? "Bant · dış" : "Bant (iki yan)"} unit="m" value={band.out} min={5} max={200} step={5}
+                    <Slider label={plan.line_mode === "border" ? "İzlenen şerit derinliği" : plan.closed ? "Bant · dış" : "Bant (iki yan)"}
+                      unit="m" value={band.out} min={5} max={plan.line_mode === "border" ? 1000 : 200} step={5}
                       onChange={(v) => setBand((b) => ({ out: v, in: b.in === b.out ? v : b.in }))} />
                     {plan.closed && <Slider label="Bant · iç" unit="m" value={band.in} min={0} max={200} step={5} onChange={(v) => setBand((b) => ({ ...b, in: v }))} />}
                   </div>
@@ -687,6 +693,7 @@ export default function Terrain() {
 function CoverageSummary({ c }: { c: CoverageResult }) {
   const t = c.target;
   const where = c.roi_kind === "area" ? `Alan (${ha(c.band_area_m2)})`
+    : c.roi_kind === "side" ? `İzlenen taraf (${c.watch_side === "left" ? "sol" : "sağ"}), ${fmt(c.band_m, 0)} m derinlik (${ha(c.band_area_m2)})`
     : c.band_in_m != null && c.band_in_m !== c.band_m ? `Bant: dış ${fmt(c.band_m, 0)} m · iç ${fmt(c.band_in_m, 0)} m (${ha(c.band_area_m2)})`
     : `±${fmt(c.band_m, 0)} m çit bandı (${ha(c.band_area_m2)})`;
   const row = (label: string, v: string, tone = "") => (

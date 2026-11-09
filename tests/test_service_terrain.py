@@ -362,3 +362,13 @@ def test_coverage_target_layer_and_asymmetric_band_match_the_engine(hills):
     assert obs_["target"]["held"] <= sym["target"]["held"]
     bad, _ = call("perimeter.coverage", terrain_id=tid, layer="target", level="x")
     assert bad["error"]["code"] == INVALID_PARAMS
+
+
+def test_border_coverage_scores_the_watched_side(hills):
+    tid = hills["terrain_id"]
+    line = [[200, 600], [1000, 600]]
+    ok("perimeter.plan", terrain_id=tid, camera=CAM, fence=line, closed=False, line_mode="border", watch_side="left",
+       target_ppm=40, mast_m=6, lens_mode="max")
+    cov = ok("perimeter.coverage", terrain_id=tid, max_px=300, band_m=150, layer="target", level="detect")
+    assert cov["roi_kind"] == "side" and cov["watch_side"] == "left"
+    assert cov["target"]["held"] > 0.05            # the watched side is seen (a ±band around the line read ~0)

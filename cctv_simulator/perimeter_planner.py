@@ -771,6 +771,27 @@ def compute_coverage_grid(plan: PerimeterPlanResult, camera: CameraConfig,
                         occlusion_applied=bool(do_occ))
 
 
+def _side_band_mask(mx, my, fence_points, band_m, side):
+    """Cells within ``band_m`` of the polyline on ONE side of it ("left" /
+    "right" of the drawing direction, the planner's ``watch_side``): the zone
+    a border line watches. Side = the nearest segment's side."""
+    if not fence_points or len(fence_points) < 2:
+        return None
+    d2 = np.full(mx.shape, np.inf, dtype=np.float64)
+    left = np.zeros(mx.shape, bool)
+    for (x0, y0), (x1, y1) in zip(fence_points[:-1], fence_points[1:]):
+        vx, vy = x1 - x0, y1 - y0
+        seg2 = vx * vx + vy * vy
+        if seg2 < 1e-6:
+            continue
+        t = np.clip(((mx - x0) * vx + (my - y0) * vy) / seg2, 0.0, 1.0)
+        dd = (mx - (x0 + t * vx)) ** 2 + (my - (y0 + t * vy)) ** 2
+        nearer = dd < d2
+        d2 = np.where(nearer, dd, d2)
+        left = np.where(nearer, vx * (my - y0) - vy * (mx - x0) > 0, left)
+    return (d2 <= band_m * band_m) & (left if side == "left" else ~left)
+
+
 def _fence_band_mask(mx, my, fence_points, band_m):
     if not fence_points or len(fence_points) < 2:
         return None

@@ -152,8 +152,9 @@ export interface CoverageResult {
   target: { label: string; ppm: number; held: number; ptz_only: number; below: number; unseen: number };
   /** the fence line itself (null for an area plan) */
   fence_line: { held: number; with_ptz: number; detect: number } | null;
-  /** "area": the shares are of the drawn polygon (area plan), "band": of the ±band_m fence band */
-  roi_kind: "area" | "band";
+  /** "area": the drawn polygon, "band": the ±band_m fence band, "side": a border's watched side, band_m deep */
+  roi_kind: "area" | "band" | "side";
+  watch_side?: "left" | "right";
   overlay: Picture;
   legend: LegendRow[];
   measured: boolean;

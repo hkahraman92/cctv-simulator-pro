@@ -130,3 +130,17 @@ def test_fence_band_can_be_narrower_inside():
     assert asym[r, c]
     assert asym.sum() < sym.sum()
     assert np.array_equal(fence_roi(t, sq[:2], False, 20.0, 4.0), fence_roi(t, sq[:2], False, 20.0))  # open line: symmetric
+
+
+def test_border_roi_is_the_watched_side_only():
+    from cctv_simulator.focal_optimizer import fence_roi
+    from cctv_simulator.terrain_loader import TerrainData
+
+    t = TerrainData(z_grid=np.zeros((100, 100)), cell_size_m=2.0)
+    line = [(20.0, 100.0), (180.0, 100.0)]                     # drawn eastward: left = north
+    left = fence_roi(t, line, False, 50.0, watch_side="left")
+    right = fence_roi(t, line, False, 50.0, watch_side="right")
+    assert left[int(130 / 2), 50] and not left[int(70 / 2), 50]     # (100, 130) north, (100, 70) south
+    assert right[int(70 / 2), 50] and not right[int(130 / 2), 50]
+    sym = fence_roi(t, line, False, 50.0)
+    assert not (left & right).any() and ((left | right) == sym).mean() > 0.99

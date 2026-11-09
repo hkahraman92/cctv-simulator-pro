@@ -74,7 +74,8 @@ def minimize_poles(terrain: TerrainData, fence_points: Sequence[Tuple[float, flo
     vis = float(kw.get("visibility_km", 40.0))
     weather = str(kw.get("weather", ""))
     ptz_camera = kw.get("ptz_camera") if kw.get("ptz_every_n") else None
-    roi = fence_roi(terrain, list(fence_points), closed, band_m, inside_m)
+    side = kw.get("watch_side") if kw.get("line_mode") == "border" else None
+    roi = fence_roi(terrain, list(fence_points), closed, band_m, inside_m, side)
     pts = list(fence_points) + ([fence_points[0]] if closed and len(fence_points) > 2 else [])
     fence_len = sum(math.hypot(b[0] - a[0], b[1] - a[1]) for a, b in zip(pts[:-1], pts[1:]))
 
