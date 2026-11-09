@@ -218,6 +218,8 @@ export interface AreaParams {
   max_hole_m2?: number;
   /** redundancy: a cell counts when this many cameras hold the level */
   min_cameras?: number;
+  /** camera cap of the search (service default 120) */
+  max_cameras?: number;
   ptz_camera?: CameraConfig;
   ptz_every_n?: number;
   ptz_patrol_span_deg?: number;

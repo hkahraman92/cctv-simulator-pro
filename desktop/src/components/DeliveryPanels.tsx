@@ -145,7 +145,7 @@ export function ScenarioPanel({ T, terrainId, scenarios, onChange, canSnapshot }
       <div className="flex gap-1.5">
         <input className="h-8 min-w-0 flex-1 rounded border border-line bg-bg-0 px-2 text-[12px]" placeholder={`Senaryo ${scenarios.length + 1}`}
           value={label} onChange={(e) => setLabel(e.target.value)} aria-label="Senaryo adı" />
-        <Button disabled={!canSnapshot} onClick={() => void add()}><Bookmark size={14} /> Kaydet</Button>
+        <Button disabled={!canSnapshot} onClick={() => void add()}><Bookmark size={14} /> Senaryoyu Kaydet</Button>
       </div>
       <p className="mt-1 text-[11px] text-text-3">O anki plan ile o plana çalıştırılan kapsama, ağ/maliyet ve gece sonuçları saklanır; proje dosyasına yazılır.</p>
       {err && <div className="mt-1 text-[11px] text-danger">■ {err}</div>}

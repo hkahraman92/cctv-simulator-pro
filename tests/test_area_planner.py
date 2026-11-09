@@ -81,10 +81,15 @@ def test_sites_inside_a_building_are_skipped():
     h = np.zeros_like(bare.z_grid)
     h[45:105, 45:115] = 30.0                    # a hall covering the whole square + margin
     surf = obs.with_obstacles(bare, obs.ObstacleLayer(height_grid=h, kind_grid=(h > 0).astype(np.uint8), counts={}))
-    rep = plan_area(surf, SQUARE, CAM, level=ZONE_DETECT, goal_frac=0.5, mast_height_m=6.0)
-    assert rep.sites_skipped_obstacle > 0
-    assert rep.sites_considered == 0 and rep.plan.camera_count == 0 and not rep.met
-    assert any("bina" in n for n in rep.notes)
+    # the whole square is roof: nothing a person stands on is left to cover
+    with pytest.raises(ValueError, match="bina"):
+        plan_area(surf, SQUARE, CAM, level=ZONE_DETECT, goal_frac=0.5, mast_height_m=6.0)
+    # a hall over the middle only: sites on it are skipped, the yard round it is the target
+    h2 = np.zeros_like(bare.z_grid)
+    h2[65:85, 65:95] = 30.0
+    surf2 = obs.with_obstacles(bare, obs.ObstacleLayer(height_grid=h2, kind_grid=(h2 > 0).astype(np.uint8), counts={}))
+    rep = plan_area(surf2, SQUARE, CAM, level=ZONE_DETECT, goal_frac=0.5, mast_height_m=6.0)
+    assert rep.sites_skipped_obstacle > 0 and any("bina" in n for n in rep.notes)
 
 
 def test_an_unreachable_goal_is_reported_not_faked():
@@ -168,3 +173,20 @@ def test_redundancy_goal_counts_cells_held_by_k_cameras():
     n = sum((r.dori_grid >= ZONE_OBSERVE).astype(int) for r in mv.per_camera)
     assert two.engine_frac == pytest.approx(float(((n >= 2) & roi).sum()) / roi.sum())
     assert any("Yedeklilik" in s for s in two.notes)
+
+
+def test_roofs_are_not_area_target():
+    """A person cannot stand on the roof the camera sees: building cells leave the target."""
+    from cctv_simulator import surface_obstacles as obs
+    from cctv_simulator.area_planner import polygon_mask, target_mask
+    from cctv_simulator.terrain_loader import TerrainData
+
+    t = TerrainData(z_grid=np.zeros((50, 50)), cell_size_m=2.0)
+    poly = [(10.0, 10.0), (80.0, 10.0), (80.0, 80.0), (10.0, 80.0)]
+    assert np.array_equal(target_mask(t, poly), polygon_mask(t, poly))            # no surface model
+    kind = np.zeros((50, 50), np.int8)
+    kind[20:25, 20:25] = obs.KIND_BUILDING
+    kind[30:33, 30:33] = obs.KIND_VEGETATION
+    t.obstacle_kind = kind
+    m = target_mask(t, poly)
+    assert not m[20:25, 20:25].any() and m[30:33, 30:33].all()

@@ -74,7 +74,7 @@ desktop/                             yeni arayüz: Tauri 2 (Rust) + React/TS/Tai
 
 **Yeni masaüstü kabuğu.** `desktop/` Python çekirdeği (`python -m
 cctv_simulator.service`, yayında `cctv-core.exe`) alt süreç olarak başlatır,
-satır başına bir JSON-RPC nesnesi taşır (API v1, 73 yöntem; liste ve
+satır başına bir JSON-RPC nesnesi taşır (API v1, 74 yöntem; liste ve
 sözleşme `docs/masaustu-mimari.md`). Ekran fizik türetmez; her sayı bir API
 yönteminden gelir. Yeni özellik için: önce `service/*_methods.py`'ye yöntem +
 `tests/test_service_*.py`'ye motorla birebir eşlik testi, sonra
@@ -1027,7 +1027,52 @@ yine de kapalı halka seçebilir — örn. bir enklav sınırı). `export_terrai
 `import_terrain_state` `line_mode`/`watch_side`'ı da taşır. BOM CSV'de "# Hat
 Modu" satırı.
 
+## Denetim düzeltmeleri (operatör + direktör denetimi)
+
+Ölçülerek bulunan, bilerek düzeltilen davranışlar; geri getirmeyin.
+
+- **Kör bölge en dik ışından** (`perimeter_planner.dead_zone_for`): kadrajın
+  alt kenarı `tilt + vfov/2`. Eski kod en sığ ışını alıyordu (12 mm, 6 m:
+  7,2 m yerine 33,3 m) ve değer direk aralığına giriyordu. Aralık ayrıca
+  kadrajın üst kenarının zemine değdiği yerle sınırlı. **Menzil tabanı yok:**
+  hedef px/m zeminde hiç tutmuyorsa `ValueError` (servis APP_ERROR).
+- **Hedef boyu** (`viewshed_3d.target_height` bağlam değişkeni, vars. 0 =
+  zemin, bit-aynı): DORI hücresi bir insandır — görüş hattı başa, kadraj başa
+  göre. Tekil motor, direk raster'ı (önbellek anahtarında), taramalar,
+  planlayıcılar aynı değeri okur. Servis değeri arazi oturumunda tutar
+  (`terrain.settings`, `_terrain_of` her istekte etkinleştirir; değişince
+  plandan türeyenler düşer); masaüstü 1,8 m gönderir; rapor tanımı yazar.
+  Raster ↔ motor uyumu h > 0'da %96 (kadrajın üst kenarı koninin ortasından
+  geçer, bir hücre sınırı farkı).
+- **Termal Johnson'la sınıflanır** (`zone_codes(thermal=)`): algılama 1,3 /
+  tanıma 6,67 / teşhis 13,33 px/m → DETECT / OBSERVE / RECOG kodları, asla
+  IDENT (yüz). Lejant `dori_thermal`.
+- **Gece**: ortam ışığı ancak `MIN_LUX_MARGIN` (10) × min_lux üstünde tek
+  başına yeterli; eşikte IR / beyaz ışık seçilir, yoksa `verified=False`.
+- **Sınır planı** izlenen taraftaki şeridi puanlar (`fence_roi(watch_side=)`).
+- **Alan hedefi** bina ayak izini dışlar (`area_planner.target_mask`; çatı
+  insan değildir; ağaç altı kalır — gerçek kör nokta). `min_cameras` (k):
+  hücre k kamerayla sayılır. Çitte `back_to_back`: direğe ters bakan 2. kamera.
+- **Tek sayılar**: plan panelinin ana çit sayısı kapsama koşunca motorun
+  çit çizgisi (öncesi "ön tahmin"); kapsanmayan toplam metre her zaman
+  yazılır ("kesintisiz" yalnız %100); depolama tek formül
+  (`network_plan.storage_tb`, ondalık TB).
+- **BOM**: hendek, enerji kablosu, kabin, UPS (yük × otonomi / verim),
+  topraklama + parafudr, VMS lisansı, iş istasyonu, montaj aparatı, montaj,
+  bakım; PoE PSE sınıfına yuvarlanır (cihaz × 1,1), vars. PTZ 60 W; görünür
+  kameralar gece ×2 bit hızı (depolama ortalama, NVR tepe); fiber halka seçimi.
+- **PTZ tanıma**: "SD <rakam>" model kodu, "hareketli" ve ≥ 20x zoom = PTZ.
+
 ## Açık işler
+
+- Planın kendisi için EN 62676-4 uygunluk beyanı (bölge × seviye × sonuç)
+  yok; beyan yalnız şartname analizinde.
+- KVKK maske poligonu dışa aktarımı (KML/DXF), Monitoring 12,5 px/m arazi
+  seviyesi, kamera çizelgesinde enlem/boylam / ulaşılan px/m / port / güç
+  sütunları yok.
+- Kütüphanede adı yalnız kod olan (AB-0000-4413, AB-0000-3224) ve adı broşür
+  başlığından gelen (AB-0000-3951 … "FULL HD ÇÖZÜNÜRLÜK …") kayıtlar —
+  kullanıcı verisi, kodla düzeltilmez.
 
 - Klasik `main_window` DORI tablosu hâlâ berrak hava (bilinçli — DORI berrak-hava
   standardı; atmosfer 3B/harita/tezgâh pencerelerinde). `k` orada var.

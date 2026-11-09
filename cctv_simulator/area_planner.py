@@ -119,6 +119,19 @@ def polygon_mask(terrain: TerrainData, polygon: Sequence[Tuple[float, float]]) -
     return _inside(mx, my, polygon)
 
 
+def target_mask(terrain: TerrainData, polygon: Sequence[Tuple[float, float]]) -> np.ndarray:
+    """What an area plan must see: the polygon WITHOUT building footprints --
+    seeing a roof is not seeing a person (with the surface model on, roofs
+    used to count as covered area). Trees stay: a person under a canopy is a
+    real blind spot, not something to leave out."""
+    from . import surface_obstacles as obs
+    roi = polygon_mask(terrain, polygon)
+    kind = getattr(terrain, "obstacle_kind", None)
+    if kind is not None:
+        roi &= kind != obs.KIND_BUILDING
+    return roi
+
+
 def _inside(x: np.ndarray, y: np.ndarray, polygon: Sequence[Tuple[float, float]]) -> np.ndarray:
     pts = [tuple(map(float, p)) for p in polygon]
     if len(pts) > 1 and pts[0] == pts[-1]:
@@ -237,11 +250,14 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
     ring = _ring(polygon)
     if len(ring) < 4:
         raise ValueError("Alan için en az üç köşe gerekir.")
-    roi = polygon_mask(terrain, ring)
+    roi = target_mask(terrain, ring)
     if roi_mask is not None:
         roi &= roi_mask
     n_roi = int(roi.sum())
     if n_roi == 0:
+        if roi_mask is None and polygon_mask(terrain, ring).any():
+            raise ValueError("Çizilen alanın tamamı bina ayak izi: çatı hedef sayılmaz (insan orada durmaz). "
+                             "Alanı binanın çevresine çizin ya da 'Binalar görüşü engellesin'i kapatın.")
         raise ValueError("Çizilen alan arazi ızgarasının hiçbir hücresini içermiyor."
                          if roi_mask is None else "Çizilen alanda hedef hücre (ör. sokak) yok.")
     cell_area = terrain.cell_size_m ** 2
@@ -531,4 +547,5 @@ def _build_plan(terrain, ring, camera, chosen: List[_View], site_xy, mast, ppm, 
         estimated_storage_30days_tb=round(_storage_tb(mbps), 1), line_mode="area")
 
 
-__all__ = ["AreaPlanReport", "AreaStep", "candidate_sites", "hole_areas", "plan_area", "polygon_mask", "LEVEL_NAME"]
+__all__ = ["AreaPlanReport", "AreaStep", "candidate_sites", "hole_areas", "plan_area", "polygon_mask", "target_mask",
+           "LEVEL_NAME"]

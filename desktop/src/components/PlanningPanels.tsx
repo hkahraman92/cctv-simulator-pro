@@ -124,12 +124,13 @@ export function ComparePanel({ T, job, terrainId, useObstacles, models, camera, 
 }) {
   const [picked, setPicked] = useState<string[]>([]);
   const [goal, setGoal] = useState(90);
+  const [level, setLevel] = useState<"detect" | "observe" | "recognize" | "identify">("detect");
   const [modelPrices, setModelPrices] = useState<Record<string, number>>({});
   const [opts, setOpts] = useState<CompareOption[] | null>(null);
   const fixed = models.filter((m) => !m.is_ptz);
   const toggle = (n: string) => setPicked((p) => (p.includes(n) ? p.filter((x) => x !== n) : p.length < 6 ? [...p, n] : p));
   const run = () => void job.run(`${picked.length} model karşılaştırılıyor`, (o) => T.compareModels({
-    terrain_id: terrainId, use_obstacles: useObstacles, camera, models: picked, goal_frac: goal / 100, level: "detect",
+    terrain_id: terrainId, use_obstacles: useObstacles, camera, models: picked, goal_frac: goal / 100, level,
     position_steps: 0, prices, model_prices: modelPrices, ...planArgs,
   }, o)).then((r) => { if (r) setOpts(r.options); });
 
@@ -149,7 +150,12 @@ export function ComparePanel({ T, job, terrainId, useObstacles, models, camera, 
           </label>
         ))}
       </div>
-      <label className="mt-2 flex items-center justify-between text-[12px]"><span className="label">Algılama hedefi (bant)</span>
+      <select className="mt-2 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={level} aria-label="Karşılaştırma seviyesi"
+        onChange={(e) => setLevel(e.target.value as typeof level)}>
+        {([["detect", "Algılama ≥25"], ["observe", "Gözlem ≥62,5"], ["recognize", "Tanıma ≥125"], ["identify", "Teşhis ≥250"]] as const).map(([k, l]) => (
+          <option key={k} value={k}>Bantta {l}</option>))}
+      </select>
+      <label className="mt-2 flex items-center justify-between text-[12px]"><span className="label">Bant hedefi (%)</span>
         <input type="number" min={30} max={99} value={goal} onChange={(e) => setGoal(Math.min(99, Math.max(30, Number(e.target.value) || 90)))}
           className="h-7 w-16 rounded border border-line bg-bg-0 px-1.5 text-right font-mono" /></label>
       <Button className="mt-2 w-full" disabled={job.running || picked.length < 1} onClick={run}><Play size={14} /> Karşılaştır</Button>

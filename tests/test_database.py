@@ -40,3 +40,16 @@ def test_builtin_visible_band_ptz_models():
         assert is_ptz_camera(dict(m, model_name=name)) is True
         assert band_for_camera(m["sensor_name"], name) == "visible"
         assert m["focal_max_mm"] / m["focal_min_mm"] >= 30.0
+
+
+def test_speed_domes_without_the_word_ptz_are_ptz():
+    from cctv_simulator.database import is_ptz_camera
+
+    sd = {"model_name": "AB-0000-3750 - ODAKAN SD 8I32D-IR-SKD 4K 32x IR Led Dome", "focal_min_mm": 6.5, "focal_max_mm": 212}
+    assert is_ptz_camera(sd)
+    assert is_ptz_camera({"model_name": "X", "product_name": "ODAKAN 2MP 36X HAREKETLİ AI KAMERA"})
+    assert is_ptz_camera({"model_name": "Long zoom", "focal_min_mm": 5.8, "focal_max_mm": 210})      # 36x motorised
+    # a varifocal bullet / mini dome stays fixed
+    assert not is_ptz_camera({"model_name": "ODAKAN FX MINI-2I3D-IR-AI 2MP Mini Dome", "focal_min_mm": 3.2, "focal_max_mm": 10.5})
+    assert not is_ptz_camera({"model_name": "Bullet 4K 4X", "focal_min_mm": 8, "focal_max_mm": 32})
+    assert not is_ptz_camera({"model_name": "WSD 4x bullet"})                                         # "sd" inside a word

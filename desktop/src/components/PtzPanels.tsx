@@ -107,7 +107,8 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, mount, weath
       {tour && mode === "tour" && (
         <div className="mt-2 grid grid-cols-2 gap-1.5">
           <Tile label="Tur süresi" value={fmt(tour.tour_period_s, 1)} unit="sn" />
-          <Tile label="En kötü revizit" value={sec(tour.worst_revisit_s)} tone="text-warn" />
+          {/* nothing covered: there is no revisit to speak of (it used to read "0,0 sn") */}
+          <Tile label="En kötü revizit" value={tour.covered_area_m2 > 0 ? sec(tour.worst_revisit_s) : "—"} tone="text-warn" />
           <Tile label="Kapsanan alan" value={ha(tour.covered_area_m2)} tone="text-secondary" />
           <Tile label="Geçiş (hareket+zoom+oturma)" value={fmt(tour.slew_total_s + tour.zoom_total_s + tour.settle_total_s, 1)} unit="sn" />
         </div>

@@ -87,8 +87,8 @@ export default function Terrain() {
   const [rate, setRate] = useState(1);
   const [playT, setPlayT] = useState(0);
   // area goal: the drawn polygon itself is what must be seen (car park, yard, square)
-  const [area, setArea] = useState<{ level: DoriLevel; goal: number; interior: boolean; perPole: number; streetsOnly: boolean; maxHole: number; minCams: number }>(
-    { level: "recognize", goal: 95, interior: true, perPole: 2, streetsOnly: false, maxHole: 0, minCams: 1 });
+  const [area, setArea] = useState<{ level: DoriLevel; goal: number; interior: boolean; perPole: number; streetsOnly: boolean; maxHole: number; minCams: number; maxCams: number }>(
+    { level: "recognize", goal: 95, interior: true, perPole: 2, streetsOnly: false, maxHole: 0, minCams: 1, maxCams: 120 });
   const [city, setCity] = useState<CityInfo | null>(null);   // OSM streets / homes / places of this terrain
   const [areaRes, setAreaRes] = useState<AreaPlanResult | null>(null);
   const isArea = plan.line_mode === "area";
@@ -193,7 +193,7 @@ export default function Terrain() {
     const r = await job.run("Alan kapsama planı", (o) => T.areaPlan({ terrain_id: info.terrain_id, use_obstacles: useObstacles, camera,
       fence, level: area.level, goal_frac: area.goal / 100, mast_m: plan.mast_m, interior: area.interior, max_per_pole: area.perPole, weather,
       streets_only: area.streetsOnly && !!city, ...(area.maxHole > 0 ? { max_hole_m2: area.maxHole } : {}),
-      min_cameras: area.minCams, ...ptzArgs() }, o));
+      min_cameras: area.minCams, max_cameras: area.maxCams, ...ptzArgs() }, o));
     if (r) { replacePlan(r.plan); setAreaRes(r); setPoleRes(null); setOptLevel(r.level); warn(r.warnings); }
   };
   const runCoverage = async (layer: CoverageLayer = covLayer, level: "plan" | DoriLevel = covLevel) => {
@@ -232,7 +232,7 @@ export default function Terrain() {
         fence_points: fence, fence_closed: plan.closed, line_mode: plan.line_mode, watch_side: plan.watch_side,
         target_ppm: plan.target_ppm, perimeter_mast_m: plan.mast_m, lens_mode: plan.lens_mode, back_to_back: plan.back_to_back, band_out_m: band.out, band_in_m: band.in, target_height_m: targetH,
         area_goal: { level: area.level, goal_pct: area.goal, interior: area.interior, per_pole: area.perPole, streets_only: area.streetsOnly,
-          max_hole_m2: area.maxHole, min_cameras: area.minCams },
+          max_hole_m2: area.maxHole, min_cameras: area.minCams, max_cameras: area.maxCams },
         mixed_ptz: { camera: mixedPtz.camera?.model_name ?? "", every_n: mixedPtz.everyN, patrol_span_deg: mixedPtz.span },
         prices, scenarios,
       },
@@ -278,6 +278,7 @@ export default function Terrain() {
         streetsOnly: typeof ag.streets_only === "boolean" ? ag.streets_only : a.streetsOnly,
         maxHole: typeof ag.max_hole_m2 === "number" ? ag.max_hole_m2 : a.maxHole,
         minCams: typeof ag.min_cameras === "number" ? ag.min_cameras : a.minCams,
+        maxCams: typeof ag.max_cameras === "number" ? ag.max_cameras : a.maxCams,
       }));
       if (x.prices && typeof x.prices === "object") setPrices({ ...EMPTY_PRICES, ...(x.prices as Partial<PriceBook>) });
       setScenarios(Array.isArray(x.scenarios) ? (x.scenarios as Scenario[]) : []);
@@ -551,6 +552,8 @@ export default function Terrain() {
                       <option value={1}>Her hücre en az 1 kamera</option><option value={2}>En az 2 kamera (kritik alan)</option>
                       <option value={3}>En az 3 kamera</option>
                     </select></label>
+                  <Slider label="Kamera tavanı" unit="" value={area.maxCams} min={10} max={500} step={10}
+                    onChange={(v) => setArea((a) => ({ ...a, maxCams: v }))} />
                   <Slider label="Delik sınırı (0 = kapalı)" unit="m²" value={area.maxHole} min={0} max={1000} step={25}
                     onChange={(v) => setArea((a) => ({ ...a, maxHole: v }))} />
                   {area.maxHole > 0 && <p className="-mt-2 text-[11px] text-text-3">Hedef tuttuktan sonra {fmt(area.maxHole, 0)} m²'den büyük her açık kalan parçaya kamera eklenir.</p>}
@@ -907,7 +910,7 @@ function RegionSave({ info, T, busy, onSaved }: { info: TerrainInfo; T: ReturnTy
       <input className="h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={name} onChange={(e) => setName(e.target.value)} aria-label="Bölge adı" />
       <Button className="mt-2 w-full" disabled={busy || !name.trim()}
         onClick={() => T.saveRegion(info.terrain_id, name).then((r) => { setMsg(`Kaydedildi (${fmt(r.size_bytes / 1e6, 1)} MB)`); onSaved(r.region_id); }).catch((e) => setMsg(String(e.message ?? e)))}>
-        <Save size={14} /> Kaydet
+        <Save size={14} /> Bölgeyi Kaydet
       </Button>
       {msg && <div className="mt-1 text-[11px] text-text-2">{msg}</div>}
     </Panel>

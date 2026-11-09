@@ -173,7 +173,7 @@ def camera_db_extended_field_specs() -> Tuple[Tuple[str, str], ...]:
 
 
 _PTZ_HINTS = ("ptz", "speed dome", "hız kubbe", "hiz kubbe", "sürekli optik zoom",
-              "surekli optik zoom", "pan/tilt", "pan-tilt", "konumlandırıcı", "positioner")
+              "surekli optik zoom", "pan/tilt", "pan-tilt", "konumlandırıcı", "positioner", "hareketli")
 _FIXED_HINTS = ("sabit", "fixed", "bullet", "turret", "taret", "mini dome")
 
 
@@ -196,6 +196,17 @@ def is_ptz_camera(model: Dict[str, Any]) -> bool:
                     ("camera_type", "kamera_tipi", "model_name", "product_name",
                      "brochure_title", "ozet_paragraf", "overview")).casefold()
     if any(h in blob for h in _PTZ_HINTS):
+        return True
+    # A speed dome often says neither "PTZ" nor "speed dome": ODAKAN "SD 8I32D
+    # ... 32x IR Led Dome" read as a fixed camera. A model code starting "SD",
+    # or a motorised zoom of 20x and more, is a PTZ.
+    if re.search(r"(?:^|[\s-])sd\s*\d", blob):
+        return True
+    try:
+        fmin, fmax = float(model.get("focal_min_mm") or 0), float(model.get("focal_max_mm") or 0)
+    except (TypeError, ValueError):
+        fmin = fmax = 0.0
+    if fmin > 0 and fmax / fmin >= 20.0:
         return True
     ct = str(model.get("camera_type", "")).casefold()
     if ct and any(h in ct for h in _FIXED_HINTS):

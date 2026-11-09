@@ -473,8 +473,8 @@ def _plan_roi(t, fence, kw: Dict[str, Any], band_m: float, inside_m: Optional[fl
     """What a plan protects: the drawn polygon for an area plan, else the fence
     band (``band_m`` outside, ``inside_m`` inside a closed fence; None = same)."""
     if kw.get("line_mode") == "area":
-        from ..area_planner import polygon_mask
-        roi = polygon_mask(t, fence)
+        from ..area_planner import target_mask
+        roi = target_mask(t, fence)
         if kw.get("roi_mask") is not None:          # street-only area plan: its streets
             roi &= kw["roi_mask"]
         return roi
