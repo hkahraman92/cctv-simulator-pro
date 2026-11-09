@@ -101,6 +101,7 @@ export default function Terrain() {
   const replacePlan = useCallback((p: PlanResult | null) => {
     setPlanVer((v) => v + 1);
     setPlanRes(p); setCoverage(null); setNetwork(null); setNight(null); setMixedLayer(null); setApproachMarks(null); setPlay(null);
+    setOptRes(null);
     if (!p) setAreaRes(null);
   }, []);
 
@@ -586,6 +587,7 @@ export default function Terrain() {
             )}
             {<MixedPanel T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} models={models}
               value={mixedPtz} onChange={setMixedPtz} hasPlanWithPtz={!!planRes?.ptz.length} onLayer={setMixedLayer} onPlay={startPlayback}
+              resetKey={planVer}
               ptzModelFor={async (n) => (await api.cameraFor(n, undefined, true)).camera} />}
             {mixedLayer && <Button className="w-full" onClick={() => setMixedLayer(null)}>Birleşik kapsamaya dön</Button>}
             {planRes && (
@@ -600,7 +602,7 @@ export default function Terrain() {
                   ...(panSearch ? { pan_search_deg: 30 } : {}), ...bandArgs() }, o))
                   .then((r) => {
                     if (!r) return;
-                    setOptRes(r); replacePlan(r.plan);
+                    replacePlan(r.plan); setOptRes(r);       // replacePlan clears results of the old plan
                     // the area tile shows the plan's engine share: keep it true to the optimised plan
                     if (areaRes && r.plan.line_mode === "area") {
                       const f = r.after_m2 / Math.max(r.band_area_m2, 1);

@@ -1105,20 +1105,24 @@ def _perimeter_rows(perim) -> List[List[str]]:
     ptz = getattr(perim, "ptz_cameras", None) or []
     rows = [
         ["Toplam çevre çiti", f"{perim.total_fence_length_m:,.0f} m"],
-        (["Kamera adedi", f"{len(perim.placed_cameras)} sabit + {len(ptz)} PTZ (aynı direkte)"]
-         if ptz else ["Kamera / direk adedi", f"{perim.camera_count}"]),
+        (["Kamera / direk", f"{len(perim.placed_cameras)} sabit + {len(ptz)} PTZ (aynı direkte) / {perim.pole_count} direk"]
+         if ptz else ["Kamera / direk", f"{perim.camera_count} kamera / {perim.pole_count} direk"]),
         ["Ortalama direk aralığı", f"{perim.avg_spacing_m:.1f} m"],
         ["Hedef piksel yoğunluğu", f"{perim.target_ppm:g} px/m"],
-        ["Çit kapsaması (geometrik + LOS)", f"% {perim.coverage_percentage:.1f}"],
+        ["Çit çizgisi kapsaması (ön tahmin: geometrik + LOS)", f"% {perim.coverage_percentage:.1f}"],
         ["Tahmini ağ trafiği", f"{perim.estimated_bandwidth_mbps:.1f} Mbps"],
         ["30 günlük RAID depolama", f"{perim.estimated_storage_30days_tb:.1f} TB"],
     ]
+    from .perimeter_planner import uncovered_fence_m
+    open_m = uncovered_fence_m(perim)
     if perim.gaps:
         total_gap = sum(g.length_m for g in perim.gaps)
-        rows.append(["Kapsanmayan bölüm", f"{len(perim.gaps)} adet · toplam {total_gap:.0f} m"])
+        rows.append(["Kapsanmayan bölüm", f"toplam {open_m:.0f} m · {len(perim.gaps)} boşluk ≥ 4 m ({total_gap:.0f} m)"])
         for i, g in enumerate(perim.gaps, 1):
             rows.append([f"  → boşluk {i}",
                          f"({g.start_x:.0f}, {g.start_y:.0f}) → ({g.end_x:.0f}, {g.end_y:.0f}) · {g.length_m:.0f} m"])
+    elif open_m >= 0.5:
+        rows.append(["Kapsanmayan bölüm", f"toplam {open_m:.0f} m, hepsi 4 m'den kısa parçalar"])
     else:
         rows.append(["Kapsanmayan bölüm", "yok — kesintisiz"])
     return rows

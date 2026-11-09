@@ -132,3 +132,18 @@ def test_mixed_report_names_the_thermal_detection_floor(tmp_path):
     text = out.read_text(encoding="utf-8-sig")
     assert "termal PTZ Johnson 1,3 px/m" in text
     assert "Menzil = tele uçta teşhis erişimi" in text
+
+
+def test_report_never_calls_a_partly_covered_fence_seamless():
+    """69 % covered with only sub-4 m holes used to print "yok — kesintisiz"."""
+    from types import SimpleNamespace
+
+    from cctv_simulator.exporters import _perimeter_rows
+
+    base = dict(total_fence_length_m=1000.0, placed_cameras=[1, 2, 3], ptz_cameras=[], camera_count=3, pole_count=2,
+                avg_spacing_m=50.0, target_ppm=40.0, estimated_bandwidth_mbps=12.0, estimated_storage_30days_tb=1.0)
+    rows = dict(_perimeter_rows(SimpleNamespace(**base, coverage_percentage=69.3, gaps=[])))
+    assert "kesintisiz" not in rows["Kapsanmayan bölüm"] and "307 m" in rows["Kapsanmayan bölüm"]
+    assert rows["Kamera / direk"] == "3 kamera / 2 direk"
+    full = dict(_perimeter_rows(SimpleNamespace(**base, coverage_percentage=100.0, gaps=[])))
+    assert full["Kapsanmayan bölüm"] == "yok — kesintisiz"

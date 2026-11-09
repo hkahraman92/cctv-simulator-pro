@@ -61,6 +61,13 @@ class FenceGap:
     reason: str = "Aralık yetersizliği veya engel"
 
 
+def uncovered_fence_m(plan) -> float:
+    """Fence length the plan leaves uncovered: every short stretch the gap
+    list skips (< ``min_gap_m``) included -- a 69 % covered fence used to read
+    "no gaps" because none of its holes was 4 m long."""
+    return max(0.0, (100.0 - float(plan.coverage_percentage)) / 100.0 * float(plan.total_fence_length_m))
+
+
 @dataclass
 class PerimeterPlanResult:
     """Complete Perimeter Surveillance Layout Output."""

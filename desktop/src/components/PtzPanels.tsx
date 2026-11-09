@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Play, Plus, RotateCw, X } from "lucide-react";
 import type { CameraConfig, ModelSummary } from "../core/api";
 import type { CueResult, LegendRow, MixedResult, SweepResult, TerrainApi, TourResult } from "../core/terrainApi";
@@ -137,7 +137,7 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, mount, weath
 }
 
 /** Perimeter tab: co-mount a PTZ on every Nth pole and evaluate fixed + PTZ together. */
-export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onChange, hasPlanWithPtz, onLayer, ptzModelFor, onPlay }: {
+export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onChange, hasPlanWithPtz, onLayer, ptzModelFor, onPlay, resetKey }: {
   T: TerrainApi;
   job: Job;
   terrainId: string;
@@ -150,8 +150,11 @@ export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onC
   ptzModelFor: (name: string) => Promise<CameraConfig>;
   /** live sweep of every PTZ in the plan */
   onPlay?: (args: Record<string, unknown>) => void;
+  /** changes with every new plan: results of the old one are dropped */
+  resetKey?: number;
 }) {
   const [res, setRes] = useState<MixedResult | null>(null);
+  useEffect(() => { setRes(null); }, [resetKey, terrainId]);
   const [layer, setLayer] = useState<"fused" | "cue">("fused");
   const ptzModels = models.filter((m) => m.is_ptz);
   const run = (l: "fused" | "cue") => {

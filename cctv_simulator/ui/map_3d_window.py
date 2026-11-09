@@ -3808,9 +3808,10 @@ class TerrainViewshedWindow:
                      TEXT_MUTED),
                     (f"Toplam çit: {p.total_fence_length_m:,.0f} m", TEXT_WHITE),
                     (f"Ortalama direk aralığı: {p.avg_spacing_m:.1f} m", TEXT_WHITE),
-                    ((f"● Çit kapsaması %{cov:.1f} — kesintisiz" if gap_n == 0
-                      else f"■ Çit kapsaması %{cov:.1f} — {gap_n} boşluk"),
-                     ACCENT_GREEN if gap_n == 0 else ACCENT_RED),
+                    ((f"● Çit kapsaması %{cov:.1f} — kesintisiz" if cov >= 99.95
+                      else f"■ Çit kapsaması %{cov:.1f} — {gap_n} boşluk" if gap_n
+                      else f"▲ Çit kapsaması %{cov:.1f} — kısa açıklıklar"),
+                     ACCENT_GREEN if cov >= 99.95 else ACCENT_RED),
                 ]
                 leg_x, y = 30, h - 14
                 for i, (text, col) in reversed(list(enumerate(lines))):
