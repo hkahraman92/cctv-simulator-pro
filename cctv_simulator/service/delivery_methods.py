@@ -106,7 +106,7 @@ def night_condition(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     out = {"condition": _cond_json(c), "lat": lat, "lon": lon}
     if isinstance(params.get("camera"), dict):
         m = _mode_for(_camera_from(params["camera"]), c.lux, params)
-        out["mode"] = {"mode": m.mode, "range_cap_m": m.range_cap_m, "text": m.text}
+        out["mode"] = {"mode": m.mode, "range_cap_m": m.range_cap_m, "text": m.text, "verified": m.verified}
     return out
 
 
@@ -171,7 +171,8 @@ def night_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     res = {"band_share": night, "day_band_share": day, "mode_text": mode.text, "when": cond.when_local.isoformat()}
     entry.results["night"] = res
     max_px = int(_num(params, "max_px", _DISPLAY_PX, lo=200, hi=4096))
-    out = {"condition": _cond_json(cond), "mode": {"mode": mode.mode, "range_cap_m": mode.range_cap_m, "text": mode.text},
+    out = {"condition": _cond_json(cond), "mode": {"mode": mode.mode, "range_cap_m": mode.range_cap_m, "text": mode.text,
+                                                   "verified": mode.verified},
            "band_m": band, "band_area_m2": roi_area, "roi_kind": "area" if is_area else "band",
            "day_band_share": day, "night_band_share": night,
            "legend": map_render.legend("dori")[1], "measured": bool(t.is_measured)}

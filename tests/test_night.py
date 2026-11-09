@@ -82,3 +82,17 @@ def test_timeline_spans_noon_to_noon_with_a_night_in_it():
     assert len(tl) == 25 and tl[0].period == "gündüz" and tl[-1].period == "gündüz"
     assert any(c.period == "gece" for c in tl)
     assert np.argmin([c.sun_el_deg for c in tl]) in range(11, 15)          # deepest near local midnight
+
+
+def test_brochure_min_lux_alone_is_not_enough_for_dori():
+    """Ambient light counts as enough only MIN_LUX_MARGIN x above the brochure
+    floor; at the floor IR wins, and with no lighting it is flagged unverified."""
+    from cctv_simulator.night import MIN_LUX_MARGIN
+
+    vis = ('1/2.8"', "Genel")
+    at_floor = 0.05                                     # city glow, 5 x a 0.01 lux brochure
+    assert at_floor < 0.01 * MIN_LUX_MARGIN
+    assert camera_night_mode(*vis, 0.01, 40, at_floor).mode == "ir"
+    m = camera_night_mode(*vis, 0.01, 0, at_floor)
+    assert m.mode == "pasif" and not m.verified and "doğrulanmadı" in m.text
+    assert camera_night_mode(*vis, 0.01, 40, 0.01 * MIN_LUX_MARGIN).verified

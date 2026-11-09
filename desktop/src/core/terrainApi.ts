@@ -62,6 +62,8 @@ export type ZoneAreas = Record<"identify" | "recognize" | "observe" | "detect" |
 export type LegendRow = [string, [number, number, number, number]];
 
 export interface SingleViewshed {
+  /** zones on Johnson thresholds (thermal camera): detect / observe / recognize = Johnson det / rec / id */
+  thermal?: boolean;
   hfov_deg: number;
   vfov_deg: number;
   cam_ground_z_m: number;

@@ -363,7 +363,7 @@ def viewshed_single(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """One camera on the terrain: authoritative viewshed + DORI map + sight profile."""
     from .. import map_render, surface_obstacles as obs
     from ..atmosphere import WEATHER_PRESETS
-    from ..viewshed_3d import calculate_3d_viewshed
+    from ..viewshed_3d import calculate_3d_viewshed, is_thermal_camera
 
     entry, t = _terrain_of(params)
     cam = _camera_from(params.get("camera", {}))
@@ -407,7 +407,8 @@ def viewshed_single(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
                     "ray_m": res.profile_ray_elev_m[::step].tolist(),
                     "visible": res.profile_is_visible[::step].astype(bool).tolist()},
         "overlay": _image(overlay, max_px=max_px),
-        "legend": map_render.legend("dori")[1],
+        "legend": map_render.legend("dori_thermal" if is_thermal_camera(cam) else "dori")[1],
+        "thermal": is_thermal_camera(cam),
         "warnings": warnings,
     }
 
@@ -628,7 +629,8 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     else:
         grid = mv.dori_grid if layer == "dori" else mv.seen_count_grid
         overlay = map_render.dim_outside(map_render.zone_overlay(grid, size, mode=layer), roi)
-    legend = map_render.legend(layer)[1]
+    from ..viewshed_3d import is_thermal_camera
+    legend = map_render.legend("dori_thermal" if layer == "dori" and is_thermal_camera(cam) else layer)[1]
     if layer == "target":
         legend = [(f"{txt} — {label}" if i == 0 else txt, rgba) for i, (txt, rgba) in enumerate(legend)]
         if not n_ptz:

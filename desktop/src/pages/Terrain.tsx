@@ -34,6 +34,13 @@ const LEVELS = [
   ["identify", "Teşhis ≥250"],
 ] as const;
 
+// thermal views: the same zone codes on Johnson thresholds (viewshed_3d.zone_codes)
+const THERMAL_LEVELS = [
+  ["detect", "Johnson algılama ≥1,3"],
+  ["observe", "Johnson tanıma ≥6,7"],
+  ["recognize", "Johnson teşhis ≥13,3"],
+] as const;
+
 type Tab = "single" | "perimeter";
 type LineMode = "facility" | "border" | "highway" | "area";
 
@@ -451,7 +458,8 @@ export default function Terrain() {
                   <Tile label="En uzak görüş" value={fmt(single.max_los_reach_m, 0)} unit="m" />
                 </div>
                 <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono text-[11px]">
-                  {LEVELS.map(([k, l]) => (<div key={k} className="flex justify-between"><span className="text-text-3">{l}</span><span>{ha(single.zone_areas_m2[k])}</span></div>))}
+                  {/* a thermal is classed on Johnson thresholds and never reaches EN identification */}
+                  {(single.thermal ? THERMAL_LEVELS : LEVELS).map(([k, l]) => (<div key={k} className="flex justify-between"><span className="text-text-3">{l}</span><span>{ha(single.zone_areas_m2[k])}</span></div>))}
                 </div>
                 <div className="mt-2 font-mono text-[10px] text-text-3">
                   optik sınır {fmt(single.optical_limit_m, 0)} m{single.atmospheric_limit_m > 0 && single.atmospheric_limit_m < single.optical_limit_m ? ` · atmosfer ${fmt(single.atmospheric_limit_m, 0)} m` : ""}

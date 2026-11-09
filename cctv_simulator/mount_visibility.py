@@ -222,7 +222,7 @@ def view_layers(mv: MountVisibility, camera: CameraConfig, *, tilt_deg: float,
     framed = (mv.written & (ppm >= lim.min_detect_ppm)
               & (mv.sample_elev_rad >= v_lo) & (mv.sample_elev_rad <= v_hi))
     visible = framed & mv.los_clear
-    zone = zone_codes(visible, framed, ppm)
+    zone = zone_codes(visible, framed, ppm, lim.thermal)
     in_frame = ((mv.center_dist_m <= eff) & (mv.center_dist_m > 1.0)
                 & (mv.center_elev_rad >= v_lo) & (mv.center_elev_rad <= v_hi))
     return ViewLayers(

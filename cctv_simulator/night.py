@@ -125,24 +125,38 @@ def light_condition(lat: float, lon: float, when_local: _dt.datetime, *, utc_off
     return LightCondition(when_local, s_el, s_az, m_el, m_az, frac, lux, period)
 
 
+# A brochure's minimum illumination is the level where the sensor still makes
+# a (noisy, AGC-maxed, ~30 IRE) picture -- not where it resolves DORI detail.
+# Ambient light counts as enough on its own only this many times above it;
+# between 1x and this, IR / white light is preferred and, with neither, the
+# passive picture is reported as unverified.
+MIN_LUX_MARGIN = 10.0
+
+
 @dataclass
 class NightMode:
     mode: str                   # "termal" | "pasif" | "ir" | "beyaz" | "yok"
     range_cap_m: Optional[float]   # None = no light cap (optical range stands)
     text: str
+    verified: bool = True       # False: passive picture at the brochure floor -- DORI not verified at night
 
 
 def camera_night_mode(sensor_name: str, model_name: str, min_lux: float, ir_range_m: float, lux: float, *,
-                      ir_on: bool = True, white_light_range_m: float = 0.0) -> NightMode:
+                      ir_on: bool = True, white_light_range_m: float = 0.0,
+                      lux_margin: float = MIN_LUX_MARGIN) -> NightMode:
     """What lights the scene for this camera at ``lux`` ambient, and how far."""
     from .atmosphere import band_for_camera
     if band_for_camera(sensor_name, model_name) in ("lwir", "mwir"):
         return NightMode("termal", None, "Termal: ortam ışığından bağımsız")
-    if min_lux > 0 and lux >= min_lux:
-        return NightMode("pasif", None, f"Ortam ışığı yeterli ({lux:.3g} lux ≥ {min_lux:g} lux)")
+    if min_lux > 0 and lux >= min_lux * lux_margin:
+        return NightMode("pasif", None, f"Ortam ışığı yeterli ({lux:.3g} lux ≥ {lux_margin:g} × {min_lux:g} lux)")
     ir = ir_range_m if (ir_on and ir_range_m > 0) else 0.0
     white = max(white_light_range_m, 0.0)
     if white <= 0 and ir <= 0:
+        if min_lux > 0 and lux >= min_lux:
+            return NightMode("pasif", None,
+                             f"Ortam ışığı broşür eşiğinde ({lux:.3g} lux, {min_lux:g}–{min_lux * lux_margin:g} lux): "
+                             "görüntü gürültülü, gece DORI doğrulanmadı", verified=False)
         return NightMode("yok", 0.0, f"Ortam ışığı yetersiz ({lux:.3g} lux < {min_lux:g} lux), aydınlatma yok")
     if white >= ir:
         return NightMode("beyaz", white, f"Beyaz ışık: {white:.0f} m (renkli)")

@@ -34,6 +34,12 @@ LAYER_BANDS = {
         # alpha: Algılama is the largest band and sat almost invisible on the dark relief
         (ZONE_DETECT, ZONE_DETECT + 1, _rgba("dori-detect", 215), "Algılama ≥ 25 px/m"),
         (ZONE_OCCLUDED, ZONE_OCCLUDED + 1, _rgba("bg-0", 200), "Kör nokta (arazi engeli)"))),
+    # thermal camera: the same codes on Johnson thresholds (viewshed_3d.zone_codes)
+    "dori_thermal": ("TERMAL · JOHNSON (insan)", (
+        (ZONE_RECOG, ZONE_RECOG + 1, _rgba("dori-recognize", 175), "Johnson teşhis ≥ 13,3 px/m"),
+        (ZONE_OBSERVE, ZONE_OBSERVE + 1, _rgba("dori-observe", 190), "Johnson tanıma ≥ 6,7 px/m"),
+        (ZONE_DETECT, ZONE_DETECT + 1, _rgba("dori-detect", 215), "Johnson algılama ≥ 1,3 px/m"),
+        (ZONE_OCCLUDED, ZONE_OCCLUDED + 1, _rgba("bg-0", 200), "Kör nokta (arazi engeli)"))),
     "overlap": ("YEDEKLİLİK (fiziksel kamera)", (
         (1, 2, _rgba("warn", 115), "1 kamera (yedeksiz)"),
         (2, 3, _rgba("dori-observe", 130), "2 kamera"),
@@ -240,7 +246,7 @@ def zone_overlay(dori_grid: np.ndarray, size: Tuple[int, int], *, mode: str = "d
     """A ZONE_* (or any banded) grid as a smoothed RGBA image of ``size``."""
     g = np.flipud(dori_grid)
     ov = np.zeros(g.shape + (4,), dtype=np.uint8)
-    paint_bands(ov, g, LAYER_BANDS[mode][1], mask=True if mode in ("dori", "envelope", "fused", "overlap", "approach", "city", "streets") else None)
+    paint_bands(ov, g, LAYER_BANDS[mode][1], mask=True if mode in ("dori", "dori_thermal", "envelope", "fused", "overlap", "approach", "city", "streets") else None)
     return smooth_overlay(ov, size)
 
 

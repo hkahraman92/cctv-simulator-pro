@@ -336,6 +336,19 @@ def view_focal_mm(camera: CameraConfig, lens_mode: str = "min",
     return camera.focal_min_mm if lens_mode == "min" else camera.focal_max_mm
 
 
+# Thermal (Johnson / NATO STANAG 4347, human, models.DEFAULT_LEVELS): a thermal
+# image never resolves a face, so its cells are classed on Johnson thresholds
+# and never reach ZONE_IDENT. Codes keep their order: DETECT = Johnson
+# detection, OBSERVE = Johnson recognition, RECOG = Johnson identification.
+THERMAL_RECOG_PPM = 6.67        # Johnson: human recognition (6 cycles)
+THERMAL_IDENT_PPM = 13.33       # Johnson: human identification (12 cycles)
+
+
+def is_thermal_camera(camera: CameraConfig) -> bool:
+    return ("LWIR" in camera.sensor_name.upper() or "MWIR" in camera.sensor_name.upper()
+            or "TERMAL" in camera.model_name.upper())
+
+
 @dataclass(frozen=True)
 class ViewLimits:
     optics: CameraOptics
@@ -343,6 +356,7 @@ class ViewLimits:
     optical_limit_m: float          # slant range where px/m falls to that floor
     atmospheric_limit_m: float      # range where path transmission hits tau_min
     effective_max_range_m: float    # what the view actually reaches
+    thermal: bool = False           # zones on Johnson thresholds (zone_codes)
 
 
 def view_limits(camera: CameraConfig, focal_mm: float, max_range_m: float,
@@ -351,9 +365,7 @@ def view_limits(camera: CameraConfig, focal_mm: float, max_range_m: float,
     calculate_3d_viewshed and the per-mount view masks (mount_visibility) so
     the two can never apply different rules."""
     optics = camera_optics(camera, focal_mm)
-    is_thermal = ("LWIR" in camera.sensor_name.upper() or
-                  "MWIR" in camera.sensor_name.upper() or
-                  "TERMAL" in camera.model_name.upper())
+    is_thermal = is_thermal_camera(camera)
     # Floor PPM below which a cell is not worth showing. Non-thermal: the
     # EN 62676-4 Detection threshold (25 px/m) — the viewshed then covers exactly
     # the DORI-meaningful band (Detection and above), no arbitrary cut-off.
@@ -364,15 +376,19 @@ def view_limits(camera: CameraConfig, focal_mm: float, max_range_m: float,
     atmospheric_limit_m = usable_range_m(optical_limit_m, visibility_km, atm_band, weather)
     # Effective raymarching range cannot exceed optical or atmospheric limits
     effective = min(max_range_m, optical_limit_m * 1.15, atmospheric_limit_m)
-    return ViewLimits(optics, min_detect_ppm, optical_limit_m, atmospheric_limit_m, effective)
+    return ViewLimits(optics, min_detect_ppm, optical_limit_m, atmospheric_limit_m, effective, is_thermal)
 
 
-def zone_codes(visible, framed, ppm):
+def zone_codes(visible, framed, ppm, thermal: bool = False):
     """ZONE_* per sample/cell from visibility, framing and px/m -- the one
-    DORI classification both the engine and the mount view masks use."""
+    DORI classification both the engine and the mount view masks use.
+    ``thermal``: Johnson thresholds, never ZONE_IDENT (see THERMAL_*)."""
     zone = np.zeros(np.shape(ppm), dtype=np.int32)                # ZONE_OUT_OF_FOV
     zone = np.where(framed & ~visible, ZONE_OCCLUDED, zone)       # framed but ridge-blocked
     zone = np.where(visible, ZONE_DETECT, zone)
+    if thermal:
+        zone = np.where(visible & (ppm >= THERMAL_RECOG_PPM), ZONE_OBSERVE, zone)
+        return np.where(visible & (ppm >= THERMAL_IDENT_PPM), ZONE_RECOG, zone)
     zone = np.where(visible & (ppm >= PPM_OBSERVE), ZONE_OBSERVE, zone)
     zone = np.where(visible & (ppm >= PPM_RECOG), ZONE_RECOG, zone)
     zone = np.where(visible & (ppm >= PPM_IDENT), ZONE_IDENT, zone)
@@ -496,7 +512,7 @@ def calculate_3d_viewshed(terrain: TerrainData,
         framed = valid & ppm_ok & in_vfov
         visible = framed & march.los_clear
 
-        zone = zone_codes(visible, framed, ppm)
+        zone = zone_codes(visible, framed, ppm, lim.thermal)
 
         m = valid
         vr, vc = rr[m], cc[m]

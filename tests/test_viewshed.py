@@ -251,3 +251,23 @@ def test_target_height_sees_a_person_over_a_low_wall_and_cuts_a_headless_frame()
     xs = np.arange(200) * 2.0 - 100.0
     far = (xs > d_head + 3) & (xs < 6.0 / math.tan(-top) - 3)   # ground still framed, head not
     assert g0.visibility_mask[row, far].all() and not g1.visibility_mask[row, far].any()
+
+
+def test_a_thermal_never_identifies_and_uses_johnson():
+    from cctv_simulator.viewshed_3d import (
+        THERMAL_IDENT_PPM,
+        ZONE_IDENT,
+        ZONE_RECOG,
+        calculate_3d_viewshed,
+        zone_codes,
+    )
+
+    t = TerrainData(z_grid=np.zeros((150, 150), np.float32), cell_size_m=2.0)
+    thermal = CameraConfig(name="T", model_name="UMA Termal", sensor_name="LWIR 640x512 (12µm)",
+                           resolution_name="LWIR (640x512)", focal_min_mm=25.0, focal_max_mm=225.0)
+    r = calculate_3d_viewshed(t, 150.0, 150.0, 6.0, thermal, lens_mode="max", pan_deg=90.0, tilt_deg=-2.0,
+                              max_range_m=140.0, with_profile=False)
+    assert (r.dori_grid == ZONE_RECOG).any() and not (r.dori_grid == ZONE_IDENT).any()
+    v = np.array([True, True]); ppm = np.array([THERMAL_IDENT_PPM + 1, 400.0])
+    assert list(zone_codes(v, v, ppm, thermal=True)) == [ZONE_RECOG, ZONE_RECOG]
+    assert zone_codes(v, v, ppm)[1] == ZONE_IDENT          # visible: unchanged
