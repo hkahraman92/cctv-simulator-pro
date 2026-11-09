@@ -24,6 +24,9 @@ export interface BenchResult {
   reach_m: number;
   dori_reach_m: Record<"identify" | "recognize" | "observe" | "detect", number>;
   pass: boolean;
+  /** Passes in daylight; every reason left is a night one ("gece: …"). */
+  day_pass: boolean;
+  ir_range_m: number;
   reasons: string[];
 }
 

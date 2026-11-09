@@ -17,7 +17,7 @@ def optics_bench(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     import dataclasses
 
     from ..calculations import calculate_for_camera, ground_distance_for_ppm
-    from ..optics_bench import evaluate_requirement
+    from ..optics_bench import day_reasons, evaluate_requirement
 
     cam = _camera_from(params.get("camera", {}))
     mode = params.get("mode", "min")
@@ -41,7 +41,8 @@ def optics_bench(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         "achieved_ppm": achieved, "required_ppm": req_ppm, "distance_m": req_dist,
         "atmospheric_limit_m": atm_limit if math.isfinite(atm_limit) else None,
         "reach_m": reach, "dori_reach_m": dori,
-        "pass": not reasons, "reasons": reasons, "camera": dataclasses.asdict(cam),
+        "pass": not reasons, "day_pass": not day_reasons(reasons), "reasons": reasons,
+        "ir_range_m": cam.ir_range_m, "camera": dataclasses.asdict(cam),
     }
 
 

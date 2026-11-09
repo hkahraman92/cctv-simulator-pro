@@ -24,13 +24,24 @@ TASKS = {
     "Algılama (Detection)": 25.0,
 }
 
+# Reasons that only hold after dark start with this. The bench answers day and
+# night at once; a camera that resolves the task in daylight but not under IR
+# must not read as a plain "fails" (27 px/m against 25 looked like a bug).
+NIGHT = "gece: "
+
+
+def day_reasons(reasons: List[str]) -> List[str]:
+    """The reasons that also fail in daylight."""
+    return [r for r in reasons if not r.startswith(NIGHT)]
+
 
 def evaluate_requirement(camera: CameraConfig, result: OpticResult, req_ppm: float, req_dist: float,
                          weather: str = "") -> Tuple[float, float, List[str]]:
     """(achieved px/m, atmospheric range limit, failure reasons) at ``req_dist``.
 
-    An empty reason list means the requirement is met. The atmospheric limit
-    is +inf in clear air (visibility >= 20 km).
+    An empty reason list means the requirement is met day and night; reasons
+    prefixed ``NIGHT`` fail only after dark (``day_reasons`` drops them). The
+    atmospheric limit is +inf in clear air (visibility >= 20 km).
     """
     achieved = ppm_at_distance(result, req_dist)
     vis_km = WEATHER_PRESETS.get(weather, 40.0)
@@ -49,7 +60,7 @@ def evaluate_requirement(camera: CameraConfig, result: OpticResult, req_ppm: flo
     if req_dist > result.max_geom_dist_m:
         reasons.append("geometrik limit ötesinde")
     if camera.ir_range_m > 0 and req_dist > camera.ir_range_m:
-        reasons.append("IR menzili dışında")
+        reasons.append(f"{NIGHT}IR menzili dışında (IR {camera.ir_range_m:.0f} m)")
     if camera.min_lux > 0.05 and (camera.ir_range_m <= 0 or req_dist > camera.ir_range_m):
-        reasons.append("düşük ışıkta yetersiz")
+        reasons.append(f"{NIGHT}düşük ışıkta yetersiz (en az {camera.min_lux:g} lux)")
     return achieved, atm_limit, reasons

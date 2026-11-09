@@ -42,8 +42,20 @@ def test_bench_names_why_it_fails():
     cam = dataclasses.asdict(CameraConfig(focal_min_mm=2.8, focal_max_mm=2.8, tilt_deg=30.0, ir_range_m=10))
     r = ok("optics.bench", camera=cam, req_ppm=250, distance_m=60)
     assert not r["pass"]
-    assert "piksel yoğunluğu yetersiz" in r["reasons"] and "IR menzili dışında" in r["reasons"]
+    assert "piksel yoğunluğu yetersiz" in r["reasons"] and "gece: IR menzili dışında (IR 10 m)" in r["reasons"]
+    assert not r["day_pass"]
     assert r["dori_reach_m"]["identify"] < r["dori_reach_m"]["detect"]
+
+
+def test_day_pass_when_only_the_night_fails():
+    """Resolves the task in daylight, target beyond the IR: day yes, night no."""
+    cam = dataclasses.asdict(CameraConfig(focal_min_mm=32.0, focal_max_mm=32.0, tilt_deg=1.0, pole_height_m=4.0,
+                                          ir_range_m=150))
+    r = ok("optics.bench", camera=cam, req_ppm=25, distance_m=400)
+    assert r["achieved_ppm"] >= 25
+    assert not r["pass"] and r["day_pass"]
+    assert r["reasons"] and all(x.startswith("gece: ") for x in r["reasons"])
+    assert r["ir_range_m"] == 150
 
 
 def test_project_overlap_matches_the_engine():

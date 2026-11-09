@@ -1051,7 +1051,10 @@ class _WorkbenchBody:
                 C_IDENT if achieved >= req_ppm else C_DETECT)
 
         task = self.sel_task.get().split(" (")[0]
-        if reasons:
+        from ..optics_bench import day_reasons
+        if reasons and not day_reasons(reasons):
+            self.card_verdict.update_values("GÜNDÜZ UYGUN · GECE DEĞİL", " · ".join(reasons), C_OBSERVE)
+        elif reasons:
             self.card_verdict.update_values("UYGUN DEĞİL", " · ".join(reasons), C_DETECT)
         else:
             self.card_verdict.update_values(

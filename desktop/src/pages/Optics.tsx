@@ -105,7 +105,8 @@ export default function Optics() {
             ))}
           </div>
         }>
-          {res.value ? <PlanView r={res.value.plan} requirement={{ distance_m: dist, pass: res.value.verdict.pass }} />
+          {res.value ? <PlanView r={res.value.plan} irRangeM={res.value.verdict.ir_range_m}
+              requirement={{ distance_m: dist, pass: res.value.verdict.pass, dayPass: res.value.verdict.day_pass }} />
             : <div className="flex h-[300px] items-center justify-center text-text-3">{res.error ?? "Hesaplanıyor…"}</div>}
         </Panel>
         <Panel title="Gereksinim">
@@ -120,12 +121,12 @@ export default function Optics() {
       <div className="flex w-[320px] shrink-0 flex-col gap-3">
         {v && (
           <>
-            <section className={`rounded-md p-3 ${v.pass ? "bg-ok-bg" : "bg-danger-bg"}`} aria-live="polite">
-              <div className={`flex items-center gap-2 text-[16px] font-bold ${v.pass ? "text-primary" : "text-danger"}`}>
-                {v.pass ? <CheckCircle2 size={20} /> : <XCircle size={20} />}{v.pass ? "UYGUN" : "UYGUN DEĞİL"}
+            <section className={`rounded-md p-3 ${v.pass ? "bg-ok-bg" : v.day_pass ? "bg-warn-bg" : "bg-danger-bg"}`} aria-live="polite">
+              <div className={`flex items-center gap-2 text-[16px] font-bold ${v.pass ? "text-primary" : v.day_pass ? "text-warn" : "text-danger"}`}>
+                {v.pass ? <CheckCircle2 size={20} /> : <XCircle size={20} />}{v.pass ? "UYGUN" : v.day_pass ? "GÜNDÜZ UYGUN · GECE DEĞİL" : "UYGUN DEĞİL"}
               </div>
               <div className="mt-1 text-[12px] text-text-2">{TASKS[task][0].split(" (")[0]} · {fmt(dist)} m · gereken {fmt(v.required_ppm, v.required_ppm % 1 ? 1 : 0)} px/m</div>
-              {!v.pass && <ul className="mt-2 list-disc pl-5 text-[12px] text-danger">{v.reasons.map((r) => <li key={r}>{r}</li>)}</ul>}
+              {!v.pass && <ul className={`mt-2 list-disc pl-5 text-[12px] ${v.day_pass ? "text-warn" : "text-danger"}`}>{v.reasons.map((r) => <li key={r}>{r}</li>)}</ul>}
             </section>
             <div className="grid grid-cols-2 gap-1.5">
               <Tile label="Elde edilen" value={fmt(v.achieved_ppm, 0)} unit="px/m" tone={v.achieved_ppm >= v.required_ppm ? "text-dori-identify" : "text-danger"} />
