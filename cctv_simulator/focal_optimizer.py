@@ -52,6 +52,8 @@ from .viewshed_3d import (
     ZONE_IDENT,
     ZONE_OBSERVE,
     ZONE_RECOG,
+    is_thermal_camera,
+    zone_ppm,
 )
 
 LEVELS = (ZONE_DETECT, ZONE_OBSERVE, ZONE_RECOG, ZONE_IDENT)
@@ -60,6 +62,16 @@ LEVEL_PPM = {ZONE_DETECT: PPM_DETECT, ZONE_OBSERVE: PPM_OBSERVE,
 LEVEL_NAME = {ZONE_DETECT: "Algılama", ZONE_OBSERVE: "Gözlem",
               ZONE_RECOG: "Tanıma", ZONE_IDENT: "Teşhis"}
 MAX_RANGE_CAP_M = 1500.0
+
+
+def level_ppm(camera: CameraConfig, level: int) -> float:
+    """px/m of ``level`` for THIS camera: EN 62676-4 for a visible camera,
+    Johnson for a thermal (the thresholds zone_codes classes its cells on).
+    LEVEL_PPM is the visible table; reach / tilt maths must use this instead,
+    or a thermal is aimed and capped where 25 px/m ends (~80 m) while its
+    detection zone runs past a kilometre. inf: the level does not exist for
+    the camera (thermal Identification)."""
+    return zone_ppm(level, is_thermal_camera(camera))
 
 
 def level_weights(objective: str, level: int) -> Dict[int, float]:
@@ -90,7 +102,7 @@ def auto_tilts(camera: CameraConfig, focal_mm: float, mast_m: float, level: int,
     (the perimeter planner's rule) and frame top just under the horizon
     (most reach). The layer evaluation picks the winner on real terrain."""
     optics = camera_optics(camera, focal_mm)
-    slant = optics.distance_for_ppm(LEVEL_PPM[level])
+    slant = optics.distance_for_ppm(level_ppm(camera, level))
     d = max(5.0, min(math.sqrt(max(slant * slant - mast_m * mast_m, 1.0)), max_range_m))
     half_v = optics.vfov_deg / 2.0
     top_on_d = -math.degrees(math.atan2(mast_m, d)) - half_v
@@ -153,7 +165,7 @@ def _mount_range(camera: CameraConfig, max_range_m: Optional[float]) -> float:
     if max_range_m:
         return float(min(max_range_m, MAX_RANGE_CAP_M))
     tele = camera_optics(camera, float(max(camera.focal_max_mm, camera.focal_min_mm)))
-    return float(min(tele.distance_for_ppm(PPM_DETECT), MAX_RANGE_CAP_M))
+    return float(min(tele.distance_for_ppm(level_ppm(camera, ZONE_DETECT)), MAX_RANGE_CAP_M))
 
 
 def sweep_focals(terrain: TerrainData, x_m: float, y_m: float, mast_m: float, camera: CameraConfig, *,
@@ -550,7 +562,7 @@ def band_area(terrain: TerrainData, plan, camera: CameraConfig, roi: Optional[np
 
     def full_reach(pl):
         f = pl.focal_mm_override or camera.focal_min_mm
-        slant = camera_optics(camera, f).distance_for_ppm(LEVEL_PPM[level])
+        slant = camera_optics(camera, f).distance_for_ppm(level_ppm(camera, level))
         return replace(pl, max_range_m=min(max(pl.max_range_m, slant), MAX_RANGE_CAP_M))
 
     placements = [full_reach(pl) for pl in plan_placements(plan, camera)]

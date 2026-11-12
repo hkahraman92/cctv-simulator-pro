@@ -48,7 +48,16 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from .calculations import camera_optics
-from .focal_optimizer import LEVEL_NAME, LEVEL_PPM, LEVELS, _cone, _crop, _mount_range, auto_tilts, focal_steps
+from .focal_optimizer import (
+    LEVEL_NAME,
+    LEVELS,
+    _cone,
+    _crop,
+    _mount_range,
+    auto_tilts,
+    focal_steps,
+    level_ppm,
+)
 from .models import CameraConfig
 from .mount_visibility import mount_visibility, view_layers
 from .perimeter_planner import PerimeterPlanResult, PlacedCamera, _bitrate_mbps
@@ -261,7 +270,10 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
         raise ValueError("Çizilen alan arazi ızgarasının hiçbir hücresini içermiyor."
                          if roi_mask is None else "Çizilen alanda hedef hücre (ör. sokak) yok.")
     cell_area = terrain.cell_size_m ** 2
-    ppm = LEVEL_PPM[level]
+    ppm = level_ppm(camera, level)
+    if not math.isfinite(ppm):
+        raise ValueError("Termal kamerada Teşhis (yüz) seviyesi yoktur; hedef olarak Johnson algılama, "
+                         "tanıma ya da teşhis seviyesini seçin.")
     tele = float(max(camera.focal_max_mm, camera.focal_min_mm))
     reach_tele = _ground_reach(camera, tele, ppm, mast_height_m)
     # open ground: half the tele reach; street poles: lamp-post density (buildings cut the sightlines)
@@ -499,7 +511,7 @@ def _with_ptz(plan: PerimeterPlanResult, ring, ptz: CameraConfig, every_n: int, 
     from dataclasses import replace
 
     from .perimeter_planner import _place_ptz_cameras
-    from .viewshed_3d import PPM_IDENT
+    from .viewshed_3d import identify_ppm
 
     hosts, seen = [], set()
     for c in plan.placed_cameras:
@@ -512,7 +524,7 @@ def _with_ptz(plan: PerimeterPlanResult, ring, ptz: CameraConfig, every_n: int, 
     cy = sum(p[1] for p in pts) / len(pts)
     centres = [math.degrees(math.atan2(cx - h.x_m, cy - h.y_m)) % 360.0 for h in hosts]
     ptz_cams = _place_ptz_cameras(list(ring), [(h, 0.0) for h in hosts], ptz, line_mode="area", is_closed_loop=True,
-                                  span_deg=span_deg, target_ppm=PPM_IDENT, visibility_km=visibility_km,
+                                  span_deg=span_deg, target_ppm=identify_ppm(ptz), visibility_km=visibility_km,
                                   weather=weather, centres=centres)
     mbps = plan.estimated_bandwidth_mbps + len(ptz_cams) * _bitrate_mbps(ptz)
     return replace(plan, ptz_cameras=ptz_cams, camera_count=len(plan.placed_cameras) + len(ptz_cams),

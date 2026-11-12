@@ -340,6 +340,7 @@ def view_focal_mm(camera: CameraConfig, lens_mode: str = "min",
 # image never resolves a face, so its cells are classed on Johnson thresholds
 # and never reach ZONE_IDENT. Codes keep their order: DETECT = Johnson
 # detection, OBSERVE = Johnson recognition, RECOG = Johnson identification.
+THERMAL_DETECT_PPM = 1.3        # Johnson: human detection
 THERMAL_RECOG_PPM = 6.67        # Johnson: human recognition (6 cycles)
 THERMAL_IDENT_PPM = 13.33       # Johnson: human identification (12 cycles)
 
@@ -347,6 +348,23 @@ THERMAL_IDENT_PPM = 13.33       # Johnson: human identification (12 cycles)
 def is_thermal_camera(camera: CameraConfig) -> bool:
     return ("LWIR" in camera.sensor_name.upper() or "MWIR" in camera.sensor_name.upper()
             or "TERMAL" in camera.model_name.upper())
+
+
+def zone_ppm(zone: int, thermal: bool = False) -> float:
+    """px/m a cell needs to be classed ``zone`` -- zone_codes' thresholds read
+    the other way. Thermal: Johnson; ZONE_IDENT is never reached (inf)."""
+    if thermal:
+        return {ZONE_DETECT: THERMAL_DETECT_PPM, ZONE_OBSERVE: THERMAL_RECOG_PPM,
+                ZONE_RECOG: THERMAL_IDENT_PPM}.get(zone, math.inf)
+    return {ZONE_DETECT: PPM_DETECT, ZONE_OBSERVE: PPM_OBSERVE, ZONE_RECOG: PPM_RECOG, ZONE_IDENT: PPM_IDENT}[zone]
+
+
+def identify_ppm(camera: CameraConfig) -> float:
+    """The camera's own identification level: EN 62676-4 Identification
+    (250 px/m) for a visible camera, Johnson identification (13.33) for a
+    thermal -- a thermal never resolves 250 px/m worth of face detail, so
+    judging it against the EN figure reports reachable ground as unreachable."""
+    return THERMAL_IDENT_PPM if is_thermal_camera(camera) else PPM_IDENT
 
 
 @dataclass(frozen=True)
@@ -369,7 +387,7 @@ def view_limits(camera: CameraConfig, focal_mm: float, max_range_m: float,
     # Floor PPM below which a cell is not worth showing. Non-thermal: the
     # EN 62676-4 Detection threshold (25 px/m) — the viewshed then covers exactly
     # the DORI-meaningful band (Detection and above), no arbitrary cut-off.
-    min_detect_ppm = 1.3 if is_thermal else PPM_DETECT
+    min_detect_ppm = THERMAL_DETECT_PPM if is_thermal else PPM_DETECT
     optical_limit_m = optics.distance_for_ppm(min_detect_ppm)
     # Fog / rain / haze cap the range where target contrast survives the path.
     atm_band = band_for_camera(camera.sensor_name, camera.model_name)

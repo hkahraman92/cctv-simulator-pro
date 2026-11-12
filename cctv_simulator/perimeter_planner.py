@@ -20,7 +20,7 @@ from . import atmosphere as _atm
 from .terrain_loader import TerrainData
 from .models import CameraConfig
 from .calculations import CameraOptics, camera_optics
-from .viewshed_3d import PPM_DETECT, PPM_IDENT, PPM_OBSERVE, PPM_RECOG, view_limits
+from .viewshed_3d import PPM_DETECT, PPM_IDENT, PPM_OBSERVE, PPM_RECOG, identify_ppm, view_limits
 
 
 @dataclass
@@ -213,7 +213,7 @@ def generate_perimeter_plan(terrain: TerrainData,
                             ptz_camera: Optional[CameraConfig] = None,
                             ptz_every_n: int = 0,
                             ptz_patrol_span_deg: float = 360.0,
-                            ptz_target_ppm: float = PPM_IDENT,
+                            ptz_target_ppm: Optional[float] = None,
                             spacing_m: Optional[float] = None,
                             back_to_back: bool = False) -> PerimeterPlanResult:
     """Places cameras along fence line ensuring continuous dead-zone overlapping coverage.
@@ -241,7 +241,8 @@ def generate_perimeter_plan(terrain: TerrainData,
     "facility", the pole heading for "border"/"highway" -- and spans
     ``ptz_patrol_span_deg`` (360 = continuous rotation). The PTZ row's
     ``effective_range_m`` is its slew-to-cue reach: the ground distance where
-    the longest focal still resolves ``ptz_target_ppm``.
+    the longest focal still resolves ``ptz_target_ppm`` (None = the PTZ's own
+    identification level: EN 250 px/m, Johnson 13.33 for a thermal).
 
     ``back_to_back`` (facility): every regular pole carries a second camera
     looking back along the fence -- each stretch is then watched from both
@@ -398,7 +399,8 @@ def generate_perimeter_plan(terrain: TerrainData,
         ptz_cams = _place_ptz_cameras(
             pts, regular_poles[::int(ptz_every_n)], ptz_camera,
             line_mode=line_mode, is_closed_loop=is_closed_loop,
-            span_deg=ptz_patrol_span_deg, target_ppm=ptz_target_ppm,
+            span_deg=ptz_patrol_span_deg,
+            target_ppm=identify_ppm(ptz_camera) if ptz_target_ppm is None else ptz_target_ppm,
             visibility_km=visibility_km, weather=weather)
 
     # Coverage / gap analysis along the fence line (with DEM line-of-sight).

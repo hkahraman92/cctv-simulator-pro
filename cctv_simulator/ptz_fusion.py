@@ -38,12 +38,12 @@ from .mount_visibility import mount_visibility
 from .ptz_tour import move_time_s
 from .terrain_loader import TerrainData
 from .viewshed_3d import (
-    PPM_IDENT,
     ZONE_DETECT,
     ZONE_IDENT,
     ZONE_OBSERVE,
     ZONE_RECOG,
     MultiViewshedResult,
+    identify_ppm,
 )
 
 LEVELS: Dict[str, int] = {"detect": ZONE_DETECT, "observe": ZONE_OBSERVE,
@@ -128,18 +128,23 @@ class CueResponse:
     mean_response_s: float
     p90_response_s: float
     worst_response_s: float
+    median_response_s: float = math.inf
 
 
 def cue_response(terrain: TerrainData, x_m: float, y_m: float, mast_height_m: float,
                  camera: CameraConfig, *, home_pan_deg: float, home_tilt_deg: float,
-                 home_focal_mm: Optional[float] = None, target_ppm: float = PPM_IDENT,
+                 home_focal_mm: Optional[float] = None, target_ppm: Optional[float] = None,
                  slew_speed_deg_s: float = 90.0, zoom_full_sweep_s: float = 3.0,
                  settle_s: float = 1.5, tilt_min_deg: float = -90.0, tilt_max_deg: float = 20.0,
                  max_range_m: float = 2000.0, visibility_km: float = 40.0, weather: str = "",
                  earth_curvature: bool = True,
                  slew_accel_deg_s2: Optional[float] = None) -> CueResponse:
     """Seconds for a PTZ parked at (home pan/tilt/focal) to aim at each cell
-    and hold it at ``target_ppm`` (see module docstring)."""
+    and hold it at ``target_ppm`` (see module docstring). ``None``: the
+    camera's own identification level -- EN 250 px/m, Johnson 13.33 for a
+    thermal (viewshed_3d.identify_ppm)."""
+    if target_ppm is None:
+        target_ppm = identify_ppm(camera)
     mv = mount_visibility(terrain, x_m, y_m, mast_height_m, max_range_m=max_range_m,
                           earth_curvature=earth_curvature)
     home_focal = camera.focal_min_mm if home_focal_mm is None else home_focal_mm
@@ -182,6 +187,7 @@ def cue_response(terrain: TerrainData, x_m: float, y_m: float, mast_height_m: fl
         mean_response_s=float(vals.mean()) if vals.size else math.inf,
         p90_response_s=float(np.percentile(vals, 90)) if vals.size else math.inf,
         worst_response_s=float(vals.max()) if vals.size else math.inf,
+        median_response_s=float(np.median(vals)) if vals.size else math.inf,
     )
 
 

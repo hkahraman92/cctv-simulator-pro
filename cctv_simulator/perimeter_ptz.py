@@ -35,11 +35,11 @@ from .ptz_fusion import (
 from .ptz_schedule import Rotation360, SectorPatrol, SweepResult, evaluate_sweep
 from .terrain_loader import TerrainData
 from .viewshed_3d import (
-    PPM_IDENT,
     ZONE_DETECT,
     CameraPlacement,
     MultiViewshedResult,
     calculate_multi_camera_viewshed,
+    identify_ppm,
     view_limits,
 )
 
@@ -119,13 +119,15 @@ class MixedPerimeterResult:
 def evaluate_mixed_perimeter(terrain: TerrainData, plan: PerimeterPlanResult,
                              fixed_camera: CameraConfig, ptz_camera: CameraConfig, *,
                              speed_deg_s: float = 20.0, end_dwell_s: float = 2.0,
-                             min_dwell_s: float = 0.5, cue_target_ppm: float = PPM_IDENT,
+                             min_dwell_s: float = 0.5, cue_target_ppm: Optional[float] = None,
                              slew_speed_deg_s: float = 90.0, zoom_full_sweep_s: float = 3.0,
                              settle_s: float = 1.5, max_range_cap_m: float = 3000.0,
                              visibility_km: float = 40.0, weather: str = "",
                              earth_curvature: bool = True) -> MixedPerimeterResult:
     if not plan.ptz_cameras:
         raise ValueError("Planda PTZ yok: 'her N direkte bir PTZ' seçip yeniden dizin.")
+    if cue_target_ppm is None:              # the PTZ's own identification level (thermal: Johnson)
+        cue_target_ppm = identify_ppm(ptz_camera)
     atm = dict(visibility_km=visibility_km, weather=weather)
     static = None
     if plan.placed_cameras:

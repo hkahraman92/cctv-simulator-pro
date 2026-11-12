@@ -145,4 +145,8 @@ def test_thermal_patrol_is_not_clipped_to_the_identification_reach():
     r = evaluate_mixed_perimeter(terr, m, FIXED, thermal)
     rows, cols = np.nonzero(r.sweeps[0].seen_mask)
     dist = np.hypot((cols + 0.5) * 5.0 - p.x_m, (rows + 0.5) * 5.0 - p.y_m)
-    assert dist.max() > 3.0 * p.effective_range_m
+    en_ident_m = camera_optics(thermal, thermal.focal_max_mm).distance_for_ppm(250.0)
+    assert dist.max() > 3.0 * en_ident_m          # ~75 m: the reach of a level a thermal never has
+    # ... and the PTZ's own identification reach is Johnson 13.33 px/m, not EN 250
+    assert p.effective_range_m > 10.0 * en_ident_m
+    assert r.cue_target_ppm == pytest.approx(13.33)
