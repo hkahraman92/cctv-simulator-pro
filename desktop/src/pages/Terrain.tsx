@@ -79,6 +79,7 @@ export default function Terrain() {
   const [isThermal, setIsThermal] = useState(false);
   const [patrol, setPatrol] = useState<Patrol>({ speed: 20, dwell: 2 });
   const [customTarget, setCustomTarget] = useState(false);
+  const [ptzReach, setPtzReach] = useState(false);     // coverage: also what a PTZ can be turned to on demand
   const [ptzLayer, setPtzLayer] = useState<Layer | null>(null);       // single tab: PTZ result replaces the fan
   const [mixedLayer, setMixedLayer] = useState<Layer | null>(null);   // perimeter tab: fixed + PTZ layers
   const [mixedPtz, setMixedPtz] = useState<{ camera: CameraConfig | null; everyN: number; span: number }>({ camera: null, everyN: 4, span: 360 });
@@ -224,7 +225,7 @@ export default function Terrain() {
     if (!info) return;
     setCovLayer(layer); setCovLevel(level);
     const r = await job.run("Birleşik görüş alanı", (o) => T.coverage({ terrain_id: info.terrain_id, use_obstacles: useObstacles, max_px: 1200,
-      layer, level, ptz_speed_deg_s: patrol.speed, ptz_end_dwell_s: patrol.dwell, ...bandArgs() }, o));
+      layer, level, ptz_speed_deg_s: patrol.speed, ptz_end_dwell_s: patrol.dwell, ptz_reach: ptzReach, ...bandArgs() }, o));
     if (r) setCoverage(r);
   };
   const runPoles = async () => {
@@ -708,6 +709,10 @@ export default function Terrain() {
                       {levelsFor(isThermal).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                     </select></label>
                 </div>
+                {planRes.ptz.length > 0 && (
+                  <label className="mt-2 flex items-center gap-2 text-[12px]" title="PTZ'nin herhangi bir yön / eğim / zoom ile çevrilebildiği yer; sürekli ya da devriye kapsaması değildir">
+                    <input type="checkbox" checked={ptzReach} onChange={(e) => setPtzReach(e.target.checked)} /> PTZ talep üzerine erişimini de hesapla</label>
+                )}
                 <Button className="mt-2 w-full" disabled={job.running} onClick={() => void runCoverage()}><Layers size={14} /> Birleşik Kapsamayı Hesapla</Button>
                 {coverage && <CoverageSummary c={coverage} thermal={isThermal} />}
               </Panel>
@@ -715,6 +720,7 @@ export default function Terrain() {
             {<MixedPanel T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} models={models}
               value={mixedPtz} onChange={setMixedPtz} hasPlanWithPtz={!!planRes?.ptz.length} onLayer={setMixedLayer} onPlay={startPlayback}
               resetKey={planVer} patrol={patrol} onPatrol={setPatrol}
+              levels={levelsFor(isThermal)} band={bandArgs()} onPlan={replacePlan}
               ptzModelFor={async (n) => (await api.cameraFor(n, undefined, true)).camera} />}
             {mixedLayer && <Button className="w-full" onClick={() => setMixedLayer(null)}>Birleşik kapsamaya dön</Button>}
             {planRes && (
@@ -828,8 +834,10 @@ function CoverageSummary({ c, thermal }: { c: CoverageResult; thermal: boolean }
       {c.ptz_count > 0 && row("yalnız PTZ (aralıklı)", pct(t.ptz_only), "text-secondary")}
       {row("görülüyor, hedef altı", pct(t.below), "text-warn")}
       {row("hiç görülmüyor", pct(t.unseen), "text-danger")}
-      <div className="mt-1 text-text-2">DORI · {c.ptz_count > 0 ? "sabit + yalnız PTZ" : "sabit kameralar"}</div>
-      {levelsFor(thermal).map(([k, l]) => row(l, c.ptz_count > 0 ? `${pct(c.band_share[k])} + ${pct(c.band_share_ptz[k])}` : pct(c.band_share[k])))}
+      <div className="mt-1 text-text-2">DORI · {c.ptz_count > 0 ? (c.band_share_reach ? "sürekli + devriye + talep üzerine" : "sürekli + devriye (yalnız PTZ)") : "sabit kameralar"}</div>
+      {levelsFor(thermal).map(([k, l]) => row(l, c.ptz_count > 0
+        ? `${pct(c.band_share[k])} + ${pct(c.band_share_ptz[k])}${c.band_share_reach ? ` + ${pct(c.band_share_reach[k])}` : ""}` : pct(c.band_share[k])))}
+      {c.band_share_reach && <div className="mt-1 text-text-3">◆ Talep üzerine: PTZ çevrilirse ulaşır; kendiliğinden izlenmez.</div>}
       {c.ptz_count > 0 && <div className="mt-1 text-text-3">◆ {c.ptz_count} PTZ devriyesi; en uzun izlenmeyen süre {fmt(c.ptz_worst_revisit_s, 0)} sn</div>}
       {!c.measured && <div className="mt-1 text-warn">▲ prosedürel arazi — ölçüm değil</div>}
     </div>

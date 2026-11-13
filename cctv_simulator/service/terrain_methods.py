@@ -634,6 +634,26 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     band_share_ptz = {name: (float(((ptz_zone >= z) & ~(mv.dori_grid >= z) & roi).sum() * cell) / roi_area
                              if roi_area else 0.0) for name, z in named}
 
+    # Opt-in third column: what a PTZ can be TURNED to (any pan / tilt / zoom) -- neither continuous
+    # nor patrolled, but reachable when an operator or an alarm asks for it.
+    band_share_reach = None
+    if n_ptz and params.get("ptz_reach"):
+        from ..focal_optimizer import envelope
+        from ..perimeter_ptz import _ptz_range, _sweep_reach
+        reach_zone = entry.results.get("ptz_reach")
+        if reach_zone is None:
+            reach_zone = np.zeros(mv.dori_grid.shape, np.int8)
+            far = _sweep_reach(ptz_cam, kw["visibility_km"], kw["weather"])
+            for i, p in enumerate(plan.ptz_cameras):
+                ctx.progress(1 + i, 1 + n_ptz, f"PTZ erişimi {i + 1}/{n_ptz}")
+                np.maximum(reach_zone, envelope(t, p.x_m, p.y_m, p.mast_height_m, ptz_cam, level=ZONE_RECOG,
+                                                n_focals=6, max_range_m=_ptz_range(p, far, 3000.0),
+                                                visibility_km=kw["visibility_km"], weather=kw["weather"]),
+                           out=reach_zone)
+            entry.results["ptz_reach"] = reach_zone
+        band_share_reach = {name: (float(((reach_zone >= z) & ~(mv.dori_grid >= z) & ~(ptz_zone >= z) & roi).sum()
+                                         * cell) / roi_area if roi_area else 0.0) for name, z in named}
+
     label, ppm, zone = _target_level(params, plan, kw, cam, ptz_cam)
     held = (mv.ppm_grid >= ppm - 1e-6) & mv.visibility_mask
     ptz_only = ~held & (ptz_zone >= zone)
@@ -684,7 +704,7 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         "overlap_area_m2": mv.overlap_area_m2, "single_cover_area_m2": mv.single_cover_area_m2,
         "zone_areas_m2": _zone_areas(mv.dori_grid, cell),
         "band_m": band, "band_in_m": inside, "band_area_m2": roi_area, "band_share": band_share,
-        "band_share_ptz": band_share_ptz, "ptz_count": n_ptz, "ptz_worst_revisit_s": worst_revisit,
+        "band_share_ptz": band_share_ptz, "band_share_reach": band_share_reach, "ptz_count": n_ptz, "ptz_worst_revisit_s": worst_revisit,
         "target": target, "fence_line": fence_line,
         "roi_kind": "area" if is_area else "side" if kw.get("line_mode") == "border" else "band",
         "watch_side": kw.get("watch_side"),
@@ -793,6 +813,54 @@ def perimeter_optimize(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
             "max_move_m": max((c.moved_m for c in moved), default=0.0), "notes": notes,
             "applied": applied, "reverted": reverted, "fence_line": fence_line,
             "plan": _plan_json(new_plan if better else plan)}
+
+
+def perimeter_ptz_patrol(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """Search each planned PTZ's patrol focal / tilt (instead of the planner's fixed wide end)
+    for the area the patrols add at ``level`` beyond what the fixed cameras hold; both sets
+    of patrols are scored by the sweep engine and the plan changes only if it gained."""
+    from ..focal_optimizer import band_area
+    from ..perimeter_ptz import optimize_patrols
+
+    entry, t = _terrain_of(params)
+    if "plan" not in entry.results:
+        raise RpcError(APP_ERROR, "Önce PTZ'li bir plan oluşturun.")
+    plan, cam, kw, fence = entry.results["plan"]
+    ptz_cam = kw.get("ptz_camera")
+    if ptz_cam is None or not plan.ptz_cameras:
+        raise RpcError(APP_ERROR, "Planda PTZ yok: PTZ modeli ve 'her N direkte bir' seçip planı yeniden kurun.")
+    level = _level_of(params, ptz_cam)
+    is_area = kw.get("line_mode") == "area"
+    band, inside = (0.0, None) if is_area else _band_params(params)
+    roi = _plan_roi(t, fence, kw, band, inside)
+    exclude = np.zeros(roi.shape, bool)
+    if plan.placed_cameras:
+        ctx.progress(0, len(plan.ptz_cameras) + 1, "Sabit kameraların tuttuğu alan")
+        mv, _ = band_area(t, plan, cam, roi, level, visibility_km=kw["visibility_km"], weather=kw["weather"])
+        if mv is not None:
+            exclude = mv.dori_grid >= level
+    n = len(plan.ptz_cameras)
+    res = optimize_patrols(t, plan, ptz_cam, roi=roi, exclude=exclude, level=level,
+                           speed_deg_s=_num(params, "speed_deg_s", 20.0, lo=0.5, hi=400),
+                           end_dwell_s=_num(params, "end_dwell_s", 2.0, lo=0, hi=600),
+                           n_focals=int(_num(params, "n_focals", 6, lo=2, hi=16)),
+                           visibility_km=kw["visibility_km"], weather=kw["weather"],
+                           progress=lambda d, total: ctx.progress(d, total + 1, f"PTZ {d}/{total}"))
+    applied = bool(params.get("apply", True)) and res.applied
+    if applied:
+        entry.set_plan((res.plan, cam, kw, fence))
+    notes = []
+    if not res.applied:
+        notes.append("Tarama motoru yeni devriyeleri daha iyi bulmadı; plan değiştirilmedi.")
+    elif res.worst_revisit_after_s > res.worst_revisit_before_s + 0.5:
+        notes.append(f"Dar kadraj daha seyrek geçer: en uzun izlenmeyen süre {res.worst_revisit_before_s:.0f} → "
+                     f"{res.worst_revisit_after_s:.0f} sn.")
+    return {"before_m2": res.before_m2, "after_m2": res.after_m2, "band_area_m2": res.roi_area_m2,
+            "worst_revisit_before_s": res.worst_revisit_before_s, "worst_revisit_after_s": res.worst_revisit_after_s,
+            "changed": sum(1 for c in res.choices if c.changed), "ptz_count": n, "applied": applied, "notes": notes,
+            "choices": [{"pole_id": c.pole_id, "focal_mm": c.focal_mm, "tilt_deg": c.tilt_deg, "hfov_deg": c.hfov_deg,
+                         "changed": c.changed} for c in res.choices],
+            "plan": _plan_json(res.plan if applied else plan)}
 
 
 def area_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
@@ -1028,4 +1096,5 @@ METHODS = {
     "city.osm": city_osm,
     "city.analyse": city_analyse,
     "focal.sweep": focal_sweep,
+    "perimeter.ptz_patrol": perimeter_ptz_patrol,
 }

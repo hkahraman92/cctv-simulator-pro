@@ -150,6 +150,8 @@ export interface CoverageResult {
   band_share: Shares;
   /** reached ONLY by a PTZ patrol (intermittent), on top of band_share */
   band_share_ptz: Shares;
+  /** reached by neither, but a PTZ can be turned to it (any pan / tilt / zoom); null unless ptz_reach was asked */
+  band_share_reach: Shares | null;
   ptz_count: number;
   ptz_worst_revisit_s: number;
   /** the protected area split by the target: held (fixed) / only a PTZ / seen below it / not seen */
@@ -310,6 +312,21 @@ export interface EngineView {
   area_m2: number;
   visible_area_m2: number;
   max_los_reach_m: number;
+}
+
+export interface PatrolResult {
+  /** PTZ-only area in the protected band at the level, sweep engine */
+  before_m2: number;
+  after_m2: number;
+  band_area_m2: number;
+  worst_revisit_before_s: number;
+  worst_revisit_after_s: number;
+  changed: number;
+  ptz_count: number;
+  applied: boolean;
+  notes: string[];
+  choices: { pole_id: number; focal_mm: number; tilt_deg: number; hfov_deg: number; changed: boolean }[];
+  plan: PlanResult;
 }
 
 export interface OptimizeResult {
@@ -494,7 +511,7 @@ export function terrainApi(rpc: RpcClient) {
     /** analysis settings kept with the terrain (target height: a person on each cell) */
     settings: (terrain_id: string, s: { target_height_m?: number }) =>
       rpc.call<{ target_height_m: number; changed: boolean }>("terrain.settings", { terrain_id, ...s }),
-    coverage: (p: T & { layer?: CoverageLayer; level?: "plan" | DoriLevel; band_m?: number; band_in_m?: number; max_px?: number; ptz_speed_deg_s?: number; ptz_end_dwell_s?: number }, opts?: CallOptions) =>
+    coverage: (p: T & { layer?: CoverageLayer; level?: "plan" | DoriLevel; band_m?: number; band_in_m?: number; max_px?: number; ptz_speed_deg_s?: number; ptz_end_dwell_s?: number; ptz_reach?: boolean }, opts?: CallOptions) =>
       rpc.call<CoverageResult>("perimeter.coverage", p, { timeoutMs: 0, ...opts }),
     approach: (p: T & { depth_m: number; response_s?: number; speeds?: Record<string, number>; max_px?: number }, opts?: CallOptions) =>
       rpc.call<ApproachResult>("approach.analyse", p, { timeoutMs: 0, ...opts }),
@@ -507,6 +524,8 @@ export function terrainApi(rpc: RpcClient) {
     optimize: (p: T & { level: string; position_steps: number; pan_search_deg?: number; n_focals?: number; band_m?: number; band_in_m?: number }, opts?: CallOptions) =>
       rpc.call<OptimizeResult>(
         "perimeter.optimize", p, { timeoutMs: 0, ...opts }),
+    ptzPatrol: (p: T & { level: string; speed_deg_s: number; end_dwell_s: number; band_m?: number; band_in_m?: number; n_focals?: number }, opts?: CallOptions) =>
+      rpc.call<PatrolResult>("perimeter.ptz_patrol", p, { timeoutMs: 0, ...opts }),
     minimizePoles: (p: T & PlanParams & { camera: CameraConfig; goal_frac: number; level: string; position_steps?: number; band_m?: number; band_in_m?: number }, opts?: CallOptions) =>
       rpc.call<PoleSearch>("perimeter.minimize_poles", p, { timeoutMs: 0, ...opts }),
     focalSweep: (

@@ -74,7 +74,7 @@ desktop/                             yeni arayüz: Tauri 2 (Rust) + React/TS/Tai
 
 **Yeni masaüstü kabuğu.** `desktop/` Python çekirdeği (`python -m
 cctv_simulator.service`, yayında `cctv-core.exe`) alt süreç olarak başlatır,
-satır başına bir JSON-RPC nesnesi taşır (API v1, 74 yöntem; liste ve
+satır başına bir JSON-RPC nesnesi taşır (API v1, 75 yöntem; liste ve
 sözleşme `docs/masaustu-mimari.md`). Ekran fizik türetmez; her sayı bir API
 yönteminden gelir. Yeni özellik için: önce `service/*_methods.py`'ye yöntem +
 `tests/test_service_*.py`'ye motorla birebir eşlik testi, sonra
@@ -1090,6 +1090,25 @@ Modu" satırı.
 - **Tek devriye ayarı**: masaüstünde PTZ devriye hızı / uç bekleme tek durumda
   (`Patrol`), kapsama, karma değerlendirme ve canlı tarama aynısını gönderir.
 - Testler: `tests/test_audit_fixes.py`.
+- **PTZ devriyesi aranır, üç sütun raporlanır**
+  (`perimeter_ptz.optimize_patrols`, `perimeter.ptz_patrol`). Planlayıcı her
+  PTZ'yi en geniş odakta, geniş uç tespit erişiminin %55'ine eğik devriye
+  ettirir; bu, odak ↔ kadraj genişliği ödünleşiminin tek noktasıdır. Arama PTZ
+  başına kendi direk raster'ında odak adımları × `auto_tilts` adaylarını tarama
+  motorunun yapı taşlarıyla (`view_layers` + `sweep_timing`, bakış ≥
+  `min_dwell_s`) puanlar: korunan alanda seviyeyi güvenilir gören, sabit
+  kameraların tutmadığı (`exclude`) ve önceki PTZ'nin almadığı hücreler.
+  Mevcut devriye aday 0'dır. Eski ve yeni devriyeler `evaluate_sweep`'ten
+  geçer; kazanç yoksa plan değişmez (`applied=False`). Yalnız devriye odağı /
+  eğimi / kör bölge değişir; direk, yay ve sabit kameralar aynı kalır.
+  Ölçüldü (2×2 km tepelik, 10 m, 36 PTZ 4,8–153 mm, ±100 m bant 99,6 ha,
+  sabitler hariç tutulmadan): Algılama 40,9 → 98,0 ha, Gözlem 4,5 → 61,5 ha,
+  Tanıma 0 → 14,3 ha; odak 4,8 → 9,6–19,2 mm, en uzun izlenmeyen 15 → 17 sn;
+  1,5 sn. `perimeter.coverage(ptz_reach=true)` üçüncü sütunu verir
+  (`band_share_reach`: ne sürekli ne devriye, ama PTZ çevrilirse ulaşır —
+  `focal_optimizer.envelope`, her yön; sonuç `entry.results["ptz_reach"]`'te,
+  `PLAN_DERIVED`). Rapor: sürekli · devriye · talep üzerine.
+  Testler: `tests/test_ptz_patrol.py`.
 
 ## Açık işler
 

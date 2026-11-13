@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Play, Plus, RotateCw, X } from "lucide-react";
 import type { CameraConfig, ModelSummary } from "../core/api";
-import type { CueResult, LegendRow, MixedResult, SweepResult, TerrainApi, TourResult } from "../core/terrainApi";
+import type { CueResult, LegendRow, MixedResult, PatrolResult, PlanResult, SweepResult, TerrainApi, TourResult } from "../core/terrainApi";
 import type { useJob } from "../core/useJob";
 import { Button, Panel, Slider, Tile, fmt } from "./ui";
 
@@ -151,7 +151,7 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, thermal, mou
 }
 
 /** Perimeter tab: co-mount a PTZ on every Nth pole and evaluate fixed + PTZ together. */
-export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onChange, hasPlanWithPtz, onLayer, ptzModelFor, onPlay, resetKey, patrol, onPatrol }: {
+export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onChange, hasPlanWithPtz, onLayer, ptzModelFor, onPlay, resetKey, patrol, onPatrol, levels, band, onPlan }: {
   T: TerrainApi;
   job: Job;
   terrainId: string;
@@ -169,9 +169,20 @@ export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onC
   /** one patrol speed / end dwell for coverage, the mixed evaluation and the live sweep */
   patrol: Patrol;
   onPatrol: (p: Patrol) => void;
+  /** patrol search: the PTZ's own level scale, the band the plan protects, and where the new plan goes */
+  levels: readonly (readonly [string, string])[];
+  band: Record<string, unknown>;
+  onPlan: (p: PlanResult) => void;
 }) {
   const [res, setRes] = useState<MixedResult | null>(null);
-  useEffect(() => { setRes(null); }, [resetKey, terrainId]);
+  const [search, setSearch] = useState<PatrolResult | null>(null);
+  const [searchLevel, setSearchLevel] = useState("detect");
+  const ownPlan = useRef(false);          // the next plan change is this panel's own search result
+  useEffect(() => { setRes(null); if (ownPlan.current) ownPlan.current = false; else setSearch(null); }, [resetKey, terrainId]);
+  const level = levels.some(([k]) => k === searchLevel) ? searchLevel : "detect";
+  const runSearch = () => void job.run("PTZ devriye araması", (o) => T.ptzPatrol({ terrain_id: terrainId, use_obstacles: useObstacles,
+    level, speed_deg_s: patrol.speed, end_dwell_s: patrol.dwell, ...band }, o))
+    .then((r) => { if (!r) return; if (r.applied) { ownPlan.current = true; onPlan(r.plan); } setSearch(r); });
   const [layer, setLayer] = useState<"fused" | "cue">("fused");
   const ptzModels = models.filter((m) => m.is_ptz);
   const run = (l: "fused" | "cue") => {
@@ -204,6 +215,24 @@ export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onC
             <Button className="flex-1" disabled={job.running || !hasPlanWithPtz} onClick={() => run("fused")}>Sabit + PTZ</Button>
             <Button className="flex-1" disabled={job.running || !hasPlanWithPtz} onClick={() => run("cue")}>Tespit→Teşhis</Button>
           </div>
+          <div className="mt-2 flex gap-1.5">
+            <select className="h-8 min-w-0 flex-1 rounded border border-line bg-bg-0 px-1 text-[12px]" aria-label="Devriye arama seviyesi"
+              value={level} onChange={(e) => setSearchLevel(e.target.value)}>
+              {levels.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+            <Button disabled={job.running || !hasPlanWithPtz} onClick={runSearch}>Devriye odak / eğim ara</Button>
+          </div>
+          {search && (
+            <div className="mt-1.5 text-[11px]">
+              <div className={search.applied ? "text-primary" : "text-text-2"}>
+                {search.applied ? "●" : "◆"} Yalnız PTZ'nin eklediği alan: {ha(search.before_m2)} → <b>{ha(search.after_m2)}</b> (tarama motoru)
+              </div>
+              {search.applied && (
+                <div className="mt-0.5 text-text-3">{search.changed}/{search.ptz_count} PTZ · odak {fmt(Math.min(...search.choices.map((c) => c.focal_mm)), 1)}–{fmt(Math.max(...search.choices.map((c) => c.focal_mm)), 1)} mm · en uzun izlenmeyen {fmt(search.worst_revisit_after_s, 0)} sn</div>
+              )}
+              {search.notes.map((n) => <div key={n} className="mt-0.5 text-text-3">◆ {n}</div>)}
+            </div>
+          )}
           {onPlay && (
             <Button primary className="mt-1.5 w-full" disabled={job.running || !hasPlanWithPtz} onClick={() => onPlay({ source: "plan", speed_deg_s: patrol.speed, end_dwell_s: patrol.dwell })}>
               <RotateCw size={14} /> Taramayı Başlat (tüm PTZ'ler)

@@ -23,7 +23,7 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
 - **API v1** (`cctv_simulator/service/__init__.py: API_VERSION`). Yöntem
   eklemek / isteğe bağlı alan eklemek küçük sürüm; yeniden adlandırma ya da
   silme büyük sürüm. `system.describe` güncel listeyi verir.
-- Yöntemler (74; modül başına):
+- Yöntemler (75; modül başına):
   - `methods.py`: `system.info|ping|describe`, `catalog.get`,
     `library.list|get|camera`, `optics.calculate`, `project.load|save`
   - `library_methods.py`: `library.fields|record|auth|save|delete|set_password`
@@ -31,9 +31,10 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
   - `terrain_methods.py`: `terrain.catalog|procedural|geotiff|download|image|settings`
     (settings: arazi oturumunda hedef boyu),
     `regions.list|open|save|delete`, `surface.osm|raster`, `viewshed.single`,
-    `perimeter.plan|coverage|minimize_poles|optimize` (bant: `band_m` dış,
+    `perimeter.plan|coverage|minimize_poles|optimize|ptz_patrol` (bant: `band_m` dış,
     `band_in_m` iç; kapsama `layer=target|dori|overlap`, `level=plan|…`, PTZ
-    aralıklı pay, çit çizgisi payı), `area.plan` (alan hedefi: poligonda en az
+    aralıklı pay, çit çizgisi payı, `ptz_reach` ile talep üzerine erişim; `ptz_patrol`: PTZ
+    başına devriye odak / eğim araması, tarama motoruyla doğrulanır), `area.plan` (alan hedefi: poligonda en az
     kamera, motorla doğrulanır; `streets_only`, `max_hole_m2`, PTZ), `city.osm|analyse`
     (sokak / konut / öncelikli yer; sokak kapsaması, yüz, KVKK), `focal.sweep`
   - `ptz_methods.py`: `ptz.sweep|cue|tour|playback` (canlı tarama: PTZ başına
