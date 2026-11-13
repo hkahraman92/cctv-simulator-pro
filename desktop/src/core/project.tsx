@@ -45,6 +45,7 @@ interface ProjectCtx {
   setPlan: (patch: Partial<PlanSettings>) => void;
   load: (sites: Site[], path: string, name: string, plan?: Partial<PlanSettings>, terrain?: TerrainBlock, levels?: PPMLevel[] | null) => void;
   markSaved: (path: string, name: string) => void;
+  rename: (name: string) => void;
   /** a blank project; resetNonce changes so pages holding their own state (terrain) start over */
   reset: () => void;
   resetNonce: number;
@@ -143,7 +144,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       touch((a) => [...a, newSite(n, last ? { x: last.pos_x_m + 5, y: last.pos_y_m } : undefined)]);
       setSelected(sites.length);
     },
-    remove: (i) => { touch((a) => (a.length > 1 ? a.filter((_, j) => j !== i) : a)); setSelected(0); },
+    remove: (i) => { touch((a) => (a.length > 1 ? a.filter((_, j) => j !== i) : a)); setSelected(Math.max(0, i - 1)); },
     update: (patch, focal) => touch((a) => a.map((s, i) => {
       if (i !== sel) return s;
       const camera = { ...s.camera, ...patch };
@@ -160,6 +161,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       if (terrain) setLoadedTerrain((t) => ({ block: terrain, nonce: (t?.nonce ?? 0) + 1 }));
     },
     markSaved: (p, n) => { setPath(p); setName(n); setDirty(false); },
+    rename: (n) => { if (n.trim() && n.trim() !== name) { setName(n.trim()); setDirty(true); } },
     reset: () => {
       clearHistory();
       setSites([newSite(1)]); setSelected(0); setPlanState(DEFAULT_PLAN); setLevelsState(null);

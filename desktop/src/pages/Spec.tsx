@@ -157,7 +157,7 @@ export default function Spec() {
               <option value="">{templates.length ? "Şablon seç…" : "Kayıtlı şablon yok"}</option>
               {templates.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
-            <Button disabled={!tplName || job.running} onClick={() => job.run("Şablon değerlendiriliyor", () => spec.runTemplate(tplName)).then((a) => adopt(a, ""))}><Play size={14} /></Button>
+            <Button disabled={!tplName || job.running} onClick={() => job.run("Şablon değerlendiriliyor", () => spec.runTemplate(tplName)).then((a) => adopt(a, ""))} title="Şablonu çalıştır" aria-label="Şablonu çalıştır"><Play size={14} /></Button>
             <Button disabled={!tplName} title="Şablonu sil" onClick={async () => { if (await confirmDialog(`"${tplName}" silinsin mi?`, { okLabel: "Sil", danger: true })) void spec.deleteTemplate(tplName).then(() => spec.templates()).then((t) => { setTemplates(t.templates); setTplName(""); }); }}><Trash2 size={14} /></Button>
           </div>
           <Button className="mt-2 w-full" disabled={!result?.requirements.length} onClick={async () => {

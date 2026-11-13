@@ -24,15 +24,22 @@ export default function Library() {
     api.library().then((r) => { setModels(r.models); setError(""); }).catch((e) => setError(String(e.message ?? e)));
   }, [api, state, rev]);
 
+  const [sort, setSort] = useState<{ col: number; dir: 1 | -1 }>({ col: 0, dir: 1 });
   const shown = useMemo(() => {
     const q = query.trim().toLocaleLowerCase("tr-TR");
+    const keyOf = (m: ModelSummary): string | number => [m.name, m.camera_type || "", m.sensor_name, m.resolution_name,
+      m.focal_max_mm ?? m.focal_min_mm ?? 0, m.ir_range_m ?? 0][sort.col];
+    const cmp = (a: ModelSummary, b: ModelSummary) => {
+      const x = keyOf(a), y = keyOf(b);
+      return sort.dir * (typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y), "tr-TR", { numeric: true }));
+    };
     return models.filter((m) => {
       if (filter === "ptz" && !m.is_ptz) return false;
       if (filter === "fixed" && (m.is_ptz || isThermal(m))) return false;
       if (filter === "thermal" && !isThermal(m)) return false;
       return !q || `${m.name} ${m.sensor_name} ${m.resolution_name}`.toLocaleLowerCase("tr-TR").includes(q);
-    });
-  }, [models, query, filter]);
+    }).sort(cmp);
+  }, [models, query, filter, sort]);
 
   useEffect(() => {
     if (!sel) return;
@@ -80,8 +87,13 @@ export default function Library() {
             <table className="w-full min-w-[720px] border-collapse [&_td:not(:first-child)]:whitespace-nowrap">
               <thead>
                 <tr>
-                  {["Model", "Tip", "Sensör", "Çözünürlük", "Odak", "IR"].map((h) => (
-                    <th key={h} className="label sticky top-0 bg-bg-5 px-2 py-2 text-left">{h}</th>
+                  {["Model", "Tip", "Sensör", "Çözünürlük", "Odak", "IR"].map((h, i) => (
+                    <th key={h} className="label sticky top-0 bg-bg-5 px-2 py-2 text-left" aria-sort={sort.col === i ? (sort.dir > 0 ? "ascending" : "descending") : "none"}>
+                      <button type="button" className="uppercase hover:text-text" title="Sırala"
+                        onClick={() => setSort((s) => (s.col === i ? { col: i, dir: s.dir > 0 ? -1 : 1 } : { col: i, dir: 1 }))}>
+                        {h}{sort.col === i ? (sort.dir > 0 ? " ▲" : " ▼") : ""}
+                      </button>
+                    </th>
                   ))}
                 </tr>
               </thead>

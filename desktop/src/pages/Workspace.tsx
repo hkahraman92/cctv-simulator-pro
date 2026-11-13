@@ -74,7 +74,7 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
     <div className="flex min-h-full flex-wrap content-start gap-3 p-3">
       <Panel title="Kameralar" icon={<Camera size={16} className="text-secondary" />} className="w-[220px] shrink-0"
         right={
-          <button type="button" aria-label="Kamera ekle" className="text-text-2 hover:text-primary"
+          <button type="button" aria-label="Kamera ekle" title="Kamera ekle" className="flex h-7 w-7 items-center justify-center rounded text-text-2 hover:bg-bg-5 hover:text-primary"
             onClick={add}>
             <Plus size={16} />
           </button>

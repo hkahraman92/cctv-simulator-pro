@@ -106,7 +106,7 @@ export default function View3D() {
             ))}
           </div>
           <div className="flex flex-col gap-3">
-            <Slider label="Mesafe" unit="m" value={p.dist} min={1} max={300} step={0.5} onChange={(v) => setP((s) => ({ ...s, dist: v }))} />
+            <Slider label="Mesafe" unit="m" value={p.dist} min={1} max={1500} step={0.5} onChange={(v) => setP((s) => ({ ...s, dist: v }))} />
             <Slider label="Yanal kayma" unit="m" value={p.lateral} min={-30} max={30} step={0.5} onChange={(v) => setP((s) => ({ ...s, lateral: v }))} />
           </div>
         </Panel>

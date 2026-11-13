@@ -25,6 +25,20 @@ export function ProfileChart({ profile }: { profile: SingleViewshed["profile"] }
       <polygon points={`${X(0)},${Hh - pad.b} ${ground} ${X(maxD)},${Hh - pad.b}`} fill="var(--color-bg-5)" />
       <polyline points={ground} fill="none" stroke="var(--color-text-3)" strokeWidth={1} />
       {visSegs.map((s, i) => <polyline key={i} points={s} fill="none" stroke="var(--color-dori-recognize)" strokeWidth={3} />)}
+      {/* the optical axis from the lens, and the lens itself on its mast */}
+      <polyline points={profile.dist_m.map((d, i) => [d, profile.ray_m[i]] as const).filter(([, z]) => Number.isFinite(z) && z >= zMin && z <= zMax).map(([d, z]) => `${X(d)},${Y(z)}`).join(" ")}
+        fill="none" stroke="var(--color-primary)" strokeWidth={1} strokeDasharray="5 4" />
+      {Number.isFinite(profile.ray_m[0]) && (
+        <>
+          <line x1={X(0)} y1={Y(profile.terrain_m[0])} x2={X(0)} y2={Y(profile.ray_m[0])} stroke="var(--color-text-2)" strokeWidth={1.5} />
+          <circle cx={X(0)} cy={Y(profile.ray_m[0])} r={3.5} fill="var(--color-primary)" />
+        </>
+      )}
+      <g fontSize="10" fontFamily="var(--font-mono)" fill="var(--color-text-3)">
+        <line x1={W - 250} y1={12} x2={W - 232} y2={12} stroke="var(--color-dori-recognize)" strokeWidth={3} /><text x={W - 228} y={15}>görülen zemin</text>
+        <line x1={W - 140} y1={12} x2={W - 122} y2={12} stroke="var(--color-primary)" strokeDasharray="5 4" /><text x={W - 118} y={15}>optik eksen</text>
+        <text x={W - 44} y={15}>kot: m</text>
+      </g>
       <text x={pad.l - 4} y={Y(zMax) + 4} textAnchor="end" fontSize="10" fill="var(--color-text-3)" fontFamily="var(--font-mono)">{fmt(zMax, 0)}</text>
       <text x={pad.l - 4} y={Y(zMin)} textAnchor="end" fontSize="10" fill="var(--color-text-3)" fontFamily="var(--font-mono)">{fmt(zMin, 0)}</text>
       <text x={W - pad.r} y={Hh - 5} textAnchor="end" fontSize="10" fill="var(--color-text-3)" fontFamily="var(--font-mono)">{fmt(maxD, 0)} m</text>

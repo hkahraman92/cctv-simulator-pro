@@ -71,6 +71,8 @@ export default function Reports() {
           })).then((r) => done(r))}>
           <FileText size={14} /> Optik Raporu Yaz
         </Button>
+        {!dir && <p className="mt-1 text-[11px] text-warn">▲ Önce yukarıdan hedef klasörü seçin.</p>}
+        {dupNames && <p className="mt-1 text-[11px] text-warn">▲ Aynı adı taşıyan kameralar var; rapor adlara göre yazılır.</p>}
       </Panel>
 
       <Panel title="Arazi mühendislik raporu" icon={<Mountain size={16} className="text-primary" />} className="min-w-[340px] flex-1">

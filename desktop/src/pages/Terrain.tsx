@@ -154,7 +154,6 @@ export default function Terrain() {
     setFence([]); setPlanRes(null); setCoverage(null); setNetwork(null); setNight(null); setPoleRes(null); setSweep(null); setAreaRes(null);
     setCity(null);
     const notes: string[] = [];
-    if (!t.is_measured) notes.push("Bu arazi ölçüm değil (prosedürel). Görüş alanı sonuçları bağlayıcı değildir.");
     if (t.save_error) notes.push(`Bölge kaydedilemedi: ${t.save_error}`);
     setNotice(notes.join(" "));
   }, []);
@@ -432,6 +431,11 @@ export default function Terrain() {
           <div className="flex-1" />
           {info && <span className="font-mono text-[10px] text-text-3">{info.label} · {fmt(info.cell_size_m)} m hücre · {info.is_measured ? "● ölçülmüş DEM" : "▲ prosedürel"}</span>}
         </div>
+        {info && !info.is_measured && (
+          <div className="flex items-start gap-2 rounded bg-warn-bg px-3 py-1.5 text-[12px] text-warn">
+            <AlertTriangle size={14} className="mt-0.5 shrink-0" /><span className="flex-1">Bu arazi ölçüm değil (prosedürel). Görüş alanı sonuçları bağlayıcı değildir.</span>
+          </div>
+        )}
         {notice && (
           <div className="flex items-start gap-2 rounded bg-warn-bg px-3 py-2 text-[12px] text-warn">
             <AlertTriangle size={14} className="mt-0.5 shrink-0" /><span className="flex-1">{notice}</span>

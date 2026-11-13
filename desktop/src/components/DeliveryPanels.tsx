@@ -133,7 +133,10 @@ export function ScenarioPanel({ T, terrainId, scenarios, onChange, canSnapshot }
     return () => { live = false; };
   }, [T, scenarios]);
   const add = () => T.snapshot({ terrain_id: terrainId, label: label.trim() || `Senaryo ${scenarios.length + 1}` })
-    .then((r) => { onChange([...scenarios, r.scenario].slice(-12)); setLabel(""); setErr(""); })
+    .then((r) => {
+      onChange([...scenarios, r.scenario].slice(-12)); setLabel("");
+      setErr(scenarios.length >= 12 ? `12 senaryo sınırı: en eski senaryo ("${scenarios[0].label}") listeden çıkarıldı.` : "");
+    })
     .catch((e) => setErr(String(e.message ?? e)));
   // best column per row, by the metric the core marked (first row = header)
   const bestCol: Record<string, number | null> = cmp ? {

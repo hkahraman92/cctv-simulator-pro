@@ -127,7 +127,7 @@ function Shell() {
       <DialogHost />
       <footer className="flex h-[26px] shrink-0 items-center gap-4 border-t border-bg-5 bg-bg-0 px-3 font-mono text-[11px]">
         <CoreBadge />
-        <span className="text-text-3">{status}</span>
+        {page === "workspace" && <span className="text-text-3">{status}</span>}
         <div className="flex-1" />
         <span className="text-text-3">API v1</span>
       </footer>

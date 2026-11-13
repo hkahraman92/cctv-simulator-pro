@@ -4,7 +4,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { FilePlus2, FolderOpen, Redo2, Save, SaveAll, Undo2 } from "lucide-react";
 import { useCore } from "../core/CoreProvider";
 import { undoScope, useProject } from "../core/project";
-import { confirmDialog } from "./dialogs";
+import { confirmDialog, promptDialog } from "./dialogs";
 import type { PPMLevel } from "../core/api";
 
 const FILTERS = [{ name: "CCTV projesi", extensions: ["json"] }];
@@ -97,7 +97,8 @@ export default function ProjectBar() {
   const can = state === "ready" && isTauri();
   return (
     <div className="flex items-center gap-2">
-      <span className="font-mono text-[11px] text-secondary">{proj.name}</span>
+      <button type="button" title="Proje adını değiştir" className="rounded px-1 font-mono text-[11px] text-secondary hover:bg-bg-5"
+        onClick={async () => { const n = await promptDialog("Proje adı:", { initial: proj.name }); if (n) proj.rename(n); }}>{proj.name}</button>
       <span className={`font-mono text-[10px] ${proj.dirty ? "text-warn" : "text-text-3"}`}>
         {proj.dirty ? "▲ Kaydedilmedi" : proj.path ? "● Kaydedildi" : ""}
       </span>
