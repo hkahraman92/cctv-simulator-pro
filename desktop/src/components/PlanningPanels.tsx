@@ -135,7 +135,7 @@ export function ComparePanel({ T, job, terrainId, useObstacles, models, camera, 
 
   return (
     <Panel title="Model karşılaştır" icon={<Scale size={16} className="text-secondary" />}>
-      <p className="text-[11px] text-text-3">Her model için aynı en az direk araması (direk başına odak/eğim), ağ planı ve maliyet. En çok 6 model. İster: bandın %{goal}'inde {levelLabel}.</p>
+      <p className="text-[11px] text-text-3">Her model için aynı en az direk araması (direk başına odak/eğim), ağ planı ve maliyet. En çok 6 model. İster: bandın %{fmt(goal, goal % 1 ? 1 : 0)}'inde {levelLabel}.</p>
       <div className="mt-2 max-h-[160px] overflow-auto rounded bg-bg-1 p-1 text-[11px]">
         {fixed.map((m) => (
           <label key={m.name} className="flex items-center gap-1.5 px-1 py-0.5">

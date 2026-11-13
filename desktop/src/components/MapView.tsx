@@ -31,6 +31,8 @@ interface Props {
   /** what a plain click does */
   tool: "camera" | "fence" | "none";
   onPick?: (x: number, y: number) => void;
+  /** given: the fence is editable on the map -- drag a corner, double-click to remove it, click a mid-edge box to add one */
+  onFenceChange?: (fence: [number, number][]) => void;
   children?: ReactNode; // glass overlays (legend …)
   /** drawn inside the map's SVG, in map user space (x, H - y), above the overlay (live PTZ sweep) */
   inMap?: ReactNode;
@@ -45,7 +47,7 @@ export default function MapView(p: Props) {
   const W = p.widthM, H = p.heightM;
   const [vb, setVb] = useState({ x: 0, y: 0, w: W, h: H });
   const svg = useRef<SVGSVGElement>(null);
-  const drag = useRef<{ sx: number; sy: number; vb: typeof vb; moved: boolean } | null>(null);
+  const drag = useRef<{ sx: number; sy: number; vb: typeof vb; moved: boolean; vertex?: number; mid?: number } | null>(null);
   const [cursor, setCursor] = useState<[number, number] | null>(null);
 
   const fit = useCallback(() => setVb({ x: 0, y: 0, w: W, h: H }), [W, H]);
@@ -73,7 +75,10 @@ export default function MapView(p: Props) {
   const onWheel = (e: React.WheelEvent) => zoom(e.deltaY > 0 ? 1.2 : 1 / 1.2, e.clientX, e.clientY);
   const onDown = (e: React.PointerEvent) => {
     (e.target as Element).setPointerCapture?.(e.pointerId);
-    drag.current = { sx: e.clientX, sy: e.clientY, vb, moved: false };
+    // a corner or a mid-edge box of an editable fence: this press edits the fence, it does not pan or pick
+    const t = e.target as Element;
+    const num = (k: string) => (p.onFenceChange && t.hasAttribute?.(k) ? Number(t.getAttribute(k)) : undefined);
+    drag.current = { sx: e.clientX, sy: e.clientY, vb, moved: false, vertex: num("data-v"), mid: num("data-m") };
   };
   const onMove = (e: React.PointerEvent) => {
     const { u, v } = toUser(e.clientX, e.clientY);
@@ -82,12 +87,27 @@ export default function MapView(p: Props) {
     if (!d) return;
     if (Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 3) d.moved = true;
     if (!d.moved) return;
+    if (d.vertex !== undefined && p.fence && p.onFenceChange) {
+      const x = Math.min(W, Math.max(0, u)), y = Math.min(H, Math.max(0, H - v));
+      p.onFenceChange(p.fence.map((q, i) => (i === d.vertex ? [x, y] : q)));
+      return;
+    }
+    if (d.mid !== undefined) return;
     const k = toUser(0, 0).k;
     setVb({ ...d.vb, x: d.vb.x - (e.clientX - d.sx) / k, y: d.vb.y - (e.clientY - d.sy) / k });
   };
   const onUp = (e: React.PointerEvent) => {
     const d = drag.current;
     drag.current = null;
+    if (d && (d.vertex !== undefined || d.mid !== undefined)) {
+      if (d.mid !== undefined && !d.moved && p.fence && p.onFenceChange) {
+        const a = p.fence[d.mid], b = p.fence[(d.mid + 1) % p.fence.length];
+        const f = p.fence.slice();
+        f.splice(d.mid + 1, 0, [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
+        p.onFenceChange(f);
+      }
+      return;
+    }
     if (d && !d.moved && p.tool !== "none" && e.button === 0) {
       const { u, v } = toUser(e.clientX, e.clientY);
       if (u >= 0 && u <= W && v >= 0 && v <= H) p.onPick?.(u, H - v);
@@ -136,9 +156,29 @@ export default function MapView(p: Props) {
             ? <polygon points={fencePts} fill="none" stroke="var(--color-warn)" strokeWidth={2 * px} strokeDasharray={`${8 * px} ${5 * px}`} />
             : <polyline points={fencePts} fill="none" stroke="var(--color-warn)" strokeWidth={2 * px} strokeDasharray={`${8 * px} ${5 * px}`} />
         )}
-        {(p.fence ?? []).map(([x, y], i) => (
+        {/* mid-edge boxes: a click adds a corner there */}
+        {p.onFenceChange && (p.fence ?? []).map(([x, y], i, f) => {
+          const last = i === f.length - 1;
+          if (f.length < 2 || (last && !(p.fenceClosed && f.length > 2))) return null;
+          const [nx, ny] = f[(i + 1) % f.length];
+          if (Math.hypot(nx - x, ny - y) < 40 * px) return null;       // too short on screen to hit
+          return (
+            <rect key={`m${i}`} data-m={i} x={(x + nx) / 2 - 5 * px} y={H - (y + ny) / 2 - 5 * px} width={10 * px} height={10 * px}
+              fill="var(--color-bg-0)" stroke="var(--color-warn)" strokeWidth={1.2 * px} className="cursor-copy"><title>Köşe ekle</title></rect>
+          );
+        })}
+        {(p.fence ?? []).map(([x, y], i) => (p.onFenceChange ? (
+          <g key={i}>
+            <rect x={x - 5.5 * px} y={H - y - 5.5 * px} width={11 * px} height={11 * px} fill="var(--color-warn)" stroke="var(--color-bg-0)" strokeWidth={1 * px} pointerEvents="none" />
+            {/* the hit area is larger than the mark */}
+            <rect data-v={i} x={x - 11 * px} y={H - y - 11 * px} width={22 * px} height={22 * px} fill="transparent" className="cursor-move"
+              onDoubleClick={() => p.onFenceChange?.((p.fence ?? []).filter((_, j) => j !== i))}>
+              <title>{`Köşe ${i + 1}: sürükle = taşı · çift tık = sil`}</title>
+            </rect>
+          </g>
+        ) : (
           <rect key={i} x={x - 3 * px} y={H - y - 3 * px} width={6 * px} height={6 * px} fill="var(--color-warn)" />
-        ))}
+        )))}
         {(p.approach?.sectors ?? []).map((s, i) => (
           <line key={`sec${i}`} x1={s.x0} y1={H - s.y0} x2={s.x1} y2={H - s.y1}
             stroke={s.tone === "danger" ? "var(--color-danger)" : s.tone === "warn" ? "var(--color-warn)" : "var(--color-primary)"}

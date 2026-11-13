@@ -426,6 +426,8 @@ export default function Terrain() {
                 // the wedge ends where the frame does: a steep tilt holds only the mast's foot
                 range: Math.max(Math.min(mount.range, single.framed_reach_m > 0 ? single.framed_reach_m : mount.range), 15) } : null}
               fence={tab === "perimeter" ? fence : []} fenceClosed={plan.closed || isArea}
+              // an edited fence no longer has the plan that was built on the old one
+              onFenceChange={tab === "perimeter" ? (f) => { setFence(f); if (planRes) replacePlan(null); } : undefined}
               poles={tab === "perimeter" ? planRes?.poles : []} ptz={tab === "perimeter" ? planRes?.ptz : []}
               gaps={tab === "perimeter" && planRes?.line_mode !== "border" ? planRes?.gaps : []} showFov={showFov}
               inMap={play && play.tab === tab ? <PtzSweep ptz={play.ptz} heightM={info.height_m} playing={playing} rate={rate} onTime={setPlayT} /> : null}
@@ -567,7 +569,7 @@ export default function Terrain() {
             </div>
             <div className="rounded bg-bg-2 px-3 py-1.5 font-mono text-[11px] text-text-2">
               İster: <span className="text-text">{levelName(reqLevel, isThermal)}</span> · ≥ {fmt(reqPpm, reqPpm % 1 ? 2 : 0)} px/m ·{" "}
-              {isArea ? "alanın" : plan.line_mode === "border" ? "izlenen şeridin" : "bandın"} %{goal}'i
+              {isArea ? "alanın" : plan.line_mode === "border" ? "izlenen şeridin" : "bandın"} %{fmt(goal, goal % 1 ? 1 : 0)}'i
             </div>
             {mixedLayer && <Button className="w-full" onClick={() => setMixedLayer(null)}>Birleşik kapsamaya dön</Button>}
 
@@ -598,6 +600,7 @@ export default function Terrain() {
                     <option value="left">Sol</option><option value="right">Sağ</option>
                   </select></label>}
               </div>
+                {fence.length > 0 && <p className="mt-2 text-[11px] text-text-3">◆ Haritada köşeyi sürükle: taşı · çift tık: sil · kenar ortasındaki kutu: köşe ekle.</p>}
                 {isArea && <p className="mt-2 text-[11px] text-text-3">Alanın köşelerini haritaya tıklayarak çizin. Hedef, alanın kendisidir (otopark, avlu, meydan); kameralar alanın kenarına ve içine dizilir.</p>}
               </Panel>
               <Panel title="İster" right={<span className="font-mono text-[10px] text-text-3">her adım bunu okur</span>}>
@@ -843,7 +846,7 @@ export default function Terrain() {
               ) : <Panel title="Dizilimi optimize et"><p className="text-[12px] text-text-3">Önce 2. adımda planı oluşturun.</p></Panel>}
               {!isArea && (
                 <Panel title="En az direk">
-                  <p className="text-[11px] text-text-3">Bandın %{goal}'inde {levelName(reqLevel, isThermal)} tutan en az direk (ister).</p>
+                  <p className="text-[11px] text-text-3">Bandın %{fmt(goal, goal % 1 ? 1 : 0)}'inde {levelName(reqLevel, isThermal)} tutan en az direk (ister).</p>
                   <Button className="mt-2 w-full" disabled={job.running || fence.length < 2} onClick={runPoles}><Play size={14} /> Aramayı Başlat</Button>
               {poleRes && (
                 <div className="mt-2 text-[12px]">
@@ -874,7 +877,7 @@ export default function Terrain() {
               {(planRes || scenarios.length > 0) && (
                 <ScenarioPanel T={T} terrainId={info.terrain_id} scenarios={scenarios} onChange={setScenarios} canSnapshot={!!planRes} />
               )}
-              {planRes && <p className="text-[11px] text-text-3">◆ KML / DXF, plan uygunluk beyanı ve teklif paketi "Raporlar" sayfasında; beyan bu isterin %{goal} hedefine göre yazılır.</p>}
+              {planRes && <p className="text-[11px] text-text-3">◆ KML / DXF, plan uygunluk beyanı ve teklif paketi "Raporlar" sayfasında; beyan bu isterin %{fmt(goal, goal % 1 ? 1 : 0)} hedefine göre yazılır.</p>}
             </div>
           </>
         )}
