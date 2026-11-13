@@ -343,6 +343,8 @@ export interface PlanStatement {
   declared_ppm: number;
   clause: string;
   has_patrol: boolean;
+  /** fixed cameras detect + a PTZ identifies within max_s (only when the mixed evaluation ran) */
+  assist: { max_s: number; target_ppm: number; verdict: string; zones: { name: string; detect: number; assisted: number; verdict: string }[] } | null;
   measured: boolean;
   markdown: string;
   path: string | null;
@@ -586,7 +588,7 @@ export function terrainApi(rpc: RpcClient) {
       rpc.call<{ path: string; exact_georef: boolean; has_latlon: boolean; with_network: boolean; with_coverage: boolean; privacy_masks: number }>("export.site", p, { timeoutMs: 0 }),
     exportShare: (p: T & { path: string; title: string; scenarios?: Scenario[] }) =>
       rpc.call<{ path: string; bytes: number }>("export.share_html", p, { timeoutMs: 0 }),
-    planStatement: (p: T & { path?: string; project_name?: string; bidder?: string; goal_frac?: number }) =>
+    planStatement: (p: T & { path?: string; project_name?: string; bidder?: string; goal_frac?: number; assist_max_s?: number }) =>
       rpc.call<PlanStatement>("export.plan_statement", p, { timeoutMs: 0 }),
     exportPackage: (p: T & { path: string; project_name: string; goal_frac?: number; bidder?: string; spec_result?: object; scenarios?: Scenario[] }, opts?: CallOptions) =>
       rpc.call<{ path: string; files: string[]; skipped: string[] }>("export.package", p, { timeoutMs: 0, ...opts }),

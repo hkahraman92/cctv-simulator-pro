@@ -149,7 +149,7 @@ function Deliverables({ run, status, job, base, dir, onFile, realWorld, onRealWo
   run: {
     site: (path: string) => Promise<{ path: string; exact_georef: boolean; has_latlon: boolean; privacy_masks: number }>;
     share: (path: string) => Promise<{ path: string }>;
-    statement: (path: string) => Promise<{ path: string | null; verdict: string; declared_label: string; measured: boolean }>;
+    statement: (path: string) => Promise<{ path: string | null; verdict: string; declared_label: string; measured: boolean; assist: { verdict: string; max_s: number } | null }>;
     pkg: (path: string, o?: { signal: AbortSignal; onProgress: (p: { done: number; total: number; message: string }) => void }) => Promise<{ path: string; files: string[]; skipped: string[] }>;
   };
   status: [string, boolean][]; job: Job; base: string; dir: string; onFile: (f: string, note?: string) => void;
@@ -187,7 +187,7 @@ function Deliverables({ run, status, job, base, dir, onFile, realWorld, onRealWo
           <Button disabled={job.running || !coverageRan} title={coverageRan ? "" : "Önce Birleşik Kapsamayı hesaplayın"} onClick={async () => {
             const p = await ask("Plan uygunluk beyanı (EN 62676-4)", "pdf", "PDF");
             if (p) void job.run("Plan uygunluk beyanı", () => run.statement(p)).then((r) => r && r.path && onFile(r.path,
-              `Plan uygunluk beyanı: ${r.declared_label} — ${r.verdict}${r.measured ? "" : " (arazi ölçüm değil: bağlayıcı değil)"}`));
+              `Plan uygunluk beyanı: ${r.declared_label} — ${r.verdict}${r.assist ? ` · PTZ destekli hedef (≤ ${r.assist.max_s} sn) — ${r.assist.verdict}` : ""}${r.measured ? "" : " (arazi ölçüm değil: bağlayıcı değil)"}`));
           }}><FileCheck2 size={14} /> Plan Uygunluk Beyanı (PDF)</Button>
           <Button primary disabled={job.running} onClick={async () => {
             const p = await ask("Teklif paketi (ZIP)", "zip", "ZIP");

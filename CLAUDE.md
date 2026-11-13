@@ -1124,7 +1124,12 @@ Modu" satırı.
   ulaştığı en yüksek seviye — 40 px/m → Algılama). Termalde Johnson, üç
   seviye. Ölçülmemiş arazide belge "BAĞLAYICI DEĞİL" diye açılır; geçerlilik
   koşulları (arazi kaynağı, yüzey modeli, hava, hedef boyu, ızgara) yazılır.
-  Sınır modunda çit çizgisi bölgesi yoktur. Teklif paketine
+  Sınır modunda çit çizgisi bölgesi yoktur. **PTZ destekli hedef**: karma
+  sabit + PTZ değerlendirmesi koştuysa (`entry.results["mixed"]`) beyana ayrı
+  bir bölüm girer — sabit kameralar sürekli algılar VE bir PTZ `assist_max_s`
+  (vars. 10 sn) içinde teşhis hedefini tutar (`detect_to_identify_s` ızgarası);
+  devriye kapsamasından ayrı bir isterdir. Planlayıcı seçeneği değil,
+  değerlendirmedir: plan PTZ'yi sayarak kurulmaz. Teklif paketine
   `05-plan-uygunluk-beyani.md/.pdf` olarak girer; Raporlar sayfasında düğme.
   Testler: `tests/test_plan_statement.py`.
 - **Kamera çizelgesi** (`offer.pole_rows(plan, terrain=, camera=, ptz_camera=,

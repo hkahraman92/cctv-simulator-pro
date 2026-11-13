@@ -297,9 +297,14 @@ def _plan_statement(entry, t, params: Dict[str, Any]):
     if masks["line"] is not None and mode != "border":      # a border pole looks across the line by design
         zones.append({"name": "Çit çizgisi", "mask": masks["line"], "kind": "line",
                       "size": float(plan.total_fence_length_m)})
+    mixed = entry.results.get("mixed")          # the fixed + PTZ evaluation ran: add the PTZ-assisted requirement
+    assist = None
+    if mixed is not None:
+        assist = {"d2i_s": mixed.detect_to_identify_s, "target_ppm": mixed.cue_target_ppm,
+                  "max_s": _num(params, "assist_max_s", 10.0, lo=1, hi=600)}
     conf = plan_conformity(plan, cam, mv, zones, cell_size_m=t.cell_size_m, ptz_zone=masks["ptz_zone"],
                            goal_frac=_num(params, "goal_frac", 0.95, lo=0.3, hi=1.0),
-                           area_level=kw.get("level") if mode == "area" else None)
+                           area_level=kw.get("level") if mode == "area" else None, assist=assist)
     weather = kw.get("weather") or "Berrak hava"
     conditions = [
         ("Arazi: ölçülmüş yükseklik modeli" if t.is_measured else "Arazi: TEMSİLİ (ölçüm değil)")

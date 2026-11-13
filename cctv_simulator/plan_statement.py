@@ -54,12 +54,19 @@ def _verdict(continuous: float, patrol: float, goal: float) -> str:
 
 def plan_conformity(plan, camera, mv, zones: List[Dict[str, Any]], *, cell_size_m: float,
                     ptz_zone: Optional[np.ndarray] = None, goal_frac: float = 0.95,
-                    area_level: Optional[int] = None) -> Dict[str, Any]:
+                    area_level: Optional[int] = None, assist: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Rows of the statement.
 
     ``zones``: ``[{"name", "mask", "kind": "area" | "line", "size": m2 or m}]``
     -- the masks the coverage report scored. ``mv`` is that report's
-    MultiViewshedResult; ``ptz_zone`` its best PTZ-patrol zone grid (or None)."""
+    MultiViewshedResult; ``ptz_zone`` its best PTZ-patrol zone grid (or None).
+
+    ``assist`` (the mixed fixed + PTZ evaluation, when it ran):
+    ``{"d2i_s": grid of seconds from a fixed-camera detection to a PTZ holding
+    the target, "target_ppm", "max_s"}`` adds the PTZ-ASSISTED requirement per
+    area zone: the fixed cameras detect continuously AND a PTZ identifies
+    within ``max_s`` -- two different things from patrol coverage, which is
+    whatever the PTZ happens to pass over."""
     thermal = is_thermal_camera(camera)
     declared = declared_level(camera, float(plan.target_ppm), area_level)
     out_zones = []
@@ -80,11 +87,28 @@ def plan_conformity(plan, camera, mv, zones: List[Dict[str, Any]], *, cell_size_
             if z == declared and order[verdict] > order[worst]:
                 worst = verdict
         out_zones.append({"name": zn["name"], "kind": zn["kind"], "size": float(zn["size"]), "rows": rows})
+    assisted = None
+    if assist is not None:
+        d2i, max_s = assist["d2i_s"], float(assist["max_s"])
+        rows_a, worst_a = [], VERDICT_OK
+        for zn in zones:
+            if zn["kind"] != "area":
+                continue
+            mask = zn["mask"]
+            n = int(mask.sum())
+            det = (mv.dori_grid >= ZONE_DETECT) & mask
+            share_det = float(det.sum()) / n if n else 0.0
+            share_ok = float((det & (d2i <= max_s)).sum()) / n if n else 0.0
+            verdict = VERDICT_OK if min(share_det, share_ok) >= goal_frac - 1e-9 else VERDICT_FAIL
+            rows_a.append({"name": zn["name"], "detect": share_det, "assisted": share_ok, "verdict": verdict})
+            if verdict == VERDICT_FAIL:
+                worst_a = VERDICT_FAIL
+        assisted = {"max_s": max_s, "target_ppm": float(assist["target_ppm"]), "zones": rows_a, "verdict": worst_a}
     name = next(lbl for z, _k, lbl in levels_for(camera) if z == declared)
     return {"zones": out_zones, "verdict": worst, "goal_frac": goal_frac, "thermal": thermal,
             "declared_level": next(k for z, k, _l in levels_for(camera) if z == declared), "declared_label": name,
             "declared_ppm": zone_ppm(declared, thermal), "clause": CLAUSE_THERMAL if thermal else CLAUSE,
-            "has_patrol": ptz_zone is not None, "cell_size_m": cell_size_m}
+            "has_patrol": ptz_zone is not None, "cell_size_m": cell_size_m, "assist": assisted}
 
 
 def _pct(f: float) -> str:
@@ -138,6 +162,17 @@ def build_plan_statement(conf: Dict[str, Any], *, plan, camera, conditions: List
             if conf["has_patrol"]:
                 line += f" {_pct(r['patrol'])} |"
             L.append(line + f" **{mark[r['verdict']]}** {r['verdict']} |")
+        L.append("")
+    a = conf.get("assist")
+    if a:
+        ppm = _num(a["target_ppm"], 2).rstrip("0").rstrip(",")
+        L += [f"## PTZ destekli hedef: {a['verdict'].replace('i', 'İ').upper()}", "",
+              f"Sabit kameralar sürekli algılar; alarm üzerine bir PTZ en çok {_num(a['max_s'])} sn içinde hedefi "
+              f"{ppm} px/m ile tutar. Bu, devriye kapsamasından ayrı bir isterdir: PTZ bakmıyorken de geçerlidir, "
+              f"ama aynı anda tek hedef içindir.", "",
+              f"| Bölge | Sürekli algılama | Algılanıp ≤ {_num(a['max_s'])} sn'de {ppm} px/m | Sonuç |", "|---|---|---|---|"]
+        for r in a["zones"]:
+            L.append(f"| {r['name']} | {_pct(r['detect'])} | {_pct(r['assisted'])} | **{mark[r['verdict']]}** {r['verdict']} |")
         L.append("")
     L += ["## Geçerlilik koşulları", ""]
     L += [f"- {c}" for c in conditions if c]

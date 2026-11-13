@@ -157,3 +157,39 @@ def test_verdict_heading_is_upper_cased_in_turkish():
     zone = [{"name": "Bant", "mask": np.ones((4, 4), bool), "kind": "area", "size": 1600.0}]
     conf = plan_conformity(_plan(), FIX, mv, zone, cell_size_m=10.0)
     assert "## Sonuç: UYGUN DEĞİL" in build_plan_statement(conf, plan=_plan(), camera=FIX, conditions=[])
+
+
+def test_ptz_assisted_requirement_needs_both_detection_and_a_timely_ptz():
+    dori = np.full((10, 10), ZONE_DETECT, np.int8)
+    d2i = np.full((10, 10), 4.0)
+    d2i[:, 8:] = 25.0                     # a fifth of the band: the PTZ needs 25 s
+    mv = SimpleNamespace(dori_grid=dori)
+    zone = [{"name": "Bant", "mask": np.ones((10, 10), bool), "kind": "area", "size": 1e4},
+            {"name": "Çit çizgisi", "mask": np.eye(10, dtype=bool), "kind": "line", "size": 100.0}]
+    kw = dict(cell_size_m=10.0, goal_frac=0.9)
+    a = plan_conformity(_plan(ptz=2), PTZ, mv, zone, assist={"d2i_s": d2i, "target_ppm": 250.0, "max_s": 10.0}, **kw)["assist"]
+    assert [z["name"] for z in a["zones"]] == ["Bant"]                  # the line is not an area to hold
+    assert a["zones"][0]["detect"] == 1.0 and a["zones"][0]["assisted"] == pytest.approx(0.8)
+    assert a["verdict"] == VERDICT_FAIL
+    ok_ = plan_conformity(_plan(ptz=2), PTZ, mv, zone, assist={"d2i_s": d2i, "target_ppm": 250.0, "max_s": 30.0}, **kw)
+    assert ok_["assist"]["verdict"] == VERDICT_OK
+    md = build_plan_statement(ok_, plan=_plan(ptz=2), camera=PTZ, conditions=[])
+    assert "## PTZ destekli hedef: UYGUN" in md and "30 sn" in md and "250 px/m" in md
+    assert plan_conformity(_plan(), PTZ, mv, zone, **kw)["assist"] is None
+
+
+def test_service_statement_gains_the_assisted_section_once_the_mixed_evaluation_ran(hills):
+    cam, ptz = dataclasses.asdict(FIX), dataclasses.asdict(PTZ)
+    ok("perimeter.plan", terrain_id=hills, camera=cam, fence=SQUARE, target_ppm=40, mast_m=8,
+       ptz_camera=ptz, ptz_every_n=3, ptz_patrol_span_deg=360)
+    ok("perimeter.coverage", terrain_id=hills, max_px=300)
+    assert ok("export.plan_statement", terrain_id=hills)["assist"] is None
+    ok("perimeter.mixed", terrain_id=hills, speed_deg_s=20, max_px=300)
+    ok("perimeter.coverage", terrain_id=hills, max_px=300)          # coverage again: the mixed result must survive it
+    s = ok("export.plan_statement", terrain_id=hills, assist_max_s=15)
+    a = s["assist"]
+    assert a["max_s"] == 15 and a["target_ppm"] == pytest.approx(250.0)
+    assert 0 <= a["zones"][0]["assisted"] <= a["zones"][0]["detect"] <= 1
+    assert "PTZ destekli hedef" in s["markdown"]
+    slow = ok("export.plan_statement", terrain_id=hills, assist_max_s=1)["assist"]["zones"][0]["assisted"]
+    assert slow <= a["zones"][0]["assisted"]
