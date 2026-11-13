@@ -116,6 +116,8 @@ _STYLES = """
 <PolyStyle><color>28c8509a</color></PolyStyle></Style>
 <Style id="fence"><LineStyle><color>ff00d7ff</color><width>3</width></LineStyle></Style>
 <Style id="gap"><LineStyle><color>ff2020e0</color><width>5</width></LineStyle></Style>
+<Style id="privacy"><LineStyle><color>ffb040e0</color><width>2</width></LineStyle>
+<PolyStyle><color>60b040e0</color></PolyStyle></Style>
 """
 
 
@@ -155,8 +157,10 @@ def _cam_desc(c, ptz: bool) -> str:
 
 
 def build_kml(terrain: TerrainData, plan, network=None, *, name: str = "CCTV yerleşim",
-              overlay_href: Optional[str] = None, overlay_note: str = "") -> str:
-    """KML document text. ``overlay_href`` (KMZ only) adds the coverage ground overlay."""
+              overlay_href: Optional[str] = None, overlay_note: str = "", privacy=None) -> str:
+    """KML document text. ``overlay_href`` (KMZ only) adds the coverage ground overlay.
+    ``privacy`` (``city.privacy_masks``) adds each camera's privacy-mask polygons: the
+    residential buildings in its view."""
     f = GeoFrame(terrain)
     f.latlon(0.0, 0.0)                                  # fails loudly on a terrain with no position
     parts = [f'<?xml version="1.0" encoding="UTF-8"?>\n<kml xmlns="http://www.opengis.net/kml/2.2" '
@@ -200,6 +204,14 @@ def build_kml(terrain: TerrainData, plan, network=None, *, name: str = "CCTV yer
                     + (" · BÜTÇE AŞILDI" if s.over_budget else ""))
             parts.append(_placemark(f"SW{s.index}", "switch", _point(f, s.x_m, s.y_m), desc))
         parts.append("</Folder>")
+    if privacy:
+        parts.append("<Folder><name>KVKK gizlilik maskeleri (konut)</name>")
+        for m in privacy:
+            desc = (f"Görüşün %{m['share'] * 100:.0f}'i konut binasında ({m['area_m2']:.0f} m²)"
+                    + (" — sınırın üstünde: maske tanımlayın ya da açıyı değiştirin." if m["flagged"] else "."))
+            for i, ring in enumerate(m["rings"], 1):
+                parts.append(_placemark(f"{m['label']} maske {i}", "privacy", _polygon(f, ring), desc))
+        parts.append("</Folder>")
     parts.append("</Document></kml>")
     return "\n".join(parts)
 
@@ -226,7 +238,7 @@ def _ground_overlay(f: GeoFrame, terrain: TerrainData, href: str, note: str) -> 
 
 
 def write_kml(path: str | Path, terrain: TerrainData, plan, network=None, *, coverage=None,
-              name: str = "CCTV yerleşim", max_overlay_px: int = 2048) -> Path:
+              name: str = "CCTV yerleşim", max_overlay_px: int = 2048, privacy=None) -> Path:
     """``.kml`` (vectors) or ``.kmz`` (vectors + coverage PNG when ``coverage``
     -- a ``MultiViewshedResult`` / ``ViewshedResult`` -- is given)."""
     p = Path(path)
@@ -244,18 +256,18 @@ def write_kml(path: str | Path, terrain: TerrainData, plan, network=None, *, cov
             png = buf.getvalue()
             note = "Teşhis / Tanıma / Gözlem / Algılama (EN 62676-4). Görüntü yalnız gösterim; alan ve yüzdeler raporda."
         doc = build_kml(terrain, plan, network, name=name, overlay_href="kapsama.png" if png else None,
-                        overlay_note=note)
+                        overlay_note=note, privacy=privacy)
         with zipfile.ZipFile(p, "w", zipfile.ZIP_DEFLATED) as z:
             z.writestr("doc.kml", doc)                  # first entry: Google Earth reads it as the root
             if png:
                 z.writestr("kapsama.png", png)
     else:
-        p.write_text(build_kml(terrain, plan, network, name=name), encoding="utf-8")
+        p.write_text(build_kml(terrain, plan, network, name=name, privacy=privacy), encoding="utf-8")
     return p
 
 
 # ------------------------------------------------------------------ DXF R12
-_LAYERS = (("CIT", 2), ("DIREK", 3), ("FOV", 4), ("PTZ", 6), ("BOSLUK", 1), ("SWITCH", 5), ("ETIKET", 7))
+_LAYERS = (("CIT", 2), ("DIREK", 3), ("FOV", 4), ("PTZ", 6), ("BOSLUK", 1), ("SWITCH", 5), ("ETIKET", 7), ("KVKK", 30))
 
 
 class _Dxf:
@@ -296,7 +308,7 @@ def _dxf_ascii(s: str) -> str:
 
 
 def build_dxf(terrain: TerrainData, plan, network=None, *, real_world: bool = False,
-              text_h: float = 0.0) -> str:
+              text_h: float = 0.0, privacy=None) -> str:
     f = GeoFrame(terrain)
     tr = f.projected if (real_world and f.exact) else (lambda x, y: (x, y))
     pts = lambda seq: [tr(x, y) for x, y in seq]                     # noqa: E731
@@ -345,11 +357,19 @@ def build_dxf(terrain: TerrainData, plan, network=None, *, real_world: bool = Fa
             d.polyline("SWITCH", pts([(x - th, y - th), (x + th, y - th), (x + th, y + th), (x - th, y + th)]),
                        closed=True)
             d.text("ETIKET", tr(x + 1.5 * th, y - th), th, f"SW{s.index} {s.ports_used}p {s.poe_w:.0f}W")
+    for m in privacy or []:                                          # KVKK: residential buildings in a camera's view
+        for ring in m["rings"]:
+            d.polyline("KVKK", pts(ring[:-1]), closed=True)
+        if m["rings"]:
+            x, y = m["rings"][0][0]
+            d.text("ETIKET", tr(x, y), th, _dxf_ascii(f"KVKK {m['label']} %{m['share'] * 100:.0f}"))
     d.g(0, "ENDSEC"); d.g(0, "EOF")
     return d.out.getvalue()
 
 
-def write_dxf(path: str | Path, terrain: TerrainData, plan, network=None, *, real_world: bool = False) -> Path:
+def write_dxf(path: str | Path, terrain: TerrainData, plan, network=None, *, real_world: bool = False,
+              privacy=None) -> Path:
     p = Path(path)
-    p.write_text(build_dxf(terrain, plan, network, real_world=real_world), encoding="ascii", newline="\r\n")
+    p.write_text(build_dxf(terrain, plan, network, real_world=real_world, privacy=privacy), encoding="ascii",
+                 newline="\r\n")
     return p

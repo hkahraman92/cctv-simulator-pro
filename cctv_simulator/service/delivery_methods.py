@@ -43,16 +43,18 @@ def export_site(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     plan = _plan_of(entry)[0]
     p = _target(params, "path", (".kml", ".kmz", ".dxf"))
     net = entry.results.get("network")
+    privacy = entry.results.get("privacy")      # city analysis ran: KVKK mask polygons
     try:
         if p.suffix.lower() == ".dxf":
-            geo_export.write_dxf(p, t, plan, net, real_world=bool(params.get("real_world", False)))
+            geo_export.write_dxf(p, t, plan, net, real_world=bool(params.get("real_world", False)), privacy=privacy)
         else:
             geo_export.write_kml(p, t, plan, net, coverage=entry.results.get("multi"),
-                                 name=str(params.get("name") or p.stem))
+                                 name=str(params.get("name") or p.stem), privacy=privacy)
     except ValueError as exc:
         raise RpcError(APP_ERROR, str(exc)) from None
     frame = geo_export.GeoFrame(t)
     return {"path": str(p), "exact_georef": frame.exact, "has_latlon": frame.has_latlon,
+            "privacy_masks": sum(len(m["rings"]) for m in privacy or []),
             "with_network": net is not None, "with_coverage": p.suffix.lower() == ".kmz" and "multi" in entry.results}
 
 

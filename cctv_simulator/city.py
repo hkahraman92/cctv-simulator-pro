@@ -248,7 +248,9 @@ class CityResult:
     pois: List[PoiStatus]
     privacy: List[CameraPrivacy]
     private_seen_m2: float
-    layer: np.ndarray                                # 1 street unseen, 2 seen at level, 3 face-capable, 4 residential seen
+    # per camera (same order as ``privacy``): the residential cells it sees -- what a privacy mask must cover
+    private_masks: List[np.ndarray] = field(default_factory=list)
+    layer: Optional[np.ndarray] = None               # 1 street unseen, 2 seen at level, 3 face-capable, 4 residential seen
     notes: List[str] = field(default_factory=list)
 
 
@@ -310,12 +312,14 @@ def analyse_city(terrain: TerrainData, layer: CityLayer, mv, *, level: int, roi:
                               bool(face[sl][disk].any())))
 
     privacy = []
+    masks: List[np.ndarray] = []
     names = list(labels) if labels is not None else list(mv.labels)
     private_any = np.zeros(dori.shape, bool)
     for i, v in enumerate(mv.per_camera):
         seen = v.dori_grid >= ZONE_DETECT
         priv = seen & layer.residential
         private_any |= priv
+        masks.append(priv)
         a, p_ = float(seen.sum()) * cs2, float(priv.sum()) * cs2
         s = p_ / a if a else 0.0
         privacy.append(CameraPrivacy(names[i] if i < len(names) else f"Kamera {i + 1}", a, p_, s, s >= flag_share))
@@ -338,9 +342,73 @@ def analyse_city(terrain: TerrainData, layer: CityLayer, mv, *, level: int, roi:
                      f"(~3 m) ve dar odak deneyin.")
     return CityResult(street_area_m2=n_st * cs2, share_by_level=share, share_by_class=by_class, level=level,
                       face_share=face_share, pois=pois, privacy=privacy,
-                      private_seen_m2=float(private_any.sum()) * cs2, layer=out, notes=notes)
+                      private_seen_m2=float(private_any.sum()) * cs2, private_masks=masks, layer=out, notes=notes)
 
 
-__all__ = ["CityLayer", "CityResult", "analyse_city", "build_layer", "build_query", "face_mask", "fetch_city",
+def mask_rings(terrain: TerrainData, mask: np.ndarray, max_rings: int = 400) -> List[List[Tuple[float, float]]]:
+    """Outline(s) of a cell mask as closed rings in local metres (cell edges,
+    collinear points dropped) -- the raster a privacy analysis produces, as
+    the polygons a KML / DXF / VMS privacy mask is drawn from.
+
+    Every edge between a mask cell and a non-mask cell is taken once, with
+    the mask on its right, and the edges are chained into loops. A cell is
+    the square around its node (TerrainData's node convention)."""
+    m = np.asarray(mask, bool)
+    if not m.any():
+        return []
+    rows, cols = m.shape
+    pad = np.zeros((rows + 2, cols + 2), bool)
+    pad[1:-1, 1:-1] = m
+    edges = {}                                    # start corner -> [end corner, ...]; corners in (col, row) cell-edge units
+
+    def add(a, b):
+        edges.setdefault(a, []).append(b)
+
+    rr, cc = np.nonzero(m)
+    for r, c in zip(rr.tolist(), cc.tolist()):
+        if not pad[r, c + 1]:
+            add((c, r), (c + 1, r))               # south side, heading east
+        if not pad[r + 1, c + 2]:
+            add((c + 1, r), (c + 1, r + 1))       # east side, heading north
+        if not pad[r + 2, c + 1]:
+            add((c + 1, r + 1), (c, r + 1))       # north side, heading west
+        if not pad[r + 1, c]:
+            add((c, r + 1), (c, r))               # west side, heading south
+    cs = terrain.cell_size_m
+    rings: List[List[Tuple[float, float]]] = []
+    while edges and len(rings) < max_rings:
+        start = next(iter(edges))
+        ring, cur = [start], start
+        while True:
+            nxt = edges[cur].pop()
+            if not edges[cur]:
+                del edges[cur]
+            cur = nxt
+            if cur == start:
+                break
+            ring.append(cur)
+            if cur not in edges:                  # cannot happen for a consistent edge set; never loop forever
+                break
+        keep = [p for i, p in enumerate(ring)
+                if (ring[i - 1][0] - p[0]) * (ring[(i + 1) % len(ring)][1] - p[1])
+                != (ring[i - 1][1] - p[1]) * (ring[(i + 1) % len(ring)][0] - p[0])]
+        if len(keep) >= 3:
+            pts = [(terrain.origin_x + (c - 0.5) * cs, terrain.origin_y + (r - 0.5) * cs) for c, r in keep]
+            rings.append(pts + [pts[0]])
+    return rings
+
+
+def privacy_masks(terrain: TerrainData, result: CityResult, only_flagged: bool = False) -> List[Dict]:
+    """Per camera with residential cells in view: ``{"label", "share", "flagged", "area_m2", "rings"}``."""
+    out = []
+    for c, m in zip(result.privacy, result.private_masks):
+        if c.private_m2 <= 0 or (only_flagged and not c.flagged):
+            continue
+        out.append({"label": c.label, "share": c.share, "flagged": c.flagged, "area_m2": c.private_m2,
+                    "rings": mask_rings(terrain, m)})
+    return out
+
+
+__all__ = ["CityLayer", "CityResult", "analyse_city", "mask_rings", "privacy_masks", "build_layer", "build_query", "face_mask", "fetch_city",
            "street_sites", "street_target", "CLASS_LABEL"]
 

@@ -154,3 +154,18 @@ def test_street_cells_under_a_roof_are_not_a_target():
     assert (city.street_target(lay, t) == (lay.street_class > 0)).all()      # no surface model: every street cell
     tgt = city.street_target(lay, surf)
     assert not tgt[r, c] and tgt[cell(60, 150)] and tgt.sum() < (lay.street_class > 0).sum()
+
+
+def test_privacy_mask_polygons_cover_exactly_the_homes_a_camera_sees():
+    t = located()
+    lay = city.build_layer(t, osm(t))
+    pls = [CameraPlacement(40, 150, 4.0, CAM, pan_deg=90, tilt_deg=-3, max_range_m=200, focal_mm_override=6, label="sokak"),
+           CameraPlacement(205, 140, 4.0, CAM, pan_deg=40, tilt_deg=-2, max_range_m=200, focal_mm_override=4, label="konut")]
+    r = city.analyse_city(t, lay, calculate_multi_camera_viewshed(t, pls), level=ZONE_OBSERVE)
+    masks = {m["label"]: m for m in city.privacy_masks(t, r)}
+    by = {c.label: c for c in r.privacy}
+    assert masks["konut"]["flagged"] and masks["konut"]["rings"]
+    shoelace = lambda ring: 0.5 * sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(ring[:-1], ring[1:]))  # noqa: E731
+    for label, m in masks.items():                    # signed ring areas (holes negative) add up to the cells
+        assert abs(sum(shoelace(ring) for ring in m["rings"])) == pytest.approx(by[label].private_m2)
+    assert [m["label"] for m in city.privacy_masks(t, r, only_flagged=True)] == ["konut"]

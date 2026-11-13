@@ -583,7 +583,7 @@ export function terrainApi(rpc: RpcClient) {
     compareScenarios: (scenarios: Scenario[]) =>
       rpc.call<{ rows: string[][]; best: Record<string, number | null> }>("scenario.compare", { scenarios }),
     exportSite: (p: T & { path: string; real_world?: boolean; name?: string }) =>
-      rpc.call<{ path: string; exact_georef: boolean; has_latlon: boolean; with_network: boolean; with_coverage: boolean }>("export.site", p, { timeoutMs: 0 }),
+      rpc.call<{ path: string; exact_georef: boolean; has_latlon: boolean; with_network: boolean; with_coverage: boolean; privacy_masks: number }>("export.site", p, { timeoutMs: 0 }),
     exportShare: (p: T & { path: string; title: string; scenarios?: Scenario[] }) =>
       rpc.call<{ path: string; bytes: number }>("export.share_html", p, { timeoutMs: 0 }),
     planStatement: (p: T & { path?: string; project_name?: string; bidder?: string; goal_frac?: number }) =>

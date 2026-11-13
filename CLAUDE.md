@@ -1136,6 +1136,16 @@ Modu" satırı.
   Port ataması `NetworkPlan.feeds` (`Feed`: kamera başına switch, port,
   kablo, cihaz ve port gücü) — `plan_network`'ün kendi döngüsünde yazılır,
   switch toplamlarıyla birebir (test). Testler: `tests/test_camera_schedule.py`.
+- **KVKK maske poligonları** (`city.mask_rings` / `privacy_masks`,
+  `geo_export` `privacy=`): şehir analizi kamera başına gördüğü konut
+  hücrelerini saklar (`CityResult.private_masks`); hücre maskesi, maske ile
+  dışı arasındaki her kenar bir kez alınıp halkalara zincirlenerek poligona
+  çevrilir (hücre = düğümün çevresindeki kare; doğrusal noktalar atılır; avlu
+  ayrı, ters yönlü halka — işaretli alanlar toplamı hücre alanına eşit, test).
+  `city.analyse` sonucu `entry.results["privacy"]`'ye yazar (`PLAN_DERIVED`);
+  `export.site` KML / KMZ'de "KVKK gizlilik maskeleri" klasörü, DXF'te `KVKK`
+  katmanı olarak ekler ve `privacy_masks` sayısını döndürür. Şehir analizi
+  koşmadıysa klasör yok. Testler: `tests/test_privacy_masks.py`.
 - **Tek ister, beş adım (masaüstü Arazi → Çevre Çiti).** İster = hedef px/m
   (`plan.target_ppm`) + korunan alanın tutması gereken pay (`goal`, %) + bant.
   Seviyesi türetilir: hedefin ulaştığı en yüksek seviye (`levelOf`; çekirdekte
@@ -1186,8 +1196,8 @@ Modu" satırı.
 
 ## Açık işler
 
-- KVKK maske poligonu dışa aktarımı (KML/DXF) ve Monitoring 12,5 px/m arazi
-  seviyesi yok.
+- Monitoring 12,5 px/m arazi seviyesi yok (motorun bölge kodlarına yeni seviye;
+  kapsama sayılarını ve golden'ı etkiler).
 - Kütüphanede adı yalnız kod olan (AB-0000-4413, AB-0000-3224) ve adı broşür
   başlığından gelen (AB-0000-3951 … "FULL HD ÇÖZÜNÜRLÜK …") kayıtlar —
   kullanıcı verisi, kodla düzeltilmez.

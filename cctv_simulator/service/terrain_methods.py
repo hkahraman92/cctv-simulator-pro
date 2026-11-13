@@ -996,6 +996,9 @@ def city_analyse(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     labels = [f"Direk {c.pole_id} · {c.pan_deg:.0f}°" for c in plan.placed_cameras]
     res = analyse_city(t, entry.city, mv, level=level, roi=roi, labels=labels,
                        flag_share=_num(params, "flag_share", 0.10, lo=0.0, hi=1.0))
+    # for the site export (KML / DXF): each camera's privacy-mask polygons, dropped with the plan
+    from ..city import privacy_masks
+    entry.results["privacy"] = privacy_masks(t, res)
     if t.obstacle_grid is None:
         res.notes.insert(0, "Bina / ağaç yüzey modeli yüklü değil: kameralar binaların içinden görüyor sayılır, "
                             "sokak kapsaması olduğundan yüksek çıkar. Önce 'Bina & Ağaç İndir (OSM)'.")

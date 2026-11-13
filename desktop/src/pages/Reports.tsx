@@ -147,7 +147,7 @@ type Job = ReturnType<typeof useJob>;
 
 function Deliverables({ run, status, job, base, dir, onFile, realWorld, onRealWorld, measured, coverageRan }: {
   run: {
-    site: (path: string) => Promise<{ path: string; exact_georef: boolean; has_latlon: boolean }>;
+    site: (path: string) => Promise<{ path: string; exact_georef: boolean; has_latlon: boolean; privacy_masks: number }>;
     share: (path: string) => Promise<{ path: string }>;
     statement: (path: string) => Promise<{ path: string | null; verdict: string; declared_label: string; measured: boolean }>;
     pkg: (path: string, o?: { signal: AbortSignal; onProgress: (p: { done: number; total: number; message: string }) => void }) => Promise<{ path: string; files: string[]; skipped: string[] }>;
@@ -163,7 +163,8 @@ function Deliverables({ run, status, job, base, dir, onFile, realWorld, onRealWo
   const site = (ext: "kml" | "kmz" | "dxf", label: string) => async () => {
     const p = await ask(`${label} olarak dışa aktar`, ext, label);
     if (p) void job.run(`${label} yazılıyor`, () => run.site(p)).then((r) => r && onFile(r.path,
-      ext === "dxf" && realWorld && !r.exact_georef ? "Arazinin projeksiyonlu georeferansı yok; DXF yerel metrede yazıldı." : ""));
+      [ext === "dxf" && realWorld && !r.exact_georef ? "Arazinin projeksiyonlu georeferansı yok; DXF yerel metrede yazıldı." : "",
+        r.privacy_masks > 0 ? `${r.privacy_masks} KVKK gizlilik maskesi poligonu eklendi (şehir analizinden).` : ""].filter(Boolean).join(" ")));
   };
   return (
     <div className="flex flex-wrap gap-6">
@@ -194,7 +195,7 @@ function Deliverables({ run, status, job, base, dir, onFile, realWorld, onRealWo
               r.skipped.length ? `Pakete eklenmeyenler: ${r.skipped.join(" · ")}` : ""));
           }}><Package size={14} /> Teklif Paketi (ZIP)</Button>
         </div>
-        <p className="text-[11px] text-text-3">Paket: metraj + maliyet (CSV / XLSX), direk ve switch listesi, mühendislik raporu, şartname ve plan uygunluk beyanı, KMZ + DXF, paylaşım sayfası, BENİOKU. Paylaşım sayfası betiksiz, internetsiz açılır.</p>
+        <p className="text-[11px] text-text-3">Paket: metraj + maliyet (CSV / XLSX), direk ve switch listesi, mühendislik raporu, şartname ve plan uygunluk beyanı, KMZ + DXF (şehir analizi çalıştıysa KVKK maske poligonlarıyla), paylaşım sayfası, BENİOKU. Paylaşım sayfası betiksiz, internetsiz açılır.</p>
       </div>
     </div>
   );
