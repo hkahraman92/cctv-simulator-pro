@@ -263,7 +263,7 @@ def export_package(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
             p, project_name=str(params.get("project_name") or p.stem), terrain=t, plan=plan, camera=cam,
             network=entry.results.get("network"), cost=entry.results.get("cost"), coverage=entry.results.get("multi"),
             band_share=bs[1] if bs else None, night=entry.results.get("night"), photo=entry.photo,
-            spec_result=spec, spec_kw=spec_kw, plan_statement=stmt[1] if stmt else None, scenarios=_scenarios(params, required=False),
+            spec_result=spec, spec_kw=spec_kw, plan_statement=stmt[1] if stmt else None, ptz_camera=kw.get("ptz_camera"), scenarios=_scenarios(params, required=False),
             weather=kw.get("weather", ""), progress=ctx.progress)
     except OSError as exc:
         raise RpcError(APP_ERROR, f"Paket yazılamadı: {exc}") from None

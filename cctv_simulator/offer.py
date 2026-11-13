@@ -14,6 +14,7 @@ import datetime as _dt
 import html
 import io
 import json
+import math
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -106,16 +107,49 @@ def comparison_rows(scenarios: Sequence[Dict]) -> List[List[str]]:
 
 
 # ------------------------------------------------------------------ tables
-def pole_rows(plan) -> List[List]:
+def pole_rows(plan, *, terrain=None, camera=None, ptz_camera=None, network=None) -> List[List]:
+    """The camera schedule: one row per camera.
+
+    The installer's columns are filled from what was computed and left EMPTY
+    otherwise (no guess): latitude / longitude need a positioned terrain,
+    px/m at the end of the range needs the camera (``camera_optics`` -- for a
+    PTZ at its tele end, where its identification reach was set), switch /
+    port / cable / power need the network plan."""
+    from .calculations import camera_optics
+
     head = ["Direk", "Tür", "X (m)", "Y (m)", "Zemin (m)", "Direk boyu (m)", "Model", "Odak (mm)", "HFOV (°)",
-            "Yön (°)", "Eğim (°)", "Menzil (m)", "Kör bölge (m)", "Devriye (°)"]
+            "Yön (°)", "Eğim (°)", "Menzil (m)", "Kör bölge (m)", "Devriye (°)",
+            "Enlem", "Boylam", "Menzil ucunda px/m", "Switch", "Port", "Kablo (m)", "Güç (W)", "Port gücü (W)"]
+    frame = None
+    if terrain is not None:
+        from .geo_export import GeoFrame
+        frame = GeoFrame(terrain)
+        if not (frame.exact or frame.has_latlon):
+            frame = None
+    feeds = {(f.ptz, f.cam_index): f for f in getattr(network, "feeds", []) or []}
     out = [head]
-    for c, kind in [(c, "Sabit") for c in plan.placed_cameras] + \
-                   [(c, "PTZ") for c in (getattr(plan, "ptz_cameras", []) or [])]:
-        out.append([c.pole_id, kind, round(c.x_m, 2), round(c.y_m, 2), round(c.ground_z_m, 2),
-                    round(c.mast_height_m, 2), c.camera_model, round(c.focal_mm, 2), round(c.hfov_deg, 2),
-                    round(c.pan_deg % 360, 1), round(c.tilt_deg, 2), round(c.effective_range_m, 1),
-                    round(c.dead_zone_m, 1), round(getattr(c, "patrol_span_deg", 0.0), 0) if kind == "PTZ" else ""])
+    groups = [("Sabit", False, plan.placed_cameras, camera), ("PTZ", True, getattr(plan, "ptz_cameras", []) or [], ptz_camera)]
+    for kind, is_ptz, cams, model in groups:
+        for i, c in enumerate(cams):
+            row = [c.pole_id, kind, round(c.x_m, 2), round(c.y_m, 2), round(c.ground_z_m, 2),
+                   round(c.mast_height_m, 2), c.camera_model, round(c.focal_mm, 2), round(c.hfov_deg, 2),
+                   round(c.pan_deg % 360, 1), round(c.tilt_deg, 2), round(c.effective_range_m, 1),
+                   round(c.dead_zone_m, 1), round(getattr(c, "patrol_span_deg", 0.0), 0) if is_ptz else ""]
+            if frame is not None:
+                lat, lon = frame.latlon(c.x_m, c.y_m)
+                row += [round(lat, 7), round(lon, 7)]
+            else:
+                row += ["", ""]
+            if model is not None:
+                focal = model.focal_max_mm if is_ptz else c.focal_mm
+                slant = math.hypot(c.effective_range_m, c.mast_height_m)
+                row.append(round(float(camera_optics(model, focal).ppm_at(slant)), 1))
+            else:
+                row.append("")
+            f = feeds.get((is_ptz, i))
+            row += [f"SW{f.switch_index}", f.port, round(f.cable_m, 1), round(f.device_w, 1), round(f.port_w, 1)] \
+                if f is not None else ["", "", "", "", ""]
+            out.append(row)
     return out
 
 
@@ -311,7 +345,7 @@ def build_offer_package(zip_path: str | Path, *, project_name: str, terrain: Ter
                         network=None, cost=None, coverage=None, band_share: Optional[Dict] = None,
                         night: Optional[Dict] = None, photo=None, spec_result: Optional[Dict] = None,
                         spec_kw: Optional[Dict] = None, scenarios: Sequence[Dict] = (), weather: str = "",
-                        plan_statement: Optional[str] = None, progress=None) -> Dict[str, Any]:
+                        plan_statement: Optional[str] = None, ptz_camera=None, progress=None) -> Dict[str, Any]:
     """Write the offer ZIP; returns {"path", "files": [names], "skipped": [reasons]}."""
     import tempfile
 
@@ -330,8 +364,9 @@ def build_offer_package(zip_path: str | Path, *, project_name: str, terrain: Ter
     pre = [project_name, measured_line, terrain.source_note or ""]
 
     step(0, "Metraj ve maliyet")
-    sheets: Dict[str, Sequence[Sequence]] = {"Direkler": pole_rows(plan)}
-    files["02-direk-listesi.csv"] = _csv_bytes(pole_rows(plan), pre)
+    schedule = pole_rows(plan, terrain=terrain, camera=camera, ptz_camera=ptz_camera, network=network)
+    sheets: Dict[str, Sequence[Sequence]] = {"Direkler": schedule}
+    files["02-direk-listesi.csv"] = _csv_bytes(schedule, pre)
     if network is not None:
         sheets["Ağ planı"] = switch_rows(network)
         files["03-ag-plani.csv"] = _csv_bytes(switch_rows(network),

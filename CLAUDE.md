@@ -86,7 +86,10 @@ iki arayüzün paylaştığı mantık Tk'siz modüllerde (`map_render`,
   çekirdek Tk'siz paketlenir; üst düzey `import tkinter` paketli çekirdeği o
   yöntemde düşürür (compliance.py ve exporters.py düşürüyordu).
 - stdout yalnız protokol kanalı (sunucu `sys.stdout`'u stderr'e çevirir,
-  stderr'i UTF-8'e zorlar).
+  stderr'i UTF-8'e zorlar). `service/__main__` bunu "hazır" satırından ÖNCE de
+  yapar: cp1252 konsolda (GitHub çalıştırıcısı) noktasız ı kodlanamadığı için
+  süreç açılışta ölüyor, CI birim testleri bu yüzden düşüyordu. Yerelde
+  görünmez (cp1254'te ı var); `test_sidecar_starts_on_a_console_without_turkish_letters`.
 - Yayın: `desktop\packaging\build_release.bat` → `cctv-core.exe` + duman
   testi (`smoke_core.py`, paketli çekirdekte 14 ağır yol) → NSIS kurulum.
   Kurulum yolu çok derinse (NSIS MAX_PATH'i aşan dosyaları sessizce atlar)
@@ -1124,12 +1127,20 @@ Modu" satırı.
   Sınır modunda çit çizgisi bölgesi yoktur. Teklif paketine
   `05-plan-uygunluk-beyani.md/.pdf` olarak girer; Raporlar sayfasında düğme.
   Testler: `tests/test_plan_statement.py`.
+- **Kamera çizelgesi** (`offer.pole_rows(plan, terrain=, camera=, ptz_camera=,
+  network=)`, teklif paketinde `02-direk-listesi.csv` + XLSX "Direkler"):
+  eski 14 sütun aynı; eklenenler Enlem / Boylam (`GeoFrame`, KML ile aynı
+  çerçeve), Menzil ucunda px/m (`camera_optics.ppm_at(eğik mesafe)`; PTZ'de
+  tele uç — teşhis erişimi orada tanımlı), Switch / Port / Kablo / Güç / Port
+  gücü. Hesaplanmayan sütun BOŞ kalır (konumsuz arazi, ağ planı koşmadı).
+  Port ataması `NetworkPlan.feeds` (`Feed`: kamera başına switch, port,
+  kablo, cihaz ve port gücü) — `plan_network`'ün kendi döngüsünde yazılır,
+  switch toplamlarıyla birebir (test). Testler: `tests/test_camera_schedule.py`.
 
 ## Açık işler
 
-- KVKK maske poligonu dışa aktarımı (KML/DXF), Monitoring 12,5 px/m arazi
-  seviyesi, kamera çizelgesinde enlem/boylam / ulaşılan px/m / port / güç
-  sütunları yok.
+- KVKK maske poligonu dışa aktarımı (KML/DXF) ve Monitoring 12,5 px/m arazi
+  seviyesi yok.
 - Kütüphanede adı yalnız kod olan (AB-0000-4413, AB-0000-3224) ve adı broşür
   başlığından gelen (AB-0000-3951 … "FULL HD ÇÖZÜNÜRLÜK …") kayıtlar —
   kullanıcı verisi, kodla düzeltilmez.

@@ -69,6 +69,19 @@ class Switch:
 
 
 @dataclass
+class Feed:
+    """One camera's cable: which switch port it lands on and what that port must grant."""
+    ptz: bool
+    cam_index: int                    # index in plan.ptz_cameras if ptz, else plan.placed_cameras
+    pole_id: int
+    switch_index: int
+    port: int
+    cable_m: float
+    device_w: float
+    port_w: float
+
+
+@dataclass
 class NetworkPlan:
     switches: List[Switch]
     copper_m: float                   # total camera cable
@@ -90,6 +103,7 @@ class NetworkPlan:
     autonomy_h: float = 0.0
     poles: int = 0
     fibre_ring: bool = False
+    feeds: List[Feed] = field(default_factory=list)     # per camera: switch, port, cable, power
 
 
 def camera_power_w(model: Optional[Dict], ptz: bool = False) -> Tuple[float, bool]:
@@ -151,6 +165,15 @@ def plan_network(plan, *, camera_model: Optional[Dict] = None, ptz_model: Option
     fixed_w, ptz_w = pse_w(fixed_dev), pse_w(ptz_dev)          # what each port must grant
     # one feed per camera; PTZs share the pole with a fixed camera but need their own port
     feeds = [(c, False) for c in plan.placed_cameras] + [(c, True) for c in getattr(plan, "ptz_cameras", [])]
+    which = {id(c): (False, i) for i, c in enumerate(plan.placed_cameras)}
+    which.update({id(c): (True, i) for i, c in enumerate(getattr(plan, "ptz_cameras", []))})
+    per_camera: List[Feed] = []
+
+    def record(cam, is_ptz, sw, run):
+        per_camera.append(Feed(ptz=is_ptz, cam_index=which[id(cam)][1], pole_id=cam.pole_id, switch_index=sw.index,
+                               port=sw.ports_used, cable_m=run, device_w=ptz_dev if is_ptz else fixed_dev,
+                               port_w=ptz_w if is_ptz else fixed_w))
+
     feeds.sort(key=lambda f: _arc_of(pts, f[0].x_m, f[0].y_m))
     warnings: List[str] = []
     switches: List[Switch] = []
@@ -187,6 +210,7 @@ def plan_network(plan, *, camera_model: Optional[Dict] = None, ptz_model: Option
             sw.ports_used += 1
             sw.poe_w += w
             sw.copper_m += run
+            record(cam, is_ptz, sw, run)
             i += 1
         switches.append(sw)
 
@@ -206,6 +230,7 @@ def plan_network(plan, *, camera_model: Optional[Dict] = None, ptz_model: Option
             sw.ports_used += 1
             sw.poe_w += w
             sw.copper_m += cam.mast_height_m * (1.0 + slack_frac)
+            record(cam, is_ptz, sw, cam.mast_height_m * (1.0 + slack_frac))
         feeds += group
 
     copper = sum(s.copper_m for s in switches)
@@ -265,7 +290,7 @@ def plan_network(plan, *, camera_model: Optional[Dict] = None, ptz_model: Option
                        warnings=warnings, assumptions=assumptions, peak_bitrate_mbps=peak,
                        trench_m=trench * (1.0 + slack_frac), power_cable_m=trench * (1.0 + slack_frac),
                        cabinets=len(switches), ups_load_w=load, ups_wh=ups_wh, autonomy_h=autonomy_h,
-                       poles=poles, fibre_ring=fibre_ring)
+                       poles=poles, fibre_ring=fibre_ring, feeds=per_camera)
 
 
 @dataclass
