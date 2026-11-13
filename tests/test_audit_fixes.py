@@ -212,3 +212,23 @@ def test_pole_search_stops_when_denser_poles_stop_helping():
     assert not res.met and len(res.trials) <= 3
     assert any("Arama durduruldu" in n for n in res.notes)
     assert res.best.optimised_frac == max(t.optimised_frac for t in res.trials)
+
+
+# ── two controls that "did nothing": correct physics, now explained ─────────
+def test_single_view_says_when_weather_or_mast_cannot_change_the_result(hills):
+    cam = dataclasses.asdict(FIX)
+    base = dict(terrain_id=hills, camera=cam, x_m=500, y_m=500, mast_m=8, pan_deg=0, tilt_deg=-5, range_m=600,
+                lens_mode="max", max_px=200)
+    clear = ok("viewshed.single", **base)
+    fog = ok("viewshed.single", **base, weather="Sis")
+    dense = ok("viewshed.single", **base, weather="Yoğun sis")
+    assert clear["weather_range_m"] > 20000 and not any("kontrast" in n for n in clear["notes"])
+    # 0,8 km fog leaves contrast to ~470 m; this lens stops resolving at ~230 m: the optics is the limit
+    assert fog["weather_range_m"] == pytest.approx(-np.log(0.10) / (3.912 / 800.0), rel=0.01)
+    assert fog["weather_range_m"] > fog["optical_limit_m"] and fog["visible_area_m2"] == clear["visible_area_m2"]
+    assert any("hava bu görüşü kısaltmıyor" in n for n in fog["notes"])
+    # 0,3 km fog is the limit: the area shrinks and the note is gone
+    assert dense["weather_range_m"] < dense["optical_limit_m"] and dense["visible_area_m2"] < clear["visible_area_m2"]
+    assert not any("kısaltmıyor" in n for n in dense["notes"])
+    if clear["occluded_area_m2"] < 0.01 * clear["visible_area_m2"]:
+        assert any("direği yükseltmek" in n for n in clear["notes"])

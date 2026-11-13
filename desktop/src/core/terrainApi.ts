@@ -83,6 +83,10 @@ export interface SingleViewshed {
   overlay: Picture;
   legend: LegendRow[];
   warnings: string[];
+  /** distance the weather alone leaves enough contrast to (tens of km in clear air) */
+  weather_range_m: number | null;
+  /** why a control changed nothing: weather not the limit, nothing hidden in frame */
+  notes: string[];
 }
 
 export interface PlacedCamera {

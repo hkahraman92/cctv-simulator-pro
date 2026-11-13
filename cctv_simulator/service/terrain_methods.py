@@ -362,7 +362,7 @@ def _zone_areas(dori: np.ndarray, cell_area: float, mask: Optional[np.ndarray] =
 def viewshed_single(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """One camera on the terrain: authoritative viewshed + DORI map + sight profile."""
     from .. import map_render, surface_obstacles as obs
-    from ..atmosphere import WEATHER_PRESETS
+    from ..atmosphere import WEATHER_PRESETS, band_for_camera, usable_range_m
     from ..viewshed_3d import calculate_3d_viewshed, is_thermal_camera
 
     entry, t = _terrain_of(params)
@@ -394,6 +394,17 @@ def viewshed_single(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         warnings.append(f"Direk hücresindeki engel lensten {blocked:.1f} m yüksek; kamera bina/ağaç içinde kalıyor.")
     if not t.is_measured:
         warnings.append("Arazi ölçüm değil (prosedürel); sonuç bağlayıcı değildir.")
+    # Why a control did nothing (both were reported as suspected bugs): the weather's own contrast
+    # range (the engine's relation, uncapped by the optics) and whether anything in frame is hidden.
+    notes = []
+    weather_range = usable_range_m(math.inf, vis, band_for_camera(cam.sensor_name, cam.model_name), weather)
+    weather_range = float(weather_range) if math.isfinite(weather_range) else None
+    if weather and vis < 39.9 and weather_range is not None and weather_range >= res.optical_limit_m:
+        notes.append(f"{weather}: kontrast {weather_range:.0f} m'ye kadar yetiyor; bu lensin optik sınırı "
+                     f"({res.optical_limit_m:.0f} m) daha kısa, hava bu görüşü kısaltmıyor.")
+    if res.visible_area_m2 > 0 and res.occluded_area_m2 < 0.01 * res.visible_area_m2:
+        notes.append("Kadrajda arazi / bina gölgesi yok: direği yükseltmek görünür alanı artırmaz, yalnız "
+                     "kadrajın yakın kenarını uzaklaştırır.")
     # Farthest ground the frame holds (seen or hidden): a steep tilt frames
     # only the foot of the mast, however far the optics could resolve.
     rr, cc = np.nonzero(res.dori_grid != 0)
@@ -415,6 +426,7 @@ def viewshed_single(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         "legend": map_render.legend("dori_thermal" if is_thermal_camera(cam) else "dori")[1],
         "thermal": is_thermal_camera(cam),
         "warnings": warnings,
+        "weather_range_m": weather_range, "notes": notes,
     }
 
 

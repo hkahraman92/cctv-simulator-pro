@@ -497,6 +497,7 @@ export default function Terrain() {
                 <div className="mt-2 font-mono text-[10px] text-text-3">
                   optik sınır {fmt(single.optical_limit_m, 0)} m{single.atmospheric_limit_m > 0 && single.atmospheric_limit_m < single.optical_limit_m ? ` · atmosfer ${fmt(single.atmospheric_limit_m, 0)} m` : ""}
                 </div>
+                {single.notes.map((n) => <div key={n} className="mt-1 text-[11px] text-text-3">◆ {n}</div>)}
                 {single.warnings.map((w) => <div key={w} className="mt-2 text-[11px] text-warn">▲ {w}</div>)}
               </Panel>
             )}
