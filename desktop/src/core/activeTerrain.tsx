@@ -12,6 +12,8 @@ export interface ActiveTerrain {
   camera: CameraConfig;
   ran: { viewshed: boolean; plan: boolean; coverage: boolean; network: boolean; night: boolean };
   scenarios: Scenario[];
+  /** the requirement's coverage goal (0-1): the plan statement is judged against it */
+  goal_frac: number;
 }
 
 const Ctx = createContext<{ active: ActiveTerrain | null; setActive: (a: ActiveTerrain | null) => void } | null>(null);

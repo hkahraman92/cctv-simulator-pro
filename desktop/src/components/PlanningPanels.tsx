@@ -117,16 +117,13 @@ interface CompareOption {
 }
 
 /** Which library model holds the fence goal with the fewest poles / lowest cost. */
-export function ComparePanel({ T, job, terrainId, useObstacles, models, camera, planArgs, prices, onUse, levels }: {
+export function ComparePanel({ T, job, terrainId, useObstacles, models, camera, planArgs, prices, onUse, level, levelLabel, goal }: {
   T: TerrainApi; job: Job; terrainId: string; useObstacles: boolean; models: ModelSummary[]; camera: CameraConfig;
-  /** the camera's own scale: EN 62676-4, or Johnson (three levels) for a thermal */
-  levels: readonly (readonly [string, string])[];
+  /** the project's requirement: level held on this share (%) of the band */
+  level: string; levelLabel: string; goal: number;
   planArgs: Record<string, unknown>; prices: PriceBook; onUse: (plan: PlanResult, modelName: string) => void;
 }) {
   const [picked, setPicked] = useState<string[]>([]);
-  const [goal, setGoal] = useState(90);
-  const [picked_level, setLevel] = useState("detect");
-  const level = levels.some(([k]) => k === picked_level) ? picked_level : "detect";
   const [modelPrices, setModelPrices] = useState<Record<string, number>>({});
   const [opts, setOpts] = useState<CompareOption[] | null>(null);
   const fixed = models.filter((m) => !m.is_ptz);
@@ -138,7 +135,7 @@ export function ComparePanel({ T, job, terrainId, useObstacles, models, camera, 
 
   return (
     <Panel title="Model karşılaştır" icon={<Scale size={16} className="text-secondary" />}>
-      <p className="text-[11px] text-text-3">Her model için aynı en az direk araması (direk başına odak/eğim), ağ planı ve maliyet. En çok 6 model.</p>
+      <p className="text-[11px] text-text-3">Her model için aynı en az direk araması (direk başına odak/eğim), ağ planı ve maliyet. En çok 6 model. İster: bandın %{goal}'inde {levelLabel}.</p>
       <div className="mt-2 max-h-[160px] overflow-auto rounded bg-bg-1 p-1 text-[11px]">
         {fixed.map((m) => (
           <label key={m.name} className="flex items-center gap-1.5 px-1 py-0.5">
@@ -152,14 +149,6 @@ export function ComparePanel({ T, job, terrainId, useObstacles, models, camera, 
           </label>
         ))}
       </div>
-      <select className="mt-2 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={level} aria-label="Karşılaştırma seviyesi"
-        onChange={(e) => setLevel(e.target.value)}>
-        {levels.map(([k, l]) => (
-          <option key={k} value={k}>Bantta {l}</option>))}
-      </select>
-      <label className="mt-2 flex items-center justify-between text-[12px]"><span className="label">Bant hedefi (%)</span>
-        <input type="number" min={30} max={99} value={goal} onChange={(e) => setGoal(Math.min(99, Math.max(30, Number(e.target.value) || 90)))}
-          className="h-7 w-16 rounded border border-line bg-bg-0 px-1.5 text-right font-mono" /></label>
       <Button className="mt-2 w-full" disabled={job.running || picked.length < 1} onClick={run}><Play size={14} /> Karşılaştır</Button>
       {opts && (
         <table className="mt-2 w-full border-collapse font-mono text-[11px]">

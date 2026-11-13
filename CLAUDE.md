@@ -1136,6 +1136,24 @@ Modu" satırı.
   Port ataması `NetworkPlan.feeds` (`Feed`: kamera başına switch, port,
   kablo, cihaz ve port gücü) — `plan_network`'ün kendi döngüsünde yazılır,
   switch toplamlarıyla birebir (test). Testler: `tests/test_camera_schedule.py`.
+- **Tek ister, beş adım (masaüstü Arazi → Çevre Çiti).** İster = hedef px/m
+  (`plan.target_ppm`) + korunan alanın tutması gereken pay (`goal`, %) + bant.
+  Seviyesi türetilir: hedefin ulaştığı en yüksek seviye (`levelOf`; çekirdekte
+  aynı kural `plan_statement.declared_level` — 40 px/m → Algılama). Alan
+  planı, optimizasyon, en az direk, model karşılaştırma, PTZ devriye araması ve
+  plan uygunluk beyanı (Raporlar; `ActiveTerrain.goal_frac`) bunu okur; kendi
+  seviye / yüzde seçicileri kaldırıldı (yedi ayrı yerde seçiliyordu, A8 / A9 /
+  A12 / A13 aynı kökten). Kapsamadaki seçici ister değil **incelenen seviye**
+  görünümüdür (varsayılan "İster"). Proje dosyası: `terrain_extra.requirement
+  {target_ppm, goal_pct}`; eski projeler `target_ppm` / `area_goal`'den açılır,
+  `area_goal.level/goal_pct` eski okuyucular için yazılmaya devam eder.
+  Sağ sütun tek uzun kaydırma yerine adımlar: Tanımla (çiz + ister) → Planla
+  (dizilim, plan özeti, PTZ) → Doğrula (kapsama, gece, yaklaşma, şehir) →
+  İyileştir (optimizasyon, en az direk, karşılaştırma) → Teslim (ağ / maliyet,
+  senaryo). Paneller adım değişince **sökülmez, gizlenir** (`hidden`): kendi
+  durumunda sonuç tutan paneller (ağ, gece, yaklaşma, karşılaştırma) sonucunu
+  korur. Şehir paneli plansız da açıktır (yalnız-sokak alan planı ondan önce
+  sokakları ister).
 
 ## Açık işler
 

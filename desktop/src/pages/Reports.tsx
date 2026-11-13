@@ -98,10 +98,10 @@ export default function Reports() {
           <Deliverables onFile={(f, extra) => done({ files: [f] }, extra)} job={job} base={base} dir={dir}
             run={{
               site: (path: string) => T.exportSite({ terrain_id: active.terrain_id, use_obstacles: active.use_obstacles, path, real_world: realWorld, name }),
-              statement: (path: string) => T.planStatement({ terrain_id: active.terrain_id, use_obstacles: active.use_obstacles, path, project_name: name }),
+              statement: (path: string) => T.planStatement({ terrain_id: active.terrain_id, use_obstacles: active.use_obstacles, path, project_name: name, goal_frac: active.goal_frac }),
               share: (path: string) => T.exportShare({ terrain_id: active.terrain_id, use_obstacles: active.use_obstacles, path, title: name, scenarios: active.scenarios }),
               pkg: (path: string, o?: Parameters<typeof T.exportPackage>[1]) => T.exportPackage({ terrain_id: active.terrain_id, use_obstacles: active.use_obstacles, path,
-                project_name: name, scenarios: active.scenarios, ...(specResult ? { spec_result: specResult } : {}) }, o),
+                project_name: name, goal_frac: active.goal_frac, scenarios: active.scenarios, ...(specResult ? { spec_result: specResult } : {}) }, o),
             }}
             status={[
               ["Çit planı + direk listesi", true], ["Birleşik kapsama (KMZ katmanı, bant yüzdeleri)", active.ran.coverage],

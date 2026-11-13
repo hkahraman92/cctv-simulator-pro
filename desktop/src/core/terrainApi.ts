@@ -588,7 +588,7 @@ export function terrainApi(rpc: RpcClient) {
       rpc.call<{ path: string; bytes: number }>("export.share_html", p, { timeoutMs: 0 }),
     planStatement: (p: T & { path?: string; project_name?: string; bidder?: string; goal_frac?: number }) =>
       rpc.call<PlanStatement>("export.plan_statement", p, { timeoutMs: 0 }),
-    exportPackage: (p: T & { path: string; project_name: string; bidder?: string; spec_result?: object; scenarios?: Scenario[] }, opts?: CallOptions) =>
+    exportPackage: (p: T & { path: string; project_name: string; goal_frac?: number; bidder?: string; spec_result?: object; scenarios?: Scenario[] }, opts?: CallOptions) =>
       rpc.call<{ path: string; files: string[]; skipped: string[] }>("export.package", p, { timeoutMs: 0, ...opts }),
   };
 }
