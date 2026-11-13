@@ -24,6 +24,11 @@ def _accel(params) -> "float | None":
     return a if a > 0 else None
 
 
+def _opt_num(params, key: str, *, lo: float, hi: float) -> "float | None":
+    """An optional number: absent / null = let the engine pick its default."""
+    return None if params.get(key) is None else _num(params, key, lo=lo, hi=hi)
+
+
 def _fin(v: float):
     return v if math.isfinite(v) else None
 
@@ -79,6 +84,7 @@ def ptz_cue(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """Alarm -> identify: seconds for a parked PTZ to aim, zoom and hold every cell at the target px/m."""
     from .. import map_render
     from ..ptz_fusion import CUE_REASONS, cue_response
+    from ..viewshed_3d import is_thermal_camera
 
     entry, t = _terrain_of(params)
     cam = _camera_from(params.get("camera", {}))
@@ -87,7 +93,8 @@ def ptz_cue(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     res = cue_response(t, _num(params, "x_m"), _num(params, "y_m"), _num(params, "mast_m", 8.0, lo=0.5, hi=200), cam,
                        home_pan_deg=_num(params, "home_pan_deg", 0.0) % 360.0,
                        home_tilt_deg=_num(params, "home_tilt_deg", -5.0, lo=-89, hi=30),
-                       target_ppm=_num(params, "target_ppm", 250.0, lo=1, hi=2000),
+                       # absent = the camera's own identification level (Johnson for a thermal)
+                       target_ppm=_opt_num(params, "target_ppm", lo=1, hi=2000),
                        slew_speed_deg_s=_num(params, "slew_deg_s", 90.0, lo=1, hi=600),
                        zoom_full_sweep_s=_num(params, "zoom_full_sweep_s", 3.0, lo=0, hi=60),
                        settle_s=_num(params, "settle_s", 1.5, lo=0, hi=30),
@@ -101,8 +108,10 @@ def ptz_cue(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
                       for c, n in zip(codes, counts)), key=lambda r: -r["area_m2"])
     return {
         "target_ppm": res.target_ppm, "reachable_area_m2": res.reachable_area_m2,
-        "mean_response_s": _fin(res.mean_response_s), "p90_response_s": _fin(res.p90_response_s),
+        "mean_response_s": _fin(res.mean_response_s), "median_response_s": _fin(res.median_response_s),
+        "p90_response_s": _fin(res.p90_response_s),
         "worst_response_s": _fin(res.worst_response_s), "unreachable": reasons,
+        "thermal": is_thermal_camera(cam),
         "overlay": _image(overlay, max_px=max_px), "legend": map_render.legend("cue")[1],
     }
 
@@ -162,6 +171,7 @@ def perimeter_mixed(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """The last plan's fixed poles + co-mounted PTZs: continuous vs intermittent detection, detect -> identify."""
     from .. import map_render
     from ..perimeter_ptz import evaluate_mixed_perimeter
+    from ..viewshed_3d import is_thermal_camera
 
     entry, t = _terrain_of(params)
     if "plan" not in entry.results:
@@ -175,7 +185,7 @@ def perimeter_mixed(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         res = evaluate_mixed_perimeter(t, plan, cam, ptz_cam,
                                        speed_deg_s=_num(params, "speed_deg_s", 20.0, lo=0.5, hi=400),
                                        end_dwell_s=_num(params, "end_dwell_s", 2.0, lo=0, hi=600),
-                                       cue_target_ppm=_num(params, "cue_target_ppm", 250.0, lo=1, hi=2000),
+                                       cue_target_ppm=_opt_num(params, "cue_target_ppm", lo=1, hi=2000),
                                        visibility_km=kw["visibility_km"], weather=kw["weather"])
     except ValueError as exc:
         raise RpcError(APP_ERROR, str(exc)) from None
@@ -198,7 +208,7 @@ def perimeter_mixed(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         "identifiable_pct": res.identifiable_pct, "median_d2i_s": _fin(res.median_d2i_s),
         "p90_d2i_s": _fin(res.p90_d2i_s), "worst_d2i_s": _fin(res.worst_d2i_s),
         "cue_target_ppm": res.cue_target_ppm, "ptz_detect_floor_ppm": res.ptz_detect_floor_ppm,
-        "ptz_camera_name": res.ptz_camera_name,
+        "ptz_camera_name": res.ptz_camera_name, "ptz_thermal": is_thermal_camera(ptz_cam),
         "overlay": _image(overlay, max_px=max_px), "legend": map_render.legend(layer)[1],
     }
 

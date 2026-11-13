@@ -8,7 +8,7 @@ import { DEFAULT_CAMERA, type CameraConfig, type ModelSummary } from "../core/ap
 import { useCoalesced, useCore } from "../core/CoreProvider";
 import { usePageActive } from "../core/pageActive";
 import type {
-  AreaPlanResult, CityInfo, CoverageLayer, CoverageResult, DoriLevel, FocalSweep, PlaybackPtz, LegendRow, NightCoverage, PlanResult, PoleSearch, RegionInfo, Scenario,
+  AreaPlanResult, CityInfo, CoverageLayer, CoverageResult, DoriLevel, FocalSweep, OptimizeResult, PlaybackPtz, LegendRow, NightCoverage, PlanResult, PoleSearch, RegionInfo, Scenario,
   SingleViewshed, TerrainCatalog, TerrainInfo,
 } from "../core/terrainApi";
 import { useJob } from "../core/useJob";
@@ -17,7 +17,7 @@ import { useProject } from "../core/project";
 import MapView from "../components/MapView";
 import JobBar from "../components/JobBar";
 import { FocalCurve, ProfileChart } from "../components/charts";
-import { MixedPanel, PtzPanel, type Layer } from "../components/PtzPanels";
+import { MixedPanel, PtzPanel, type Layer, type Patrol } from "../components/PtzPanels";
 import PtzSweep from "../components/PtzSweep";
 import { ComparePanel, EMPTY_PRICES, NetworkPanel, type NetworkResult, type PriceBook } from "../components/PlanningPanels";
 import { NightPanel, ScenarioPanel } from "../components/DeliveryPanels";
@@ -40,6 +40,15 @@ const THERMAL_LEVELS = [
   ["observe", "Johnson tanıma ≥6,7"],
   ["recognize", "Johnson teşhis ≥13,3"],
 ] as const;
+// one list for every level selector: a thermal has three levels and none of them is a face
+const levelsFor = (thermal: boolean): readonly (readonly [DoriLevel, string])[] => (thermal ? THERMAL_LEVELS : LEVELS);
+const levelName = (k: string, thermal: boolean) => { const l = levelsFor(thermal).find(([x]) => x === k)?.[1] ?? ""; return l.slice(0, l.lastIndexOf(" ")); };
+const clampLevel = <L extends string>(l: L, thermal: boolean) => (thermal && l === "identify" ? "recognize" as L : l);
+// fence targets a designer actually picks (a 25–250 slider in steps of 5 could not land on 62,5)
+const TARGETS: readonly (readonly [number, string])[] = [[25, "Algılama · 25"], [40, "Güçlendirilmiş çit · 40"], [62.5, "Gözlem · 62,5"], [125, "Tanıma · 125"], [250, "Teşhis · 250"]];
+const THERMAL_TARGETS: readonly (readonly [number, string])[] = [[1.3, "Johnson algılama · 1,3"], [6.67, "Johnson tanıma · 6,67"], [13.33, "Johnson teşhis · 13,33"]];
+// "%100,0" beside "3 m uncovered" read as a contradiction: 100 is shown only when nothing is left out
+const pctCapped = (f: number, uncoveredM: number) => (uncoveredM >= 0.5 && f * 100 >= 99.95 ? "%99,9" : pct(f));
 
 type Tab = "single" | "perimeter";
 type LineMode = "facility" | "border" | "highway" | "area";
@@ -67,6 +76,9 @@ export default function Terrain() {
   const [sweep, setSweep] = useState<FocalSweep | null>(null);
   const [sweepLevel, setSweepLevel] = useState<DoriLevel>("recognize");
   const [isPtz, setIsPtz] = useState(false);
+  const [isThermal, setIsThermal] = useState(false);
+  const [patrol, setPatrol] = useState<Patrol>({ speed: 20, dwell: 2 });
+  const [customTarget, setCustomTarget] = useState(false);
   const [ptzLayer, setPtzLayer] = useState<Layer | null>(null);       // single tab: PTZ result replaces the fan
   const [mixedLayer, setMixedLayer] = useState<Layer | null>(null);   // perimeter tab: fixed + PTZ layers
   const [mixedPtz, setMixedPtz] = useState<{ camera: CameraConfig | null; everyN: number; span: number }>({ camera: null, everyN: 4, span: 360 });
@@ -101,7 +113,7 @@ export default function Terrain() {
   const [optLevel, setOptLevel] = useState("detect");
   const [panSearch, setPanSearch] = useState(false);
   const [poleLevel, setPoleLevel] = useState<DoriLevel>("detect");
-  const [optRes, setOptRes] = useState<{ before_m2: number; after_m2: number; band_area_m2: number; changed: number; moved: number; max_move_m: number; notes: string[] } | null>(null);
+  const [optRes, setOptRes] = useState<OptimizeResult | null>(null);
   const [poleRes, setPoleRes] = useState<PoleSearch | null>(null);
   const [night, setNight] = useState<NightCoverage | null>(null);
   const [approachMarks, setApproachMarks] = useState<ApproachMarks | null>(null);
@@ -158,11 +170,23 @@ export default function Terrain() {
   const vs = useCoalesced(vsInput, (i) => T.viewshed(i!), !!vsInput && state === "ready" && active);
   const single: SingleViewshed | undefined = vs.value;
 
-  const applyModel = async (name: string) => {
-    const { camera: c, is_ptz } = await api.cameraFor(name, camera);
+  const applyModel = async (name: string, opts?: { keepMount?: boolean }) => {
+    const { camera: c, is_ptz, thermal } = await api.cameraFor(name, camera);
     setCamera(c);
     setIsPtz(is_ptz);
-    setMount((m) => ({ ...m, focal: undefined }));
+    setIsThermal(thermal);
+    // the old model's zoom and tilt do not carry over; a PTZ opens on its wide (patrol) view, not at full tele
+    setMount((m) => (opts?.keepMount ? { ...m, focal: undefined }
+      : { ...m, focal: undefined, tilt: -5, lens: is_ptz ? "min" : m.lens }));
+    // level selectors follow the camera's scale
+    setSweepLevel((l) => clampLevel(l, thermal)); setPoleLevel((l) => clampLevel(l, thermal));
+    setOptLevel((l) => clampLevel(l, thermal)); setCovLevel((l) => clampLevel(l, thermal));
+    setArea((a) => ({ ...a, level: clampLevel(a.level, thermal) }));
+    setPlan((p) => {
+      const onScale = (thermal ? THERMAL_TARGETS : TARGETS).some(([v]) => v === p.target_ppm);
+      const otherScale = (thermal ? TARGETS : THERMAL_TARGETS).some(([v]) => v === p.target_ppm);
+      return !onScale && otherScale ? { ...p, target_ppm: thermal ? 1.3 : 40 } : p;
+    });
     setSweep(null);
     setPtzLayer(null);
   };
@@ -175,7 +199,7 @@ export default function Terrain() {
   const startPlayback = async (args: Record<string, unknown>) => {
     if (!info) return;
     const r = await job.run("Canlı PTZ taraması hazırlanıyor", (o) => T.ptzPlayback({ terrain_id: info.terrain_id, use_obstacles: useObstacles,
-      max_px: 900, speed_deg_s: 20, ...args }, o));
+      max_px: 900, speed_deg_s: patrol.speed, end_dwell_s: patrol.dwell, ...args }, o));
     if (r) { setPlay({ ptz: r.ptz, tab, camera: r.camera_name }); setPlaying(true); setPlayT(0); }
   };
   const ptzArgs = () => (mixedPtz.camera ? { ptz_camera: mixedPtz.camera, ptz_every_n: mixedPtz.everyN, ptz_patrol_span_deg: mixedPtz.span } : {});
@@ -200,7 +224,7 @@ export default function Terrain() {
     if (!info) return;
     setCovLayer(layer); setCovLevel(level);
     const r = await job.run("Birleşik görüş alanı", (o) => T.coverage({ terrain_id: info.terrain_id, use_obstacles: useObstacles, max_px: 1200,
-      layer, level, ...bandArgs() }, o));
+      layer, level, ptz_speed_deg_s: patrol.speed, ptz_end_dwell_s: patrol.dwell, ...bandArgs() }, o));
     if (r) setCoverage(r);
   };
   const runPoles = async () => {
@@ -212,7 +236,10 @@ export default function Terrain() {
   const runSweep = async () => {
     if (!info) return;
     const r = await job.run("Odak taraması", (o) => T.focalSweep({ terrain_id: info.terrain_id, use_obstacles: useObstacles, camera,
-      x_m: mount.x, y_m: mount.y, mast_m: mount.mast, pan_deg: mount.pan, level: sweepLevel, weather, n_focals: 10 }, o));
+      x_m: mount.x, y_m: mount.y, mast_m: mount.mast, pan_deg: mount.pan, level: sweepLevel, weather, n_focals: 10,
+      // the engine scores the optimum against what the map shows now, over the same analysis range
+      range_m: mount.range, current_tilt_deg: mount.tilt,
+      current_focal_mm: mount.focal ?? (mount.lens === "max" ? camera.focal_max_mm : camera.focal_min_mm) }, o));
     if (r) setSweep(r);
   };
 
@@ -282,7 +309,7 @@ export default function Terrain() {
       }));
       if (x.prices && typeof x.prices === "object") setPrices({ ...EMPTY_PRICES, ...(x.prices as Partial<PriceBook>) });
       setScenarios(Array.isArray(x.scenarios) ? (x.scenarios as Scenario[]) : []);
-      if (typeof x.camera_model === "string" && x.camera_model) void applyModel(x.camera_model).catch(() => undefined);
+      if (typeof x.camera_model === "string" && x.camera_model) void applyModel(x.camera_model, { keepMount: true }).catch(() => undefined);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadedTerrain?.nonce, state]);
@@ -375,10 +402,11 @@ export default function Terrain() {
           {info ? (
             <MapView widthM={info.width_m} heightM={info.height_m} base={base} overlay={overlay}
               camera={tab === "single" && single ? { x: mount.x, y: mount.y, pan: mount.pan, hfov: single.hfov_deg,
-                range: Math.min(mount.range, single.max_los_reach_m > 0 ? single.max_los_reach_m : mount.range) } : null}
+                // the wedge ends where the frame does: a steep tilt holds only the mast's foot
+                range: Math.max(Math.min(mount.range, single.framed_reach_m > 0 ? single.framed_reach_m : mount.range), 15) } : null}
               fence={tab === "perimeter" ? fence : []} fenceClosed={plan.closed || isArea}
               poles={tab === "perimeter" ? planRes?.poles : []} ptz={tab === "perimeter" ? planRes?.ptz : []}
-              gaps={tab === "perimeter" ? planRes?.gaps : []} showFov={showFov}
+              gaps={tab === "perimeter" && planRes?.line_mode !== "border" ? planRes?.gaps : []} showFov={showFov}
               inMap={play && play.tab === tab ? <PtzSweep ptz={play.ptz} heightM={info.height_m} playing={playing} rate={rate} onTime={setPlayT} /> : null}
               switches={tab === "perimeter" ? network?.network.switches : []}
               approach={tab === "perimeter" && mixedLayer?.title === "Gizli yaklaşma" ? approachMarks : null}
@@ -474,7 +502,7 @@ export default function Terrain() {
             {isPtz && (
               <>
                 <PtzPanel T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} camera={camera}
-                  mount={mount} weather={weather} onLayer={setPtzLayer} onPlay={startPlayback} />
+                  thermal={isThermal} mount={mount} weather={weather} onLayer={setPtzLayer} onPlay={startPlayback} />
                 {ptzLayer && <Button className="w-full" onClick={() => setPtzLayer(null)}>Tekil görüş alanına dön</Button>}
               </>
             )}
@@ -482,7 +510,7 @@ export default function Terrain() {
               <Panel title="Varifokal: tüm odaklar">
                 <select className="h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={sweepLevel} aria-label="Varifokal hedef seviyesi"
                   onChange={(e) => { setSweepLevel(e.target.value as DoriLevel); setSweep(null); }}>
-                  {LEVELS.map(([k, l]) => <option key={k} value={k}>En geniş {l} alanı</option>)}
+                  {levelsFor(isThermal).map(([k, l]) => <option key={k} value={k}>En geniş {l} alanı</option>)}
                 </select>
                 <p className="mt-1 text-[10px] text-text-3">Optimum, seçilen seviyede EN GENİŞ alanı verir; daha düşük seviyelerin alanı küçülebilir.</p>
                 <Button className="mt-2 w-full" disabled={job.running} onClick={runSweep}><Play size={14} /> Odakları Tara</Button>
@@ -490,10 +518,13 @@ export default function Terrain() {
                   <div className="mt-2">
                     <FocalCurve curve={sweep.curve} best={sweep.best} level={sweep.level} />
                     <div className="mt-1 font-mono text-[11px]">
-                      en iyi {fmt(sweep.best.focal_mm)} mm · eğim {fmt(sweep.best.tilt_deg)}° · {LEVELS.find(([k]) => k === sweepLevel)?.[1].split(" ")[0]} {ha(sweep.best.areas_m2[sweepLevel] ?? 0)}
-                      {single && <span className="text-text-3"> (şimdi {ha(atLeast(single.zone_areas_m2, sweepLevel))})</span>}
+                      en iyi {fmt(sweep.best.focal_mm)} mm · eğim {fmt(sweep.best.tilt_deg)}° · {levelName(sweepLevel, isThermal)} {ha(sweep.verified.area_m2)}
+                      {sweep.current && <span className="text-text-3"> (şimdi {ha(sweep.current.area_m2)})</span>}
+                      <span className="text-text-3"> · motor</span>
                     </div>
-                    <Button primary className="mt-2 w-full" onClick={() => setMount((m) => ({ ...m, focal: sweep.best.focal_mm, tilt: sweep.best.tilt_deg }))}>Optimumu Uygula</Button>
+                    {sweep.note && <div className={`mt-1 text-[11px] ${sweep.worth_applying ? "text-text-3" : "text-warn"}`}>{sweep.worth_applying ? "◆" : "▲"} {sweep.note}</div>}
+                    <Button primary className="mt-2 w-full" disabled={!sweep.worth_applying}
+                      onClick={() => { setMount((m) => ({ ...m, focal: sweep.best.focal_mm, tilt: sweep.best.tilt_deg })); setSweep(null); }}>Optimumu Uygula</Button>
                   </div>
                 )}
               </Panel>
@@ -534,7 +565,7 @@ export default function Terrain() {
                   <label><span className="label">Hedef seviye</span>
                     <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={area.level} aria-label="Alan hedef seviyesi"
                       onChange={(e) => setArea((a) => ({ ...a, level: e.target.value as DoriLevel }))}>
-                      {LEVELS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                      {levelsFor(isThermal).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                     </select></label>
                   <Slider label="Alanın en az" unit="%" value={area.goal} min={50} max={99} step={1} onChange={(v) => setArea((a) => ({ ...a, goal: v }))} />
                   <Slider label="Direk" unit="m" value={plan.mast_m} min={2} max={30} step={0.5} onChange={(v) => setPlan((p) => ({ ...p, mast_m: v }))} />
@@ -565,7 +596,20 @@ export default function Terrain() {
               ) : (
                 <>
                   <div className="mt-3 flex flex-col gap-3">
-                    <Slider label="Hedef" unit="px/m" value={plan.target_ppm} min={25} max={250} step={5} onChange={(v) => setPlan((p) => ({ ...p, target_ppm: v }))} />
+                    <label><span className="label">Hedef (px/m)</span>
+                      <div className="mt-1 flex gap-1.5">
+                        <select className="h-8 min-w-0 flex-1 rounded border border-line bg-bg-0 px-1 text-[12px]" aria-label="Çit hedefi"
+                          value={!customTarget && (isThermal ? THERMAL_TARGETS : TARGETS).some(([v]) => v === plan.target_ppm) ? String(plan.target_ppm) : "custom"}
+                          onChange={(e) => { const c = e.target.value === "custom"; setCustomTarget(c); if (!c) setPlan((p) => ({ ...p, target_ppm: Number(e.target.value) })); }}>
+                          {(isThermal ? THERMAL_TARGETS : TARGETS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                          <option value="custom">Özel…</option>
+                        </select>
+                        {(customTarget || !(isThermal ? THERMAL_TARGETS : TARGETS).some(([v]) => v === plan.target_ppm)) && (
+                          <input type="number" min={1} max={500} step={0.5} value={plan.target_ppm} aria-label="Özel hedef (px/m)"
+                            onChange={(e) => { const v = Number(e.target.value); if (v >= 1 && v <= 500) setPlan((p) => ({ ...p, target_ppm: v })); }}
+                            className="h-8 w-20 rounded border border-line bg-bg-0 px-1.5 text-right font-mono text-[12px]" />
+                        )}
+                      </div></label>
                     <Slider label="Direk" unit="m" value={plan.mast_m} min={2} max={30} step={0.5} onChange={(v) => setPlan((p) => ({ ...p, mast_m: v }))} />
                     <div>
                       <span className="label">Lens (aralık hesabı)</span>
@@ -581,9 +625,9 @@ export default function Terrain() {
                       onChange={(v) => setBand((b) => ({ out: v, in: b.in === b.out ? v : b.in }))} />
                     {plan.closed && <Slider label="Bant · iç (steril alan)" unit="m" value={band.in} min={0} max={200} step={5} onChange={(v) => setBand((b) => ({ ...b, in: v }))} />}
                     {plan.line_mode === "facility" && (
-                      <label className="flex items-center gap-2 text-[12px]">
+                      <label className="flex items-center gap-2 text-[12px]" title="Her direğe ters yöne bakan ikinci kamera: yedekli, direk dibinde kör bölge kalmaz">
                         <input type="checkbox" checked={plan.back_to_back} onChange={(e) => setPlan((p) => ({ ...p, back_to_back: e.target.checked }))} />
-                        Sırt sırta: direk başına 2 kamera (yedekli, kör bölgesiz)</label>
+                        Sırt sırta (direk başına 2 kamera)</label>
                     )}
                   </div>
                   <Button primary className="mt-3 w-full" disabled={job.running || fence.length < 2} onClick={runPlan}><MapPin size={14} /> Direkleri Diz</Button>
@@ -598,18 +642,24 @@ export default function Terrain() {
                   {planRes.line_mode === "area" && areaRes ? (
                     <>
                       <Tile label="Alan" value={ha(areaRes.area_m2)} />
-                      <Tile label={`Alan · ${LEVELS.find(([k]) => k === areaRes.level)?.[1].split(" ")[0] ?? ""}`} value={pct(areaRes.engine_frac)}
+                      <Tile label={`Alan · ${levelName(areaRes.level, isThermal)}`} value={pct(areaRes.engine_frac)}
                         tone={areaRes.met ? "text-primary" : "text-warn"} />
                     </>
                   ) : (
                     <>
                       <Tile label="Çit uzunluğu" value={fmt(planRes.total_fence_length_m, 0)} unit="m" />
                       {/* one headline number: the engine's fence line once coverage ran, else the planner's estimate (labelled) */}
-                      {coverage?.fence_line ? (
-                        <Tile label={`Çit çizgisi · motor · ${coverage.target.label}`} value={pct(coverage.fence_line.held)}
+                      {planRes.line_mode === "border" ? (
+                        // a border pole looks ACROSS the line: the line itself reads ~0 % by design, the watched strip is the result
+                        coverage ? <Tile label={`İzlenen şerit · motor · ${coverage.target.label}`} value={pct(coverage.target.held)}
+                          tone={coverage.target.held < 0.95 ? "text-warn" : "text-primary"} />
+                          : <Tile label="İzlenen şerit" value="—" />
+                      ) : coverage?.fence_line ? (
+                        <Tile label={`Çit çizgisi · motor · ${coverage.target.label}`} value={pctCapped(coverage.fence_line.held, coverage.fence_line.uncovered_m)}
                           tone={coverage.fence_line.held < 0.95 ? "text-warn" : "text-primary"} />
                       ) : (
-                        <Tile label="Çit · ön tahmin" value={`%${fmt(planRes.coverage_percentage, 1)}`} tone={planRes.coverage_percentage < 95 ? "text-warn" : "text-primary"} />
+                        <Tile label="Çit · ön tahmin (planlayıcı)" value={pctCapped(planRes.coverage_percentage / 100, (100 - planRes.coverage_percentage) / 100 * planRes.total_fence_length_m)}
+                          tone={planRes.coverage_percentage < 95 ? "text-warn" : "text-primary"} />
                       )}
                     </>
                   )}
@@ -627,13 +677,23 @@ export default function Terrain() {
                   </div>
                 )}
                 <div className="mt-2 font-mono text-[10px] text-text-3">{planRes.line_mode === "area" ? "direkler arası ort." : "ort. aralık"} {fmt(planRes.avg_spacing_m)} m · {fmt(planRes.estimated_bandwidth_mbps, 0)} Mbps · 30 gün {fmt(planRes.estimated_storage_30days_tb, 1)} TB</div>
-                {planRes.line_mode !== "area" && planRes.coverage_percentage < 99.95 && (
-                  <div className="mt-2 text-[11px] text-danger">
-                    ■ Kapsanmayan çit ≈ {fmt((100 - planRes.coverage_percentage) / 100 * planRes.total_fence_length_m, 0)} m
-                    {planRes.gaps.length > 0 ? ` · ${planRes.gaps.length} boşluk ≥ 4 m (haritada kırmızı)` : " · hepsi 4 m'den kısa parçalar"}
-                    {!coverage && <span className="text-text-3"> — ön tahmin; Birleşik Kapsama motorla doğrular</span>}
-                  </div>
+                {planRes.line_mode === "border" && (
+                  <div className="mt-2 text-[11px] text-text-3">◆ Sınır modunda kameralar hatta dik bakar; çizginin kendisi değil izlenen şerit puanlanır{coverage ? "" : " (Birleşik Kapsamayı hesaplayın)"}.</div>
                 )}
+                {planRes.line_mode !== "area" && planRes.line_mode !== "border" && (() => {
+                  // one number for one plan: the engine's, at the selected target, once coverage ran
+                  const fl = coverage?.fence_line;
+                  const m = fl ? fl.uncovered_m : (100 - planRes.coverage_percentage) / 100 * planRes.total_fence_length_m;
+                  if (m < 0.5) return null;
+                  return (
+                    <div className="mt-2 text-[11px] text-danger">
+                      ■ Kapsanmayan çit ≈ {fmt(m, 0)} m
+                      {fl ? ` · motor · ${coverage.target.label}`
+                        : planRes.gaps.length > 0 ? ` · ${planRes.gaps.length} boşluk ≥ 4 m (haritada kırmızı)` : " · hepsi 4 m'den kısa parçalar"}
+                      {!fl && <span className="text-text-3"> — ön tahmin; Birleşik Kapsama motorla doğrular</span>}
+                    </div>
+                  );
+                })()}
                 <label className="mt-2 flex items-center gap-2 text-[12px]"><input type="checkbox" checked={showFov} onChange={(e) => setShowFov(e.target.checked)} /> Haritada FOV kamaları, odak ve PTZ devriyesi</label>
                 <div className="mt-2 grid grid-cols-2 gap-2">
                   <label><span className="label">Katman</span>
@@ -644,23 +704,23 @@ export default function Terrain() {
                   <label><span className="label">Hedef</span>
                     <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-1 text-[12px]" value={covLevel} aria-label="Kapsama hedefi"
                       onChange={(e) => { const l = e.target.value as "plan" | DoriLevel; if (coverage) void runCoverage(covLayer, l); else setCovLevel(l); }}>
-                      <option value="plan">{planRes.line_mode === "area" && areaRes ? `Plan (${LEVELS.find(([k]) => k === areaRes.level)?.[1].split(" ")[0]})` : `Plan (${fmt(planRes.target_ppm, 0)} px/m)`}</option>
-                      {LEVELS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                      <option value="plan">{planRes.line_mode === "area" && areaRes ? `Plan (${levelName(areaRes.level, isThermal)})` : `Plan (${fmt(planRes.target_ppm, planRes.target_ppm % 1 ? 2 : 0)} px/m)`}</option>
+                      {levelsFor(isThermal).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                     </select></label>
                 </div>
                 <Button className="mt-2 w-full" disabled={job.running} onClick={() => void runCoverage()}><Layers size={14} /> Birleşik Kapsamayı Hesapla</Button>
-                {coverage && <CoverageSummary c={coverage} />}
+                {coverage && <CoverageSummary c={coverage} thermal={isThermal} />}
               </Panel>
             )}
             {<MixedPanel T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} models={models}
               value={mixedPtz} onChange={setMixedPtz} hasPlanWithPtz={!!planRes?.ptz.length} onLayer={setMixedLayer} onPlay={startPlayback}
-              resetKey={planVer}
+              resetKey={planVer} patrol={patrol} onPatrol={setPatrol}
               ptzModelFor={async (n) => (await api.cameraFor(n, undefined, true)).camera} />}
             {mixedLayer && <Button className="w-full" onClick={() => setMixedLayer(null)}>Birleşik kapsamaya dön</Button>}
             {planRes && (
               <Panel title="Dizilimi optimize et">
                 <select className="h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={optLevel} onChange={(e) => setOptLevel(e.target.value)} aria-label="Hedef seviye">
-                  {LEVELS.map(([k, l]) => <option key={k} value={k}>{planRes.line_mode === "area" ? "Alanda" : "Bantta"} {l} alanı</option>)}
+                  {levelsFor(isThermal).map(([k, l]) => <option key={k} value={k}>{planRes.line_mode === "area" ? "Alanda" : "Bantta"} {l} alanı</option>)}
                 </select>
                 {planRes.line_mode !== "area" && <label className="mt-2 flex items-center gap-2 text-[12px]"><input type="checkbox" checked={slide} onChange={(e) => setSlide(e.target.checked)} /> Direkleri çit boyunca kaydır (arazi / bina)</label>}
                 <label className="mt-1 flex items-center gap-2 text-[12px]"><input type="checkbox" checked={panSearch} onChange={(e) => setPanSearch(e.target.checked)} /> Kamera yönünü de ara (±30°)</label>
@@ -669,9 +729,11 @@ export default function Terrain() {
                   ...(panSearch ? { pan_search_deg: 30 } : {}), ...bandArgs() }, o))
                   .then((r) => {
                     if (!r) return;
-                    replacePlan(r.plan); setOptRes(r);       // replacePlan clears results of the old plan
+                    // not applied: the engine did not find the layout better, the plan (and its results) stay
+                    if (r.applied) replacePlan(r.plan);       // replacePlan clears results of the old plan
+                    setOptRes(r);
                     // the area tile shows the plan's engine share: keep it true to the optimised plan
-                    if (areaRes && r.plan.line_mode === "area") {
+                    if (r.applied && areaRes && r.plan.line_mode === "area") {
                       const f = r.after_m2 / Math.max(r.band_area_m2, 1);
                       setAreaRes(optLevel === areaRes.level
                         ? { ...areaRes, plan: r.plan, engine_frac: f, met: f >= areaRes.goal_frac }
@@ -683,10 +745,14 @@ export default function Terrain() {
                 </Button>
                 {optRes && (
                   <div className="mt-2 text-[12px]">
-                    <div className={optRes.after_m2 > optRes.before_m2 ? "text-primary" : "text-text-2"}>
-                      ● Otoriter motor, {planRes.line_mode === "area" ? "alan" : "bant"}: {ha(optRes.before_m2)} → <b>{ha(optRes.after_m2)}</b> ({pct(optRes.after_m2 / Math.max(optRes.band_area_m2, 1))})
+                    <div className={!optRes.applied ? "text-warn" : optRes.after_m2 > optRes.before_m2 ? "text-primary" : "text-text-2"}>
+                      {optRes.applied ? "●" : "▲"} Otoriter motor, {planRes.line_mode === "area" ? "alan" : "bant"}: {ha(optRes.before_m2)} → <b>{ha(optRes.after_m2)}</b> ({pct(optRes.after_m2 / Math.max(optRes.band_area_m2, 1))})
                     </div>
-                    <div className="mt-1 text-[11px] text-text-3">{optRes.changed} direğin ayarı değişti{optRes.moved ? ` · ${optRes.moved} direk en çok ${fmt(optRes.max_move_m, 0)} m kaydı` : ""}</div>
+                    {optRes.fence_line && (
+                      <div className="mt-1 text-[11px] text-text-2">Çit çizgisi: kapsanmayan {fmt(optRes.fence_line.before_uncovered_m, 0)} m → {fmt(optRes.fence_line.after_uncovered_m, 0)} m · boşluk {optRes.fence_line.before_gaps} → {optRes.fence_line.after_gaps}</div>
+                    )}
+                    {optRes.applied && <div className="mt-1 text-[11px] text-text-3">{optRes.changed} direğin ayarı değişti{optRes.moved ? ` · ${optRes.moved} direk en çok ${fmt(optRes.max_move_m, 0)} m kaydı` : ""}</div>}
+                    {optRes.notes.map((n) => <div key={n} className="mt-1 text-[11px] text-text-3">◆ {n}</div>)}
                   </div>
                 )}
               </Panel>
@@ -709,13 +775,13 @@ export default function Terrain() {
             )}
             {fence.length >= 2 && !isArea && (
               <ComparePanel T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} models={models} camera={camera}
-                planArgs={planParams()} prices={prices}
+                planArgs={planParams()} prices={prices} levels={levelsFor(isThermal).map(([k, l]) => [k, `Bantta ${l}`] as const)}
                 onUse={(p, name) => { replacePlan(p); void applyModel(name); }} />
             )}
             {!isArea && <Panel title="En az direk">
               <select className="h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={poleLevel} aria-label="En az direk seviyesi"
                 onChange={(e) => setPoleLevel(e.target.value as DoriLevel)}>
-                {LEVELS.map(([k, l]) => <option key={k} value={k}>Bantta {l}</option>)}
+                {levelsFor(isThermal).map(([k, l]) => <option key={k} value={k}>Bantta {l}</option>)}
               </select>
               <div className="mt-2"><Slider label="Bandın en az" unit="%" value={goal} min={50} max={99} step={1} onChange={setGoal} /></div>
               <Button className="mt-2 w-full" disabled={job.running || fence.length < 2} onClick={runPoles}><Play size={14} /> Aramayı Başlat</Button>
@@ -737,15 +803,9 @@ export default function Terrain() {
   );
 }
 
-/** Area at the level OR BETTER (sweep areas are cumulative; zone_areas_m2 is per band). */
-function atLeast(z: Record<string, number>, level: DoriLevel) {
-  const order: DoriLevel[] = ["identify", "recognize", "observe", "detect"];
-  return order.slice(0, order.indexOf(level) + 1).reduce((s, k) => s + (z[k] ?? 0), 0);
-}
-
 /** What coverage says, split the way a designer reads it: the fence line, the
  *  band by target (fixed / PTZ only / below / unseen), then DORI levels. */
-function CoverageSummary({ c }: { c: CoverageResult }) {
+function CoverageSummary({ c, thermal }: { c: CoverageResult; thermal: boolean }) {
   const t = c.target;
   const where = c.roi_kind === "area" ? `Alan (${ha(c.band_area_m2)})`
     : c.roi_kind === "side" ? `İzlenen taraf (${c.watch_side === "left" ? "sol" : "sağ"}), ${fmt(c.band_m, 0)} m derinlik (${ha(c.band_area_m2)})`
@@ -769,7 +829,7 @@ function CoverageSummary({ c }: { c: CoverageResult }) {
       {row("görülüyor, hedef altı", pct(t.below), "text-warn")}
       {row("hiç görülmüyor", pct(t.unseen), "text-danger")}
       <div className="mt-1 text-text-2">DORI · {c.ptz_count > 0 ? "sabit + yalnız PTZ" : "sabit kameralar"}</div>
-      {LEVELS.map(([k, l]) => row(l, c.ptz_count > 0 ? `${pct(c.band_share[k])} + ${pct(c.band_share_ptz[k])}` : pct(c.band_share[k])))}
+      {levelsFor(thermal).map(([k, l]) => row(l, c.ptz_count > 0 ? `${pct(c.band_share[k])} + ${pct(c.band_share_ptz[k])}` : pct(c.band_share[k])))}
       {c.ptz_count > 0 && <div className="mt-1 text-text-3">◆ {c.ptz_count} PTZ devriyesi; en uzun izlenmeyen süre {fmt(c.ptz_worst_revisit_s, 0)} sn</div>}
       {!c.measured && <div className="mt-1 text-warn">▲ prosedürel arazi — ölçüm değil</div>}
     </div>

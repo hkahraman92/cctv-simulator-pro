@@ -1062,6 +1062,34 @@ Modu" satırı.
   bakım; PoE PSE sınıfına yuvarlanır (cihaz × 1,1), vars. PTZ 60 W; görünür
   kameralar gece ×2 bit hızı (depolama ortalama, NVR tepe); fiber halka seçimi.
 - **PTZ tanıma**: "SD <rakam>" model kodu, "hareketli" ve ≥ 20x zoom = PTZ.
+- **Optimum motordan geçmeden uygulanmaz** (`focal.sweep`): eğri direk
+  raster'ı tahminidir; servis optimumu ve (gönderilirse) şimdiki ayarı
+  otoriter motorla puanlar → `verified` / `current` / `worth_applying` /
+  `note`. Motor 0 m² buluyorsa, kazanç ≤ 0 ise ya da kazanç ızgara
+  çözünürlüğündeyken görünen alan yarıdan fazla düşüyorsa "Optimumu Uygula"
+  kapalıdır (12 m direkte Tanıma 0,01 ha için kamera kör kalıyordu).
+- **Dizilim optimizasyonu çit çizgisini satamaz**
+  (`focal_optimizer.apply_layout_keeping_fence`): bant alanı için yeniden
+  nişanlanan direk izlediği çit parçasını bırakıyordu (kapsanmayan 3 → 168 m).
+  Önce kapsanıp sonra kaybedilen çit örneklerini tutan direkler eski ayarına
+  döner (4 m net tolerans); tesis / otoyolda uygulanır, sınır ve alanda yok.
+  `apply_layout` yeni kadrajın `dead_zone_m`'ini de yazar (eskisi kalıyordu).
+  Motor yeni dizilimi kötü bulursa plan değişmez (`applied: false`).
+  Çit örnek bayrakları: `perimeter_planner._fence_points_covered`.
+- **En az direk tutmayacak hedefi kovalamaz** (`pole_optimizer`): hiçbir
+  deneme geçmemişken sıklaştırma < 1 puan kazandırıyorsa ya da azalan
+  getiriyle kalan denemeler hedefe yetmiyorsa arama durur ve bunu yazar
+  (eskiden 1220 direğe kadar 90 sn sürüyordu).
+- **Termal seviyeler tek yerden** (`terrain_methods._level_of`,
+  `viewshed_3d.identify_ppm` / `zone_ppm`): termalde "identify" Türkçe
+  APP_ERROR; PTZ tespit→teşhis hedefi verilmezse kameranın kendi teşhis
+  seviyesi (termal 13,33 px/m). Masaüstünde bütün seviye seçicileri
+  `levelsFor(thermal)`; çit hedefi adlandırılmış seçenek + "Özel".
+- **Tarama `truncated` eğimi bilir**: dik eğimde kadraj direk dibinde biter;
+  menzil kenarındaki hücre kadrajın üst kenarının altındaysa uyarır.
+- **Tek devriye ayarı**: masaüstünde PTZ devriye hızı / uç bekleme tek durumda
+  (`Patrol`), kapsama, karma değerlendirme ve canlı tarama aynısını gönderir.
+- Testler: `tests/test_audit_fixes.py`.
 
 ## Açık işler
 

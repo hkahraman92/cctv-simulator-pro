@@ -91,7 +91,6 @@ export function NetworkPanel({ T, job, terrainId, useObstacles, prices, onPrices
             <span className="text-text-3">Kayıt ({n.retention_days} gün)</span><span className="text-right">{fmt(n.storage_tb, 1)} TB</span>
           </div>
           {n.warnings.map((w) => <div key={w} className="mt-1 text-warn">▲ {w}</div>)}
-          {n.assumptions.map((a) => <div key={a} className="mt-0.5 font-sans text-[10px] text-text-3">◆ {a}</div>)}
           <table className="mt-2 w-full border-collapse">
             <tbody>
               {res.cost.lines.map((l) => (
@@ -118,13 +117,16 @@ interface CompareOption {
 }
 
 /** Which library model holds the fence goal with the fewest poles / lowest cost. */
-export function ComparePanel({ T, job, terrainId, useObstacles, models, camera, planArgs, prices, onUse }: {
+export function ComparePanel({ T, job, terrainId, useObstacles, models, camera, planArgs, prices, onUse, levels }: {
   T: TerrainApi; job: Job; terrainId: string; useObstacles: boolean; models: ModelSummary[]; camera: CameraConfig;
+  /** the camera's own scale: EN 62676-4, or Johnson (three levels) for a thermal */
+  levels: readonly (readonly [string, string])[];
   planArgs: Record<string, unknown>; prices: PriceBook; onUse: (plan: PlanResult, modelName: string) => void;
 }) {
   const [picked, setPicked] = useState<string[]>([]);
   const [goal, setGoal] = useState(90);
-  const [level, setLevel] = useState<"detect" | "observe" | "recognize" | "identify">("detect");
+  const [picked_level, setLevel] = useState("detect");
+  const level = levels.some(([k]) => k === picked_level) ? picked_level : "detect";
   const [modelPrices, setModelPrices] = useState<Record<string, number>>({});
   const [opts, setOpts] = useState<CompareOption[] | null>(null);
   const fixed = models.filter((m) => !m.is_ptz);
@@ -151,8 +153,8 @@ export function ComparePanel({ T, job, terrainId, useObstacles, models, camera, 
         ))}
       </div>
       <select className="mt-2 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={level} aria-label="Karşılaştırma seviyesi"
-        onChange={(e) => setLevel(e.target.value as typeof level)}>
-        {([["detect", "Algılama ≥25"], ["observe", "Gözlem ≥62,5"], ["recognize", "Tanıma ≥125"], ["identify", "Teşhis ≥250"]] as const).map(([k, l]) => (
+        onChange={(e) => setLevel(e.target.value)}>
+        {levels.map(([k, l]) => (
           <option key={k} value={k}>Bantta {l}</option>))}
       </select>
       <label className="mt-2 flex items-center justify-between text-[12px]"><span className="label">Bant hedefi (%)</span>

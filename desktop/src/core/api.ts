@@ -116,7 +116,7 @@ export function api(rpc: RpcClient) {
     libDelete: (password: string, name: string) => rpc.call<{ deleted: string }>("library.delete", { password, name }),
     libSetPassword: (password: string, new_password: string) => rpc.call<{ ok: boolean }>("library.set_password", { password, new_password }),
     cameraFor: (name: string, base?: CameraConfig, withMounting = false) =>
-      rpc.call<{ camera: CameraConfig; is_ptz: boolean }>("library.camera", {
+      rpc.call<{ camera: CameraConfig; is_ptz: boolean; thermal: boolean }>("library.camera", {
         name,
         ...(base ? { base } : {}),
         with_mounting: withMounting,

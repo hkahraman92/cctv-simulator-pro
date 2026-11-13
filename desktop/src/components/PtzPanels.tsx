@@ -14,14 +14,19 @@ export interface Layer {
 type Job = ReturnType<typeof useJob>;
 const ha = (m2: number) => `${fmt(m2 / 1e4, 2)} ha`;
 const sec = (s: number | null) => (s == null ? "∞" : `${fmt(s, 1)} sn`);
+// cue targets on the camera's own scale; the first row sends no px/m (the core's default)
+const CUE_TARGETS: [number | null, string][] = [[null, "Teşhis · 250 px/m"], [125, "Tanıma · 125 px/m"], [62.5, "Gözlem · 62,5 px/m"], [25, "Algılama · 25 px/m"]];
+const CUE_TARGETS_THERMAL: [number | null, string][] = [[null, "Johnson teşhis · 13,33 px/m"], [6.67, "Johnson tanıma · 6,67 px/m"], [1.3, "Johnson algılama · 1,3 px/m"]];
+export interface Patrol { speed: number; dwell: number }
 
 /** Single-camera tab, PTZ model: sweep (360° / sector) or alarm -> identify time. */
-export function PtzPanel({ T, job, terrainId, useObstacles, camera, mount, weather, onLayer, onPlay }: {
+export function PtzPanel({ T, job, terrainId, useObstacles, camera, thermal, mount, weather, onLayer, onPlay }: {
   T: TerrainApi;
   job: Job;
   terrainId: string;
   useObstacles: boolean;
   camera: CameraConfig;
+  thermal: boolean;
   mount: { x: number; y: number; mast: number; pan: number; tilt: number; range: number; focal?: number; lens?: "min" | "max" };
   weather: string;
   onLayer: (l: Layer | null) => void;
@@ -34,7 +39,11 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, mount, weath
   const [speed, setSpeed] = useState(20);
   const [span, setSpan] = useState(120);
   const [dwell, setDwell] = useState(2);
-  const [target, setTarget] = useState(250);
+  // null = the camera's own identification level (EN 250 px/m, Johnson 13,33 for a thermal): the core decides
+  const [target, setTarget] = useState<number | null>(null);
+  useEffect(() => { setTarget(null); setCue(null); }, [thermal]);
+  // the zoom the map shows: an applied optimum, else the lens end the single view uses
+  const focal = mount.focal ?? (mount.lens === "min" ? camera.focal_min_mm : camera.focal_max_mm);
   const [accel, setAccel] = useState(0);        // deg/s^2, 0 = instant top speed
   const [sweep, setSweep] = useState<SweepResult | null>(null);
   const [cue, setCue] = useState<CueResult | null>(null);
@@ -47,11 +56,11 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, mount, weath
       return;
     }
     if (mode === "cue") {
-      void job.run("Tespit → teşhis süresi", (o) => T.ptzCue({ ...base, home_pan_deg: mount.pan, home_tilt_deg: mount.tilt, target_ppm: target }, o))
-        .then((r) => { if (!r) return; setCue(r); setSweep(null); onLayer({ overlay: r.overlay.data, legend: r.legend, title: `Tepki süresi · ${fmt(r.target_ppm, 0)} px/m` }); });
+      void job.run("Tespit → teşhis süresi", (o) => T.ptzCue({ ...base, home_pan_deg: mount.pan, home_tilt_deg: mount.tilt, ...(target != null ? { target_ppm: target } : {}) }, o))
+        .then((r) => { if (!r) return; setCue(r); setSweep(null); onLayer({ overlay: r.overlay.data, legend: r.legend, title: `Tepki süresi · ${fmt(r.target_ppm, r.target_ppm < 20 ? 2 : 0)} px/m` }); });
     } else {
       void job.run(mode === "rotation" ? "360° tarama" : "Sektör devriyesi", (o) => T.ptzSweep({
-        ...base, mode, speed_deg_s: speed, tilt_deg: mount.tilt, focal_mm: mount.focal,
+        ...base, mode, speed_deg_s: speed, tilt_deg: mount.tilt, focal_mm: focal,
         start_pan_deg: (mount.pan - span / 2 + 360) % 360, end_pan_deg: (mount.pan + span / 2) % 360, end_dwell_s: dwell,
       }, o)).then((r) => { if (!r) return; setSweep(r); setCue(null); onLayer({ overlay: r.overlay.data, legend: r.legend, title: "Revizit — en uzun izlenmeyen süre" }); });
     }
@@ -69,7 +78,13 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, mount, weath
         {mode !== "cue" && <Slider label="Dönüş hızı" unit="°/sn" value={speed} min={2} max={180} step={1} onChange={setSpeed} />}
         {mode === "sector" && <Slider label="Sektör genişliği (yön merkezli)" unit="°" value={span} min={10} max={350} step={5} onChange={setSpan} />}
         {mode === "sector" && <Slider label="Uçta bekleme" unit="sn" value={dwell} min={0} max={30} step={0.5} onChange={setDwell} />}
-        {mode === "cue" && <Slider label="Hedef (teşhis 250)" unit="px/m" value={target} min={25} max={500} step={5} onChange={setTarget} />}
+        {mode === "cue" && (
+          <label><span className="label">Hedef seviye</span>
+            <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" aria-label="Tepki hedef seviyesi"
+              value={target ?? ""} onChange={(e) => setTarget(e.target.value ? Number(e.target.value) : null)}>
+              {(thermal ? CUE_TARGETS_THERMAL : CUE_TARGETS).map(([v, l]) => <option key={l} value={v ?? ""}>{l}</option>)}
+            </select></label>
+        )}
         {(mode === "cue" || mode === "tour") && <Slider label="Pan/tilt ivmesi (0 = anlık)" unit="°/s²" value={accel} min={0} max={600} step={10} onChange={setAccel} />}
         {mode === "tour" && (
           <div>
@@ -98,9 +113,7 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, mount, weath
       {(mode === "rotation" || mode === "sector") && onPlay && (
         <Button className="mt-1.5 w-full" disabled={job.running} onClick={() => onPlay({
           source: "single", camera, x_m: mount.x, y_m: mount.y, mast_m: mount.mast, range_m: mount.range, weather, mode,
-          speed_deg_s: speed, tilt_deg: mount.tilt, end_dwell_s: dwell,
-          // the zoom the map shows: an applied optimum, else the lens end the single view uses
-          focal_mm: mount.focal ?? (mount.lens === "min" ? camera.focal_min_mm : camera.focal_max_mm),
+          speed_deg_s: speed, tilt_deg: mount.tilt, end_dwell_s: dwell, focal_mm: focal,
           start_pan_deg: mode === "rotation" ? mount.pan : (mount.pan - span / 2 + 360) % 360, end_pan_deg: (mount.pan + span / 2) % 360,
         })}><RotateCw size={14} /> Canlı taramayı başlat</Button>
       )}
@@ -126,7 +139,7 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, mount, weath
         <div className="mt-2">
           <div className="grid grid-cols-2 gap-1.5">
             <Tile label="Ulaşılabilir" value={ha(cue.reachable_area_m2)} tone="text-secondary" />
-            <Tile label="Medyan" value={sec(cue.mean_response_s)} />
+            <Tile label="Medyan" value={sec(cue.median_response_s)} />
             <Tile label="%90" value={sec(cue.p90_response_s)} />
             <Tile label="En kötü" value={sec(cue.worst_response_s)} tone="text-warn" />
           </div>
@@ -138,7 +151,7 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, mount, weath
 }
 
 /** Perimeter tab: co-mount a PTZ on every Nth pole and evaluate fixed + PTZ together. */
-export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onChange, hasPlanWithPtz, onLayer, ptzModelFor, onPlay, resetKey }: {
+export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onChange, hasPlanWithPtz, onLayer, ptzModelFor, onPlay, resetKey, patrol, onPatrol }: {
   T: TerrainApi;
   job: Job;
   terrainId: string;
@@ -153,6 +166,9 @@ export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onC
   onPlay?: (args: Record<string, unknown>) => void;
   /** changes with every new plan: results of the old one are dropped */
   resetKey?: number;
+  /** one patrol speed / end dwell for coverage, the mixed evaluation and the live sweep */
+  patrol: Patrol;
+  onPatrol: (p: Patrol) => void;
 }) {
   const [res, setRes] = useState<MixedResult | null>(null);
   useEffect(() => { setRes(null); }, [resetKey, terrainId]);
@@ -160,7 +176,7 @@ export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onC
   const ptzModels = models.filter((m) => m.is_ptz);
   const run = (l: "fused" | "cue") => {
     setLayer(l);
-    void job.run("Karma kapsama (sabit + PTZ)", (o) => T.mixed({ terrain_id: terrainId, use_obstacles: useObstacles, speed_deg_s: 20, layer: l, max_px: 1200 }, o))
+    void job.run("Karma kapsama (sabit + PTZ)", (o) => T.mixed({ terrain_id: terrainId, use_obstacles: useObstacles, speed_deg_s: patrol.speed, end_dwell_s: patrol.dwell, layer: l, max_px: 1200 }, o))
       .then((r) => { if (!r) return; setRes(r); onLayer({ overlay: r.overlay.data, legend: r.legend, title: l === "fused" ? "Algılama: sabit + PTZ" : "Tespit → teşhis süresi" }); });
   };
   return (
@@ -174,6 +190,8 @@ export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onC
         <>
           <div className="mt-3 flex flex-col gap-3">
             <Slider label="Her N direkte bir PTZ" unit="" value={value.everyN} min={1} max={20} step={1} onChange={(n) => onChange({ ...value, everyN: n })} />
+            <Slider label="Devriye hızı" unit="°/sn" value={patrol.speed} min={2} max={120} step={1} onChange={(v) => onPatrol({ ...patrol, speed: v })} />
+            {value.span < 360 && <Slider label="Uçta bekleme" unit="sn" value={patrol.dwell} min={0} max={30} step={0.5} onChange={(v) => onPatrol({ ...patrol, dwell: v })} />}
           </div>
           <div className="mt-2 grid grid-cols-3 gap-1">
             {[360, 180, 90].map((s) => (
@@ -187,7 +205,7 @@ export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onC
             <Button className="flex-1" disabled={job.running || !hasPlanWithPtz} onClick={() => run("cue")}>Tespit→Teşhis</Button>
           </div>
           {onPlay && (
-            <Button primary className="mt-1.5 w-full" disabled={job.running || !hasPlanWithPtz} onClick={() => onPlay({ source: "plan", speed_deg_s: 20, end_dwell_s: 2 })}>
+            <Button primary className="mt-1.5 w-full" disabled={job.running || !hasPlanWithPtz} onClick={() => onPlay({ source: "plan", speed_deg_s: patrol.speed, end_dwell_s: patrol.dwell })}>
               <RotateCw size={14} /> Taramayı Başlat (tüm PTZ'ler)
             </Button>
           )}
@@ -198,7 +216,7 @@ export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onC
           <span className="text-text-3">Sürekli algılama</span><span className="text-right">{ha(res.continuous_detect_m2)}</span>
           <span className="text-text-3">Aralıklı (yalnız PTZ)</span><span className="text-right text-warn">{ha(res.intermittent_detect_m2)}</span>
           <span className="text-text-3">En kötü aralık</span><span className="text-right">{sec(res.worst_intermittent_revisit_s)}</span>
-          <span className="text-text-3">Teşhis edilebilir</span><span className="text-right">%{fmt(res.identifiable_pct, 1)}</span>
+          <span className="text-text-3">{res.ptz_thermal ? "Johnson teşhis edilebilir" : "Teşhis edilebilir"}</span><span className="text-right">%{fmt(res.identifiable_pct, 1)}</span>
           <span className="text-text-3">Tespit→teşhis medyan</span><span className="text-right">{sec(res.median_d2i_s)}</span>
           <span className="text-text-3">%90 / en kötü</span><span className="text-right">{sec(res.p90_d2i_s)} / {sec(res.worst_d2i_s)}</span>
           {res.ptz_detect_floor_ppm < 25 && <span className="col-span-2 mt-1 text-text-3">◆ Termal PTZ: algılama tabanı Johnson {fmt(res.ptz_detect_floor_ppm, 1)} px/m, 25 px/m değil.</span>}

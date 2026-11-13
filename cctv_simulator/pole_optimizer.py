@@ -113,6 +113,8 @@ def minimize_poles(terrain: TerrainData, fence_points: Sequence[Tuple[float, flo
     hi_fail: Optional[float] = None if base.meets else s0
     s = s0
     steps = 0
+    last_fail: Optional[PoleTrial] = None if base.meets else base
+    stalled: Optional[Tuple[PoleTrial, PoleTrial]] = None
     # trials only counts distinct pole counts; steps bounds the loop itself
     while len(trials) < max_trials and steps < 3 * max_trials:
         steps += 1
@@ -133,6 +135,19 @@ def minimize_poles(terrain: TerrainData, fence_points: Sequence[Tuple[float, flo
             lo_pass = s if lo_pass is None else max(lo_pass, s)
         else:
             hi_fail = s if hi_fail is None else min(hi_fail, s)
+            if lo_pass is None and last_fail is not None and t.fixed_poles > last_fail.fixed_poles:
+                # Nothing has passed yet and we are only adding poles. A target the lens / mast
+                # cannot reach saturates (47 % seen at 208 -> 1220 poles, 90 s): stop when denser
+                # poles add nothing, or add so little that the remaining trials cannot get there.
+                gain = t.optimised_frac - last_fail.optimised_frac
+                growth = t.optimised_frac / max(last_fail.optimised_frac, 1e-9)
+                diminishing = growth < math.sqrt(t.fixed_poles / last_fail.fixed_poles)
+                left = max_trials - len(trials)
+                if gain < 0.01 or (diminishing and t.optimised_frac + gain * left < goal_frac):
+                    stalled = (last_fail, t)
+                    break
+            if lo_pass is None:
+                last_fail = t
 
     passing = [cache[k] for k in cache if cache[k][0].meets]
     notes = []
@@ -142,6 +157,11 @@ def minimize_poles(terrain: TerrainData, fence_points: Sequence[Tuple[float, flo
     else:
         t, plan, res = max(cache.values(), key=lambda x: x[0].optimised_frac)
         met = False
+        if stalled is not None:
+            a, b = stalled
+            notes.append(f"Sıklaştırma kapsamayı artırmıyor: {a.fixed_poles} → {b.fixed_poles} direkte "
+                         f"%{a.optimised_frac * 100:.1f} → %{b.optimised_frac * 100:.1f}; hedef "
+                         f"%{goal_frac * 100:.0f} direk ekleyerek tutmaz. Arama durduruldu.")
         notes.append(f"Hedef %{goal_frac * 100:.0f} hiçbir aralıkta tutmadı; en iyi deneme "
                      f"%{t.optimised_frac * 100:.1f}. Daha uzun odaklı / yüksek çözünürlüklü kamera, "
                      f"daha yüksek direk ya da daha düşük hedef deneyin.")

@@ -523,7 +523,7 @@ def apply_layout(plan, layout: LayoutResult, camera: CameraConfig, target_ppm: f
     from dataclasses import replace
 
     from . import atmosphere as _atm
-    from .perimeter_planner import _analyse_fence_coverage
+    from .perimeter_planner import _analyse_fence_coverage, dead_zone_for
 
     new_cams = []
     for cam, ch in zip(plan.placed_cameras, [c for c in layout.choices if not c.ptz]):
@@ -540,11 +540,68 @@ def apply_layout(plan, layout: LayoutResult, camera: CameraConfig, target_ppm: f
             cam, focal_mm=round(ch.focal_mm, 2), tilt_deg=round(ch.tilt_deg, 1),
             pan_deg=round(ch.pan_deg % 360.0, 1), hfov_deg=round(ch.hfov_deg, 1),
             vfov_deg=round(ch.vfov_deg, 1),
+            # the planner's dead zone belonged to the old tilt / lens; left stale it opened
+            # phantom fence gaps (or hid real ones) under the new frame
+            dead_zone_m=round(dead_zone_for(cam.mast_height_m, -ch.tilt_deg, ch.vfov_deg), 1),
             effective_range_m=round(math.sqrt(max(slant ** 2 - cam.mast_height_m ** 2, 1.0)), 1), **place))
     gaps, cov = _analyse_fence_coverage(
         list(plan.fence_points), new_cams, visibility_km, weather,
         _atm.band_for_camera(camera.sensor_name, camera.model_name), terrain=terrain)
     return replace(plan, placed_cameras=new_cams, gaps=gaps, coverage_percentage=round(cov, 1))
+
+
+def apply_layout_keeping_fence(plan, layout: LayoutResult, camera: CameraConfig, target_ppm: float, *,
+                               terrain: Optional[TerrainData] = None, visibility_km: float = 40.0,
+                               weather: str = "", tolerance_m: float = 4.0):
+    """``apply_layout`` that may not trade the fence LINE for band area.
+
+    The optimiser scores the protected band; a pole re-aimed to win band area
+    can stop framing the stretch of fence it was placed to watch (seen: 3 m
+    uncovered -> 168 m, six gaps, while the band share rose). Fence samples
+    covered before and lost after are found per sample; every changed pole
+    whose OLD view held a lost sample goes back to its old setting. One round
+    is enough: those samples are then covered by the same camera as before.
+
+    Returns ``(plan, layout, reverted)``; the returned layout has the reverted
+    poles marked unchanged so the counts describe what was applied."""
+    from dataclasses import replace
+
+    from . import atmosphere as _atm
+    from .perimeter_planner import _fence_points_covered
+
+    new_plan = apply_layout(plan, layout, camera, target_ppm, terrain=terrain,
+                            visibility_km=visibility_km, weather=weather)
+    pts = list(plan.fence_points)
+    band = _atm.band_for_camera(camera.sensor_name, camera.model_name)
+
+    def flags(cams):
+        got = _fence_points_covered(pts, list(cams), visibility_km, weather, band, terrain)
+        return None if got is None else got[2]
+
+    before, after = flags(plan.placed_cameras), flags(new_plan.placed_cameras)
+    if before is None or after is None:
+        return new_plan, layout, 0
+    lost = before & ~after
+    per_sample_m = plan.total_fence_length_m / max(before.size, 1)
+    net_m = (int(lost.sum()) - int((after & ~before).sum())) * per_sample_m
+    if not lost.any() or net_m <= tolerance_m:
+        return new_plan, layout, 0
+
+    choices = list(layout.choices)
+    fixed_idx = [i for i, c in enumerate(choices) if not c.ptz]
+    reverted = 0
+    for i, cam in zip(fixed_idx, plan.placed_cameras):
+        if not choices[i].changed:
+            continue
+        own = flags([cam])
+        if own is not None and (own & lost).any():
+            choices[i] = replace(choices[i], changed=False, moved_m=0.0)
+            reverted += 1
+    if not reverted:
+        return new_plan, layout, 0
+    kept = replace(layout, choices=choices)
+    return (apply_layout(plan, kept, camera, target_ppm, terrain=terrain,
+                         visibility_km=visibility_km, weather=weather), kept, reverted)
 
 
 def band_area(terrain: TerrainData, plan, camera: CameraConfig, roi: Optional[np.ndarray], level: int, *,

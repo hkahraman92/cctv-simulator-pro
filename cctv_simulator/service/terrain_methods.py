@@ -394,13 +394,18 @@ def viewshed_single(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         warnings.append(f"Direk hücresindeki engel lensten {blocked:.1f} m yüksek; kamera bina/ağaç içinde kalıyor.")
     if not t.is_measured:
         warnings.append("Arazi ölçüm değil (prosedürel); sonuç bağlayıcı değildir.")
+    # Farthest ground the frame holds (seen or hidden): a steep tilt frames
+    # only the foot of the mast, however far the optics could resolve.
+    rr, cc = np.nonzero(res.dori_grid != 0)
+    framed_reach = float(min(np.hypot(t.origin_x + cc * t.cell_size_m - x,
+                                      t.origin_y + rr * t.cell_size_m - y).max(), res.max_range_m)) if rr.size else 0.0
     return {
         "hfov_deg": res.hfov_deg, "vfov_deg": res.vfov_deg, "cam_ground_z_m": res.cam_ground_z_m,
         "cam_total_z_m": res.cam_total_z_m, "max_range_m": res.max_range_m,
         "optical_limit_m": res.optical_limit_m, "atmospheric_limit_m": res.atmospheric_limit_m,
         "fov_area_m2": res.fov_area_m2, "visible_area_m2": res.visible_area_m2,
         "occluded_area_m2": res.occluded_area_m2, "coverage_pct": res.coverage_pct,
-        "max_los_reach_m": res.max_los_reach_m,
+        "max_los_reach_m": res.max_los_reach_m, "framed_reach_m": framed_reach,
         "zone_areas_m2": _zone_areas(res.dori_grid, t.cell_size_m ** 2),
         "profile": {"dist_m": res.profile_dists_m[::step].tolist(),
                     "terrain_m": res.profile_terrain_elev_m[::step].tolist(),
@@ -523,31 +528,59 @@ def perimeter_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
 
 
 _LEVEL_LABEL = {"detect": "Algılama", "observe": "Gözlem", "recognize": "Tanıma", "identify": "Teşhis"}
+# A thermal is classed with Johnson: the same three zone codes mean other things, and there is no fourth.
+_LEVEL_LABEL_THERMAL = {"detect": "Johnson algılama", "observe": "Johnson tanıma", "recognize": "Johnson teşhis"}
+_THERMAL_NO_IDENT = ("Termal kamerada Teşhis (yüz, 250 px/m) seviyesi yoktur; Johnson algılama, tanıma ya da "
+                     "teşhis seviyesini seçin.")
 
 
-def _target_level(params: Dict[str, Any], plan, kw: Dict[str, Any]) -> Tuple[str, float, int]:
+def _level_of(params: Dict[str, Any], cam, default: str = "detect") -> int:
+    """DORI zone named by ``params["level"]``; a thermal camera has no fourth level."""
+    from ..viewshed_3d import ZONE_IDENT, is_thermal_camera
+
+    level = _levels_table().get(params.get("level", default))
+    if level is None:
+        raise RpcError(INVALID_PARAMS, "'level' detect, observe, recognize ya da identify olmalı.")
+    if level == ZONE_IDENT and is_thermal_camera(cam):
+        raise RpcError(APP_ERROR, _THERMAL_NO_IDENT)
+    return level
+
+
+def _target_level(params: Dict[str, Any], plan, kw: Dict[str, Any], cam=None, ptz_cam=None) -> Tuple[str, float, int]:
     """(label, px/m, DORI zone a PTZ must reach) for the coverage target.
 
     ``level="plan"`` (default): an area plan's own DORI level, a fence plan's
-    target px/m. A PTZ patrol is judged by DORI zone only (no px/m grid), at
-    the lowest level that is at least the target -- never in its favour."""
-    from ..focal_optimizer import LEVEL_PPM
-    from ..viewshed_3d import ZONE_DETECT, ZONE_IDENT
+    target px/m. A named level means the main camera's own scale -- EN 62676-4
+    for a visible camera, Johnson for a thermal. A PTZ patrol is judged by DORI
+    zone only (no px/m grid), at the lowest level OF ITS OWN SCALE that is at
+    least the target -- never in its favour."""
+    from ..viewshed_3d import ZONE_DETECT, ZONE_IDENT, is_thermal_camera, zone_ppm
+
+    thermal = cam is not None and is_thermal_camera(cam)
+    ptz_thermal = is_thermal_camera(ptz_cam) if ptz_cam is not None else thermal
+    labels = _LEVEL_LABEL_THERMAL if thermal else _LEVEL_LABEL
+    levels = _levels_table()
+    zones = sorted(levels.values())
+
+    def ptz_zone(ppm: float) -> int:
+        return max(next((z for z in zones if zone_ppm(z, ptz_thermal) >= ppm - 1e-9), ZONE_IDENT), ZONE_DETECT)
 
     want = params.get("level", "plan")
-    levels = _levels_table()
     if want == "plan":
-        if kw.get("line_mode") == "area" and kw.get("level") in LEVEL_PPM:
+        if kw.get("line_mode") == "area" and kw.get("level") in zones:
             z = kw["level"]
             name = next(k for k, v in levels.items() if v == z)
-            return _LEVEL_LABEL[name], LEVEL_PPM[z], z
+            if name in labels:
+                ppm = zone_ppm(z, thermal)
+                return labels[name], ppm, ptz_zone(ppm)
         ppm = float(plan.target_ppm)
-        zone = next((z for z in sorted(LEVEL_PPM) if LEVEL_PPM[z] >= ppm - 1e-9), ZONE_IDENT)
-        return f"{ppm:g} px/m".replace(".", ","), ppm, max(zone, ZONE_DETECT)
+        return f"{ppm:g} px/m".replace(".", ","), ppm, ptz_zone(ppm)
     if want not in levels:
         raise RpcError(INVALID_PARAMS, "'level' plan, detect, observe, recognize ya da identify olmalı.")
-    z = levels[want]
-    return _LEVEL_LABEL[want], LEVEL_PPM[z], z
+    if want not in labels:
+        raise RpcError(APP_ERROR, _THERMAL_NO_IDENT)
+    ppm = zone_ppm(levels[want], thermal)
+    return labels[want], ppm, ptz_zone(ppm)
 
 
 def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
@@ -592,6 +625,7 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         from ..perimeter_ptz import ptz_sweeps
         ctx.progress(1, 1 + n_ptz, f"{n_ptz} PTZ devriyesi hesaplanıyor")
         for sw in ptz_sweeps(t, plan, ptz_cam, speed_deg_s=_num(params, "ptz_speed_deg_s", 20.0, lo=1, hi=360),
+                             end_dwell_s=_num(params, "ptz_end_dwell_s", 2.0, lo=0, hi=600),
                              visibility_km=kw["visibility_km"], weather=kw["weather"]):
             seen = np.isfinite(sw.revisit_grid) & (sw.dori_grid >= ZONE_DETECT)
             ptz_zone = np.where(seen, np.maximum(ptz_zone, sw.dori_grid), ptz_zone).astype(np.int8)
@@ -600,7 +634,7 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     band_share_ptz = {name: (float(((ptz_zone >= z) & ~(mv.dori_grid >= z) & roi).sum() * cell) / roi_area
                              if roi_area else 0.0) for name, z in named}
 
-    label, ppm, zone = _target_level(params, plan, kw)
+    label, ppm, zone = _target_level(params, plan, kw, cam, ptz_cam)
     held = (mv.ppm_grid >= ppm - 1e-6) & mv.visibility_mask
     ptz_only = ~held & (ptz_zone >= zone)
     seen_any = mv.visibility_mask | (ptz_zone >= ZONE_DETECT)
@@ -621,9 +655,12 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         line = fence_roi(t, fence, kw["is_closed_loop"], max(0.75 * t.cell_size_m, 1.0))
         n = int(line.sum())
         if n:
-            fence_line = {"held": float((held & line).sum()) / n,
+            share = float((held & line).sum()) / n
+            fence_line = {"held": share,
                           "with_ptz": float(((held | ptz_only) & line).sum()) / n,
-                          "detect": float(((mv.dori_grid >= ZONE_DETECT) & line).sum()) / n}
+                          "detect": float(((mv.dori_grid >= ZONE_DETECT) & line).sum()) / n,
+                          # metres of fence below THIS target (the plan's own gap list is at the plan target)
+                          "uncovered_m": (1.0 - share) * float(plan.total_fence_length_m)}
 
     max_px = int(_num(params, "max_px", _DISPLAY_PX, lo=200, hi=4096))
     layer = params.get("layer", "dori")
@@ -659,16 +696,12 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
 def perimeter_minimize_poles(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """Fewest poles that still hold the fence-band goal (spacing search + per-pole focal)."""
     from ..pole_optimizer import minimize_poles
-    from ..viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_OBSERVE, ZONE_RECOG
 
     entry, t = _terrain_of(params)
     cam = _camera_from(params.get("camera", {}))
     fence = _fence(params)
     kw = _plan_kwargs(params)
-    levels = {"detect": ZONE_DETECT, "observe": ZONE_OBSERVE, "recognize": ZONE_RECOG, "identify": ZONE_IDENT}
-    level = levels.get(params.get("level", "detect"))
-    if level is None:
-        raise RpcError(INVALID_PARAMS, "'level' detect, observe, recognize ya da identify olmalı.")
+    level = _level_of(params, cam)
     goal = _num(params, "goal_frac", 0.95, lo=0.05, hi=1.0)
     band, inside = _band_params(params)
     try:
@@ -700,16 +733,19 @@ def perimeter_minimize_poles(params: Dict[str, Any], ctx: Context) -> Dict[str, 
 def perimeter_optimize(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """Optimise the last plan's poles in place: focal / tilt (/ heading) and optionally
     their place along the fence; both plans re-scored by the authoritative engine."""
-    from ..focal_optimizer import apply_layout, band_area, mounts_from_plan, optimize_layout
+    from ..focal_optimizer import (apply_layout, apply_layout_keeping_fence, band_area, mounts_from_plan,
+                                   optimize_layout)
+    from ..perimeter_planner import uncovered_fence_m
 
     entry, t = _terrain_of(params)
     if "plan" not in entry.results:
         raise RpcError(APP_ERROR, "Önce bir çit planı oluşturun.")
     plan, cam, kw, fence = entry.results["plan"]
-    level = _levels_table().get(params.get("level", "detect"))
-    if level is None:
-        raise RpcError(INVALID_PARAMS, "'level' detect, observe, recognize ya da identify olmalı.")
+    level = _level_of(params, cam)
     is_area = kw.get("line_mode") == "area"
+    # A facility / highway pole watches the fence LINE; the band score alone may re-aim it off the
+    # line. A border pole looks across the line by design and an area plan has no line to keep.
+    guard = not is_area and kw.get("line_mode") != "border"
     # an area plan's poles stand inside the polygon too: sliding "along the fence" would drag them to its edge
     steps = 0 if is_area else int(_num(params, "position_steps", 0, lo=0, hi=4))
     step_m = _num(params, "position_step_m", max(plan.avg_spacing_m / (2 * steps + 2), 1.0) if steps else 0.0,
@@ -721,22 +757,42 @@ def perimeter_optimize(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     res = optimize_layout(t, mounts, roi=roi, level=level, n_focals=int(_num(params, "n_focals", 6, lo=2, hi=16)),
                           visibility_km=kw["visibility_km"], weather=kw["weather"],
                           progress=lambda d, n: ctx.progress(d, n + 2, f"Direk {d}/{n}"))
-    new_plan = apply_layout(plan, res, cam, kw["target_ppm"], terrain=t,
-                            visibility_km=kw["visibility_km"], weather=kw["weather"])
+    notes = list(res.notes)
+    reverted = 0
+    if guard:
+        new_plan, res, reverted = apply_layout_keeping_fence(
+            plan, res, cam, kw["target_ppm"], terrain=t, visibility_km=kw["visibility_km"], weather=kw["weather"])
+        if reverted:
+            notes.append(f"{reverted} direk eski ayarında bırakıldı: yeni ayarı çit çizgisinde boşluk açıyordu.")
+    else:
+        new_plan = apply_layout(plan, res, cam, kw["target_ppm"], terrain=t,
+                                visibility_km=kw["visibility_km"], weather=kw["weather"])
     ctx.progress(1, 1, "Otoriter motorla doğrulanıyor")
     _, a0 = band_area(t, plan, cam, roi, level, visibility_km=kw["visibility_km"], weather=kw["weather"])
     _, a1 = band_area(t, new_plan, cam, roi, level, visibility_km=kw["visibility_km"], weather=kw["weather"])
     if is_area:          # apply_layout re-ran the FENCE gap analysis; an area plan reports its own share
         new_plan = dataclasses.replace(new_plan, gaps=[], coverage_percentage=round(
             100.0 * a1 / max(float(roi.sum()) * t.cell_size_m ** 2, 1e-9), 1))
-    if params.get("apply", True):
+    # The estimate chose the layout; the engine has the last word. Worse by more than half a cell
+    # (rounding of the applied settings) means the plan stays as it was.
+    better = a1 >= a0 - 0.5 * t.cell_size_m ** 2
+    if not better:
+        notes.append(f"Otoriter motor yeni dizilimi daha iyi bulmadı ({_ha(a0)} → {_ha(a1)}); plan değiştirilmedi.")
+    applied = bool(params.get("apply", True)) and better
+    if applied:
         entry.set_plan((new_plan, cam, kw, fence))
+    fence_line = None
+    if guard:
+        fence_line = {"before_pct": plan.coverage_percentage, "after_pct": new_plan.coverage_percentage,
+                      "before_uncovered_m": uncovered_fence_m(plan), "after_uncovered_m": uncovered_fence_m(new_plan),
+                      "before_gaps": len(plan.gaps), "after_gaps": len(new_plan.gaps)}
     moved = [c for c in res.choices if c.moved_m > 0.05]
     return {"before_m2": a0, "after_m2": a1, "band_area_m2": float(roi.sum()) * t.cell_size_m ** 2,
             "estimate_before_m2": res.before_m2[level], "estimate_after_m2": res.after_m2[level],
             "changed": sum(1 for c in res.choices if c.changed), "moved": len(moved),
-            "max_move_m": max((c.moved_m for c in moved), default=0.0), "notes": res.notes,
-            "plan": _plan_json(new_plan)}
+            "max_move_m": max((c.moved_m for c in moved), default=0.0), "notes": notes,
+            "applied": applied, "reverted": reverted, "fence_line": fence_line,
+            "plan": _plan_json(new_plan if better else plan)}
 
 
 def area_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
@@ -750,9 +806,7 @@ def area_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     if len(poly) < 3:
         raise RpcError(INVALID_PARAMS, "Alan için en az üç köşe gerekir.")
     levels = _levels_table()
-    level = levels.get(params.get("level", "recognize"))
-    if level is None:
-        raise RpcError(INVALID_PARAMS, "'level' detect, observe, recognize ya da identify olmalı.")
+    level = _level_of(params, cam, "recognize")
     weather = str(params.get("weather", "")) if params.get("weather") in WEATHER_PRESETS else ""
     vis = WEATHER_PRESETS.get(weather, 40.0)
     mast = _num(params, "mast_m", 6.0, lo=0.5, hi=200)
@@ -878,33 +932,78 @@ def city_analyse(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     }
 
 
+def _ha(m2: float) -> str:
+    return f"{m2 / 1e4:.2f}".replace(".", ",") + " ha"
+
+
 def focal_sweep(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
-    """Varifocal: DORI area at every focal step for one mount (best tilt / pan per focal)."""
+    """Varifocal: DORI area at every focal step for one mount (best tilt / pan per focal).
+
+    The curve is the mount-raster estimate. The optimum is then put through the
+    AUTHORITATIVE engine, next to the current setting when the caller sends it:
+    "apply" must not swap a view that sees ground for one that sees none because
+    the estimate found a cell or two at a level the mast cannot really reach."""
     from ..atmosphere import WEATHER_PRESETS
     from ..focal_optimizer import sweep_focals
-    from ..viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_OBSERVE, ZONE_RECOG
+    from ..viewshed_3d import (ZONE_DETECT, ZONE_IDENT, ZONE_OBSERVE, ZONE_RECOG, calculate_3d_viewshed,
+                               is_thermal_camera)
 
     entry, t = _terrain_of(params)
     cam = _camera_from(params.get("camera", {}))
-    levels = {"detect": ZONE_DETECT, "observe": ZONE_OBSERVE, "recognize": ZONE_RECOG, "identify": ZONE_IDENT}
-    level = levels.get(params.get("level", "recognize"))
-    if level is None:
-        raise RpcError(INVALID_PARAMS, "'level' detect, observe, recognize ya da identify olmalı.")
+    level = _level_of(params, cam, "recognize")
     weather = str(params.get("weather", "")) if params.get("weather") in WEATHER_PRESETS else ""
-    rep = sweep_focals(t, _num(params, "x_m"), _num(params, "y_m"), _num(params, "mast_m", 6.0, lo=0.5, hi=200),
-                       cam, pan_deg=_num(params, "pan_deg", 0.0) % 360.0,
+    vis = WEATHER_PRESETS.get(weather, 40.0)
+    x = _num(params, "x_m"); y = _num(params, "y_m")
+    mast = _num(params, "mast_m", 6.0, lo=0.5, hi=200)
+    pan = _num(params, "pan_deg", 0.0) % 360.0
+    rng = None if params.get("range_m") is None else _num(params, "range_m", lo=20, hi=20000)
+    rep = sweep_focals(t, x, y, mast, cam, pan_deg=pan,
                        pan_search_deg=_num(params, "pan_search_deg", 0.0, lo=0, hi=180),
                        level=level, objective=params.get("objective", "area"),
                        n_focals=int(_num(params, "n_focals", 12, lo=2, hi=40)),
-                       max_range_m=params.get("range_m"), visibility_km=WEATHER_PRESETS.get(weather, 40.0),
-                       weather=weather)
+                       max_range_m=rng, visibility_km=vis, weather=weather)
     names = {ZONE_IDENT: "identify", ZONE_RECOG: "recognize", ZONE_OBSERVE: "observe", ZONE_DETECT: "detect"}
+    cell_area = t.cell_size_m ** 2
 
     def choice(c):
         return {"focal_mm": c.focal_mm, "tilt_deg": c.tilt_deg, "pan_deg": c.pan_deg, "hfov_deg": c.hfov_deg,
                 "score": c.score, "areas_m2": {names[k]: v for k, v in c.areas_m2.items() if k in names}}
+
+    def engine(focal: float, tilt: float, pan_deg: float) -> Dict[str, Any]:
+        res = calculate_3d_viewshed(t, x, y, mast, cam, pan_deg=pan_deg, tilt_deg=tilt, max_range_m=rep.reach_m,
+                                    visibility_km=vis, weather=weather, focal_mm_override=focal,
+                                    with_profile=False)
+        return {"focal_mm": focal, "tilt_deg": tilt, "pan_deg": pan_deg,
+                "area_m2": float((res.dori_grid >= level).sum()) * cell_area,
+                "visible_area_m2": float(res.visible_area_m2), "max_los_reach_m": float(res.max_los_reach_m)}
+
+    best = engine(rep.best.focal_mm, rep.best.tilt_deg, pan if rep.best.pan_deg is None else rep.best.pan_deg)
+    current = None
+    if params.get("current_tilt_deg") is not None and params.get("current_focal_mm") is not None:
+        current = engine(_num(params, "current_focal_mm", lo=cam.focal_min_mm, hi=cam.focal_max_mm),
+                         _num(params, "current_tilt_deg", lo=-89, hi=30), pan)
+    label = (_LEVEL_LABEL_THERMAL if is_thermal_camera(cam) else _LEVEL_LABEL)[names[level]]
+    gain = None if current is None else best["area_m2"] - current["area_m2"]
+    marginal = gain is not None and 0 < gain < 4 * cell_area
+    worth, note = True, ""
+    if best["area_m2"] <= 0:
+        worth = False
+        note = (f"Bu direkten {label} seviyesi hiçbir odakta zemine ulaşmıyor (motor: 0 m²). Uygulanacak bir "
+                f"optimum yok; direği yükseltin, hedefi yaklaştırın ya da daha düşük bir seviye seçin.")
+    elif gain is not None and gain <= 0:
+        worth = False
+        note = (f"Motor bu ayarı şimdikinden iyi bulmuyor ({label}: {_ha(current['area_m2'])} → "
+                f"{_ha(best['area_m2'])}); mevcut ayar korunur.")
+    elif marginal and best["visible_area_m2"] < 0.5 * current["visible_area_m2"]:
+        worth = False
+        note = (f"Kazanç ızgara çözünürlüğünde ({gain:.0f} m²), buna karşılık görünen alan "
+                f"{_ha(current['visible_area_m2'])} → {_ha(best['visible_area_m2'])} düşüyor; ayar uygulanmaz.")
+    elif marginal:
+        note = f"Kazanç ızgara çözünürlüğünde ({gain:.0f} m²); fark ölçüm hassasiyetinin altında olabilir."
     return {"curve": [choice(c) for c in rep.curve], "best": choice(rep.best), "wide": choice(rep.wide),
-            "tele": choice(rep.tele), "level": names[rep.level], "reach_m": rep.reach_m}
+            "tele": choice(rep.tele), "level": names[rep.level], "reach_m": rep.reach_m,
+            "verified": best, "current": current, "gain_m2": gain, "marginal": bool(marginal),
+            "worth_applying": worth, "note": note}
 
 
 METHODS = {

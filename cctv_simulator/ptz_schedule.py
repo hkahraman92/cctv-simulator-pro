@@ -140,6 +140,12 @@ def evaluate_sweep(terrain: TerrainData, x_m: float, y_m: float, mast_height_m: 
                       lens_mode=sweep.lens_mode, max_range_m=math.inf,
                       visibility_km=visibility_km, weather=weather)
     swept, revisit, look, period = sweep_timing(np.degrees(lay.center_az_rad), lay.hfov_deg, sweep)
+    # The optics may resolve far past the raster while a steep tilt frames only
+    # the foot of the mast: the view runs past the analysis range only if the
+    # top of the frame clears the ground at the raster's edge.
+    edge = swept & (mv.center_dist_m >= mv.max_range_m - 1.5 * terrain.cell_size_m)
+    top_rad = math.radians(sweep.tilt_deg + lay.vfov_deg / 2.0)
+    truncated = bool(lay.truncated and (mv.center_elev_rad[edge] <= top_rad).any())
 
     framed_vis = lay.visible & swept
     seen = framed_vis & (look >= min_dwell_s)
@@ -166,5 +172,5 @@ def evaluate_sweep(terrain: TerrainData, x_m: float, y_m: float, mast_height_m: 
         occluded_area_m2=float(np.count_nonzero(occluded)) * cell_a,
         mean_revisit_s=float(vals.mean()) if vals.size else math.inf,
         worst_revisit_s=float(vals.max()) if vals.size else math.inf,
-        truncated=lay.truncated,
+        truncated=truncated,
     )

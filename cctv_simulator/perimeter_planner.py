@@ -516,16 +516,17 @@ def _place_ptz_cameras(pts: List[Tuple[float, float]],
     return out
 
 
-def _analyse_fence_coverage(pts: List[Tuple[float, float]],
-                            cams: List[PlacedCamera],
-                            visibility_km: float, weather: str, band: str,
-                            terrain: Optional[TerrainData] = None,
-                            sample_step_m: float = 2.0,
-                            min_gap_m: float = 4.0) -> Tuple[List[FenceGap], float]:
+def _fence_points_covered(pts: List[Tuple[float, float]],
+                          cams: List[PlacedCamera],
+                          visibility_km: float, weather: str, band: str,
+                          terrain: Optional[TerrainData] = None,
+                          sample_step_m: float = 2.0,
+                          ) -> Optional[Tuple[np.ndarray, np.ndarray, np.ndarray]]:
     """Walk the fence polyline; a point is covered when some camera has it inside
     its horizontal cone, past the dead zone, within the (weather-capped) range
     and — when a ``terrain`` is given — with a clear DEM line of sight. Returns
-    the gap list and the covered percentage.
+    the sample points and their covered flags ``(px, py, covered)``, or ``None``
+    when there is nothing to sample.
 
     PERF: this used to be a pure-Python point x camera nested loop (each pair
     re-deriving distance/azimuth/elevation and, when occluded, a 12-sample DEM
@@ -540,7 +541,7 @@ def _analyse_fence_coverage(pts: List[Tuple[float, float]],
     precomputed boolean array instead of calling into the heavy check itself.
     """
     if len(pts) < 2 or not cams:
-        return [], 0.0
+        return None
 
     xy: List[Tuple[float, float]] = []
     for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]):
@@ -552,7 +553,7 @@ def _analyse_fence_coverage(pts: List[Tuple[float, float]],
             t = k / n
             xy.append((x0 + t * (x1 - x0), y0 + t * (y1 - y0)))
     if not xy:
-        return [], 0.0
+        return None
     px = np.array([p[0] for p in xy])
     py = np.array([p[1] for p in xy])
     n_pts = px.size
@@ -604,6 +605,22 @@ def _analyse_fence_coverage(pts: List[Tuple[float, float]],
             covered[idx[clear]] = True
     else:
         covered = candidate.any(axis=0)
+    return px, py, covered
+
+
+def _analyse_fence_coverage(pts: List[Tuple[float, float]],
+                            cams: List[PlacedCamera],
+                            visibility_km: float, weather: str, band: str,
+                            terrain: Optional[TerrainData] = None,
+                            sample_step_m: float = 2.0,
+                            min_gap_m: float = 4.0) -> Tuple[List[FenceGap], float]:
+    """The fence line's gap list (uncovered runs >= ``min_gap_m``) and covered
+    percentage, from ``_fence_points_covered``'s per-sample flags."""
+    got = _fence_points_covered(pts, cams, visibility_km, weather, band, terrain, sample_step_m)
+    if got is None:
+        return [], 0.0
+    px, py, covered = got
+    n_pts = px.size
 
     gap_run: List[Tuple[float, float]] = []
     gaps: List[FenceGap] = []

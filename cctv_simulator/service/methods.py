@@ -111,6 +111,7 @@ def library_camera(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """
     from ..database import is_ptz_camera, load_camera_library
     from ..models import CameraConfig
+    from ..viewshed_3d import is_thermal_camera
 
     name = _require(params, "name", str)
     model = load_camera_library().get(name)
@@ -131,7 +132,8 @@ def library_camera(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     changes["camera_type"] = str(model.get("camera_type") or model.get("kamera_tipi") or "")
     cam = dataclasses.replace(base, **changes)
     _camera_from(dataclasses.asdict(cam))           # same validation as every other entry point
-    return {"camera": dataclasses.asdict(cam), "is_ptz": is_ptz_camera(model)}
+    return {"camera": dataclasses.asdict(cam), "is_ptz": is_ptz_camera(model),
+            "thermal": is_thermal_camera(cam)}
 
 
 # ── optics ───────────────────────────────────────────────────────────────

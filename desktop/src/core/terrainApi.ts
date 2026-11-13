@@ -76,6 +76,8 @@ export interface SingleViewshed {
   occluded_area_m2: number;
   coverage_pct: number;
   max_los_reach_m: number;
+  /** farthest ground the frame holds, seen or hidden (a steep tilt frames the mast's foot only) */
+  framed_reach_m: number;
   zone_areas_m2: ZoneAreas;
   profile: { dist_m: number[]; terrain_m: number[]; ray_m: number[]; visible: boolean[] };
   overlay: Picture;
@@ -154,7 +156,8 @@ export interface CoverageResult {
   /** held_2: the target held by >= 2 fixed cameras (redundant) */
   target: { label: string; ppm: number; held: number; ptz_only: number; below: number; unseen: number; held_2: number };
   /** the fence line itself (null for an area plan) */
-  fence_line: { held: number; with_ptz: number; detect: number } | null;
+  /** uncovered_m: metres of fence below the SELECTED target */
+  fence_line: { held: number; with_ptz: number; detect: number; uncovered_m: number } | null;
   /** "area": the drawn polygon, "band": the ±band_m fence band, "side": a border's watched side, band_m deep */
   roi_kind: "area" | "band" | "side";
   watch_side?: "left" | "right";
@@ -289,6 +292,41 @@ export interface FocalSweep {
   tele: FocalChoice;
   level: string;
   reach_m: number;
+  /** the optimum through the authoritative engine (the curve is the mount-raster estimate) */
+  verified: EngineView;
+  /** the current setting through the same engine; null when it was not sent */
+  current: EngineView | null;
+  gain_m2: number | null;
+  marginal: boolean;
+  /** false: applying would not help (or would blind the camera); note says why */
+  worth_applying: boolean;
+  note: string;
+}
+
+export interface EngineView {
+  focal_mm: number;
+  tilt_deg: number;
+  pan_deg: number;
+  area_m2: number;
+  visible_area_m2: number;
+  max_los_reach_m: number;
+}
+
+export interface OptimizeResult {
+  before_m2: number;
+  after_m2: number;
+  band_area_m2: number;
+  changed: number;
+  moved: number;
+  max_move_m: number;
+  notes: string[];
+  /** false: the engine did not find the new layout better; the plan was left as it was */
+  applied: boolean;
+  /** poles put back because their new setting opened a gap on the fence line */
+  reverted: number;
+  /** null for an area or border plan (no fence line to keep) */
+  fence_line: { before_pct: number; after_pct: number; before_uncovered_m: number; after_uncovered_m: number; before_gaps: number; after_gaps: number } | null;
+  plan: PlanResult;
 }
 
 export interface PlanParams {
@@ -369,6 +407,8 @@ export interface CueResult {
   target_ppm: number;
   reachable_area_m2: number;
   mean_response_s: number | null;
+  median_response_s: number | null;
+  thermal: boolean;
   p90_response_s: number | null;
   worst_response_s: number | null;
   unreachable: { reason: string; area_m2: number }[];
@@ -391,6 +431,7 @@ export interface MixedResult {
   cue_target_ppm: number;
   ptz_detect_floor_ppm: number;
   ptz_camera_name: string;
+  ptz_thermal: boolean;
   overlay: Picture;
   legend: LegendRow[];
 }
@@ -453,7 +494,7 @@ export function terrainApi(rpc: RpcClient) {
     /** analysis settings kept with the terrain (target height: a person on each cell) */
     settings: (terrain_id: string, s: { target_height_m?: number }) =>
       rpc.call<{ target_height_m: number; changed: boolean }>("terrain.settings", { terrain_id, ...s }),
-    coverage: (p: T & { layer?: CoverageLayer; level?: "plan" | DoriLevel; band_m?: number; band_in_m?: number; max_px?: number }, opts?: CallOptions) =>
+    coverage: (p: T & { layer?: CoverageLayer; level?: "plan" | DoriLevel; band_m?: number; band_in_m?: number; max_px?: number; ptz_speed_deg_s?: number; ptz_end_dwell_s?: number }, opts?: CallOptions) =>
       rpc.call<CoverageResult>("perimeter.coverage", p, { timeoutMs: 0, ...opts }),
     approach: (p: T & { depth_m: number; response_s?: number; speeds?: Record<string, number>; max_px?: number }, opts?: CallOptions) =>
       rpc.call<ApproachResult>("approach.analyse", p, { timeoutMs: 0, ...opts }),
@@ -464,12 +505,12 @@ export function terrainApi(rpc: RpcClient) {
     areaPlan: (p: T & AreaParams & { camera: CameraConfig }, opts?: CallOptions) =>
       rpc.call<AreaPlanResult>("area.plan", p, { timeoutMs: 0, ...opts }),
     optimize: (p: T & { level: string; position_steps: number; pan_search_deg?: number; n_focals?: number; band_m?: number; band_in_m?: number }, opts?: CallOptions) =>
-      rpc.call<{ before_m2: number; after_m2: number; band_area_m2: number; changed: number; moved: number; max_move_m: number; notes: string[]; plan: PlanResult }>(
+      rpc.call<OptimizeResult>(
         "perimeter.optimize", p, { timeoutMs: 0, ...opts }),
     minimizePoles: (p: T & PlanParams & { camera: CameraConfig; goal_frac: number; level: string; position_steps?: number; band_m?: number; band_in_m?: number }, opts?: CallOptions) =>
       rpc.call<PoleSearch>("perimeter.minimize_poles", p, { timeoutMs: 0, ...opts }),
     focalSweep: (
-      p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; pan_deg: number; level: string; pan_search_deg?: number; weather?: string; n_focals?: number },
+      p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; pan_deg: number; level: string; pan_search_deg?: number; weather?: string; n_focals?: number; range_m?: number; current_tilt_deg?: number; current_focal_mm?: number },
       opts?: CallOptions,
     ) => rpc.call<FocalSweep>("focal.sweep", p, { timeoutMs: 0, ...opts }),
     ptzSweep: (
@@ -477,7 +518,7 @@ export function terrainApi(rpc: RpcClient) {
       opts?: CallOptions,
     ) => rpc.call<SweepResult>("ptz.sweep", p, { timeoutMs: 0, ...opts }),
     ptzCue: (
-      p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; home_pan_deg: number; home_tilt_deg: number; target_ppm: number; range_m: number; weather?: string; max_px?: number; slew_accel_deg_s2?: number },
+      p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; home_pan_deg: number; home_tilt_deg: number; target_ppm?: number; range_m: number; weather?: string; max_px?: number; slew_accel_deg_s2?: number },
       opts?: CallOptions,
     ) => rpc.call<CueResult>("ptz.cue", p, { timeoutMs: 0, ...opts }),
     ptzTour: (
@@ -492,7 +533,7 @@ export function terrainApi(rpc: RpcClient) {
     compareUse: (p: T & Record<string, unknown>) => rpc.call<{ plan: PlanResult; camera: CameraConfig }>("perimeter.compare_use", p),
     ptzPlayback: (p: T & { source?: "plan" | "single"; speed_deg_s: number; end_dwell_s?: number; max_px?: number } & Record<string, unknown>, opts?: CallOptions) =>
       rpc.call<{ ptz: PlaybackPtz[]; camera_name: string }>("ptz.playback", p, { timeoutMs: 0, ...opts }),
-    mixed: (p: T & { speed_deg_s: number; layer?: "fused" | "cue"; cue_target_ppm?: number; max_px?: number }, opts?: CallOptions) =>
+    mixed: (p: T & { speed_deg_s: number; end_dwell_s?: number; layer?: "fused" | "cue"; cue_target_ppm?: number; max_px?: number }, opts?: CallOptions) =>
       rpc.call<MixedResult>("perimeter.mixed", p, { timeoutMs: 0, ...opts }),
     nightCoverage: (p: T & NightParams & { band_m?: number; band_in_m?: number; max_px?: number }, opts?: CallOptions) =>
       rpc.call<NightCoverage>("night.coverage", p, { timeoutMs: 0, ...opts }),
