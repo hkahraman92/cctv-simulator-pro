@@ -74,7 +74,7 @@ desktop/                             yeni arayüz: Tauri 2 (Rust) + React/TS/Tai
 
 **Yeni masaüstü kabuğu.** `desktop/` Python çekirdeği (`python -m
 cctv_simulator.service`, yayında `cctv-core.exe`) alt süreç olarak başlatır,
-satır başına bir JSON-RPC nesnesi taşır (API v1, 75 yöntem; liste ve
+satır başına bir JSON-RPC nesnesi taşır (API v1, 76 yöntem; liste ve
 sözleşme `docs/masaustu-mimari.md`). Ekran fizik türetmez; her sayı bir API
 yönteminden gelir. Yeni özellik için: önce `service/*_methods.py`'ye yöntem +
 `tests/test_service_*.py`'ye motorla birebir eşlik testi, sonra
@@ -1109,11 +1109,24 @@ Modu" satırı.
   `focal_optimizer.envelope`, her yön; sonuç `entry.results["ptz_reach"]`'te,
   `PLAN_DERIVED`). Rapor: sürekli · devriye · talep üzerine.
   Testler: `tests/test_ptz_patrol.py`.
+- **Plan uygunluk beyanı** (`plan_statement.py`, `export.plan_statement`):
+  `compliance_report` bir MODELİN şartnameye yanıtını beyan eder; bu, bir
+  DİZİLİMİN arazide ne sağladığını: bölge (korunan bant / poligon / izlenen
+  şerit + çit çizgisi) × seviye × gerekli px/m × sürekli pay × yalnız PTZ
+  devriyesi payı × sonuç (U / K = yalnız devriyeyle / X), kapsama hedefine
+  (vars. %95) karşı. Fizik türetmez: Birleşik Kapsama'nın `multi` ızgarası ve
+  aynı maskeleri (`entry.results["coverage_masks"]`, `PLAN_DERIVED`) okunur;
+  kapsama koşmadıysa açık hata. Genel sonucu yalnız **beyan edilen seviye**
+  belirler (`declared_level`: alan planının seviyesi, çitte hedef px/m'nin
+  ulaştığı en yüksek seviye — 40 px/m → Algılama). Termalde Johnson, üç
+  seviye. Ölçülmemiş arazide belge "BAĞLAYICI DEĞİL" diye açılır; geçerlilik
+  koşulları (arazi kaynağı, yüzey modeli, hava, hedef boyu, ızgara) yazılır.
+  Sınır modunda çit çizgisi bölgesi yoktur. Teklif paketine
+  `05-plan-uygunluk-beyani.md/.pdf` olarak girer; Raporlar sayfasında düğme.
+  Testler: `tests/test_plan_statement.py`.
 
 ## Açık işler
 
-- Planın kendisi için EN 62676-4 uygunluk beyanı (bölge × seviye × sonuç)
-  yok; beyan yalnız şartname analizinde.
 - KVKK maske poligonu dışa aktarımı (KML/DXF), Monitoring 12,5 px/m arazi
   seviyesi, kamera çizelgesinde enlem/boylam / ulaşılan px/m / port / güç
   sütunları yok.

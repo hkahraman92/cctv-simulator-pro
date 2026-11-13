@@ -4,6 +4,7 @@ from __future__ import annotations
 import dataclasses
 import io
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -210,3 +211,15 @@ def test_stdio_process_keeps_stdout_clean():
     frames = [json.loads(x) for x in proc.stdout.splitlines()]
     assert {f["id"] for f in frames} == {1, 2}
     assert "hazır" in proc.stderr
+
+
+def test_sidecar_starts_on_a_console_without_turkish_letters():
+    """A cp1252 console (the CI runner) cannot encode the dotless i of the
+    ready line; the sidecar must switch stderr to UTF-8 before writing it."""
+    env = {**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}
+    proc = subprocess.run([sys.executable, "-m", "cctv_simulator.service"], cwd=ROOT,
+                          input=(json.dumps(_req(1, "system.info")) + "\n").encode("utf-8"), capture_output=True,
+                          env=env, timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    assert "hazır" in proc.stderr.decode("utf-8")
+    assert json.loads(proc.stdout.decode("utf-8").splitlines()[0])["id"] == 1

@@ -671,6 +671,7 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
                  for k, c in (("held", 1), ("ptz_only", 2), ("below", 3), ("unseen", 4))},
               "held_2": float(((n_held >= 2) & roi).sum() * cell) / roi_area if roi_area else 0.0}
     fence_line = None
+    line = None
     if not is_area:
         line = fence_roi(t, fence, kw["is_closed_loop"], max(0.75 * t.cell_size_m, 1.0))
         n = int(line.sum())
@@ -681,6 +682,9 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
                           "detect": float(((mv.dori_grid >= ZONE_DETECT) & line).sum()) / n,
                           # metres of fence below THIS target (the plan's own gap list is at the plan target)
                           "uncovered_m": (1.0 - share) * float(plan.total_fence_length_m)}
+    # what this report scored, for the plan conformity statement (same masks, no second definition)
+    entry.results["coverage_masks"] = {"roi": roi, "line": line, "ptz_zone": ptz_zone if n_ptz else None,
+                                       "band": band, "inside": inside}
 
     max_px = int(_num(params, "max_px", _DISPLAY_PX, lo=200, hi=4096))
     layer = params.get("layer", "dori")

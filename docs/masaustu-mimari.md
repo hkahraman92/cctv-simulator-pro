@@ -23,7 +23,7 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
 - **API v1** (`cctv_simulator/service/__init__.py: API_VERSION`). Yöntem
   eklemek / isteğe bağlı alan eklemek küçük sürüm; yeniden adlandırma ya da
   silme büyük sürüm. `system.describe` güncel listeyi verir.
-- Yöntemler (75; modül başına):
+- Yöntemler (76; modül başına):
   - `methods.py`: `system.info|ping|describe`, `catalog.get`,
     `library.list|get|camera`, `optics.calculate`, `project.load|save`
   - `library_methods.py`: `library.fields|record|auth|save|delete|set_password`
@@ -48,6 +48,7 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
     `approach.analyse` (gizli yaklaşma + uyarı süresi),
     `perimeter.compare_models|compare_use`
   - `delivery_methods.py`: `export.site` (KML / KMZ / DXF), `export.share_html`,
+    `export.plan_statement` (planın EN 62676-4 uygunluk beyanı: bölge × seviye × sonuç),
     `export.package` (teklif ZIP), `night.condition|timeline|coverage`,
     `scenario.snapshot|compare`
 - Plandan türetilmiş sonuçlar (`multi`, `band_share`, `network`, `cost`,

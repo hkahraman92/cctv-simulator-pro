@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { isTauri } from "@tauri-apps/api/core";
-import { ExternalLink, FileText, FolderOpen, Globe2, Mountain, Package, PenTool, Share2, Table2 } from "lucide-react";
+import { ExternalLink, FileCheck2, FileText, FolderOpen, Globe2, Mountain, Package, PenTool, Share2, Table2 } from "lucide-react";
 import { useCore } from "../core/CoreProvider";
 import { useProject } from "../core/project";
 import { useActiveTerrain, useSpecResult } from "../core/activeTerrain";
@@ -98,6 +98,7 @@ export default function Reports() {
           <Deliverables onFile={(f, extra) => done({ files: [f] }, extra)} job={job} base={base} dir={dir}
             run={{
               site: (path: string) => T.exportSite({ terrain_id: active.terrain_id, use_obstacles: active.use_obstacles, path, real_world: realWorld, name }),
+              statement: (path: string) => T.planStatement({ terrain_id: active.terrain_id, use_obstacles: active.use_obstacles, path, project_name: name }),
               share: (path: string) => T.exportShare({ terrain_id: active.terrain_id, use_obstacles: active.use_obstacles, path, title: name, scenarios: active.scenarios }),
               pkg: (path: string, o?: Parameters<typeof T.exportPackage>[1]) => T.exportPackage({ terrain_id: active.terrain_id, use_obstacles: active.use_obstacles, path,
                 project_name: name, scenarios: active.scenarios, ...(specResult ? { spec_result: specResult } : {}) }, o),
@@ -105,9 +106,9 @@ export default function Reports() {
             status={[
               ["Çit planı + direk listesi", true], ["Birleşik kapsama (KMZ katmanı, bant yüzdeleri)", active.ran.coverage],
               ["Ağ planı + maliyet", active.ran.network], ["Gece senaryosu", active.ran.night],
-              [`Senaryolar (${active.scenarios.length})`, active.scenarios.length > 0], ["Şartname uygunluk beyanı", !!specResult],
+              [`Senaryolar (${active.scenarios.length})`, active.scenarios.length > 0], ["Şartname uygunluk beyanı", !!specResult], ["Plan uygunluk beyanı (EN 62676-4)", active.ran.coverage],
             ]}
-            realWorld={realWorld} onRealWorld={setRealWorld} measured={active.is_measured} />
+            realWorld={realWorld} onRealWorld={setRealWorld} measured={active.is_measured} coverageRan={active.ran.coverage} />
         ) : <p className="text-[12px] text-text-3">Önce "Arazi & Görüş Alanı" sayfasında bir çevre çiti planı oluşturun.</p>}
       </Panel>
 
@@ -141,14 +142,15 @@ function Formats({ value, onChange, only = ["pdf", "xlsx", "csv"] }: { value: Re
 
 type Job = ReturnType<typeof useJob>;
 
-function Deliverables({ run, status, job, base, dir, onFile, realWorld, onRealWorld, measured }: {
+function Deliverables({ run, status, job, base, dir, onFile, realWorld, onRealWorld, measured, coverageRan }: {
   run: {
     site: (path: string) => Promise<{ path: string; exact_georef: boolean; has_latlon: boolean }>;
     share: (path: string) => Promise<{ path: string }>;
+    statement: (path: string) => Promise<{ path: string | null; verdict: string; declared_label: string; measured: boolean }>;
     pkg: (path: string, o?: { signal: AbortSignal; onProgress: (p: { done: number; total: number; message: string }) => void }) => Promise<{ path: string; files: string[]; skipped: string[] }>;
   };
   status: [string, boolean][]; job: Job; base: string; dir: string; onFile: (f: string, note?: string) => void;
-  realWorld: boolean; onRealWorld: (v: boolean) => void; measured: boolean;
+  realWorld: boolean; onRealWorld: (v: boolean) => void; measured: boolean; coverageRan: boolean;
 }) {
   const ask = async (title: string, ext: string, label: string) => {
     if (!isTauri()) return null;
@@ -178,13 +180,18 @@ function Deliverables({ run, status, job, base, dir, onFile, realWorld, onRealWo
             const p = await ask("Paylaşım sayfası (HTML)", "html", "HTML");
             if (p) void job.run("Paylaşım sayfası", () => run.share(p)).then((r) => r && onFile(r.path, ""));
           }}><Share2 size={14} /> Paylaşım Sayfası (HTML)</Button>
+          <Button disabled={job.running || !coverageRan} title={coverageRan ? "" : "Önce Birleşik Kapsamayı hesaplayın"} onClick={async () => {
+            const p = await ask("Plan uygunluk beyanı (EN 62676-4)", "pdf", "PDF");
+            if (p) void job.run("Plan uygunluk beyanı", () => run.statement(p)).then((r) => r && r.path && onFile(r.path,
+              `Plan uygunluk beyanı: ${r.declared_label} — ${r.verdict}${r.measured ? "" : " (arazi ölçüm değil: bağlayıcı değil)"}`));
+          }}><FileCheck2 size={14} /> Plan Uygunluk Beyanı (PDF)</Button>
           <Button primary disabled={job.running} onClick={async () => {
             const p = await ask("Teklif paketi (ZIP)", "zip", "ZIP");
             if (p) void job.run("Teklif paketi hazırlanıyor", (o) => run.pkg(p, o)).then((r) => r && onFile(r.path,
               r.skipped.length ? `Pakete eklenmeyenler: ${r.skipped.join(" · ")}` : ""));
           }}><Package size={14} /> Teklif Paketi (ZIP)</Button>
         </div>
-        <p className="text-[11px] text-text-3">Paket: metraj + maliyet (CSV / XLSX), direk ve switch listesi, mühendislik raporu, uygunluk beyanı, KMZ + DXF, paylaşım sayfası, BENİOKU. Paylaşım sayfası betiksiz, internetsiz açılır.</p>
+        <p className="text-[11px] text-text-3">Paket: metraj + maliyet (CSV / XLSX), direk ve switch listesi, mühendislik raporu, şartname ve plan uygunluk beyanı, KMZ + DXF, paylaşım sayfası, BENİOKU. Paylaşım sayfası betiksiz, internetsiz açılır.</p>
       </div>
     </div>
   );

@@ -257,19 +257,87 @@ def export_package(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         raise RpcError(INVALID_PARAMS, "'spec_result' bir nesne olmalı.")
     spec_kw = {"project_name": str(params.get("project_name", "")), "bidder": str(params.get("bidder", ""))}
     bs = entry.results.get("band_share")
+    stmt = _plan_statement(entry, t, params)
     try:
         out = build_offer_package(
             p, project_name=str(params.get("project_name") or p.stem), terrain=t, plan=plan, camera=cam,
             network=entry.results.get("network"), cost=entry.results.get("cost"), coverage=entry.results.get("multi"),
             band_share=bs[1] if bs else None, night=entry.results.get("night"), photo=entry.photo,
-            spec_result=spec, spec_kw=spec_kw, scenarios=_scenarios(params, required=False),
+            spec_result=spec, spec_kw=spec_kw, plan_statement=stmt[1] if stmt else None, scenarios=_scenarios(params, required=False),
             weather=kw.get("weather", ""), progress=ctx.progress)
     except OSError as exc:
         raise RpcError(APP_ERROR, f"Paket yazılamadı: {exc}") from None
     return out
 
 
+# ── plan conformity statement ─────────────────────────────────────────────
+def _plan_statement(entry, t, params: Dict[str, Any]):
+    """(conformity dict, markdown) from the coverage report already run; None if it was not."""
+    from ..exporters import _surface_line
+    from ..plan_statement import build_plan_statement, plan_conformity
+
+    plan, cam, kw, _f = _plan_of(entry)
+    masks, mv = entry.results.get("coverage_masks"), entry.results.get("multi")
+    if masks is None or mv is None:
+        return None
+    mode = kw.get("line_mode")
+    cell = t.cell_size_m ** 2
+    band, inside = masks["band"], masks["inside"]
+    if mode == "area":
+        name = "Korunan alan (poligon)"
+    elif mode == "border":
+        name = f"İzlenen şerit ({'sol' if kw.get('watch_side') == 'left' else 'sağ'} taraf, {band:.0f} m derinlik)"
+    elif inside is not None and inside != band:
+        name = f"Çit bandı (dış {band:.0f} m · iç {inside:.0f} m)"
+    else:
+        name = f"Çit bandı (±{band:.0f} m)"
+    zones = [{"name": name, "mask": masks["roi"], "kind": "area", "size": float(masks["roi"].sum()) * cell}]
+    if masks["line"] is not None and mode != "border":      # a border pole looks across the line by design
+        zones.append({"name": "Çit çizgisi", "mask": masks["line"], "kind": "line",
+                      "size": float(plan.total_fence_length_m)})
+    conf = plan_conformity(plan, cam, mv, zones, cell_size_m=t.cell_size_m, ptz_zone=masks["ptz_zone"],
+                           goal_frac=_num(params, "goal_frac", 0.95, lo=0.3, hi=1.0),
+                           area_level=kw.get("level") if mode == "area" else None)
+    weather = kw.get("weather") or "Berrak hava"
+    conditions = [
+        ("Arazi: ölçülmüş yükseklik modeli" if t.is_measured else "Arazi: TEMSİLİ (ölçüm değil)")
+        + (f" — {t.source_note}" if getattr(t, "source_note", "") else ""),
+        _surface_line(t).strip() or "Yüzey modeli yok: binalar ve ağaçlar görüşü engellemez (çıplak arazi).",
+        f"Hava: {weather} (görüş {kw.get('visibility_km', 40.0):g} km).",
+        (f"Hedef boyu {entry.target_height_m:.1f} m: görüş hattı ve kadraj başa göre.".replace(".", ",", 1)
+         if entry.target_height_m > 0 else "Hedef zemin noktasıdır (insan boyu modellenmedi)."),
+    ]
+    md = build_plan_statement(conf, plan=plan, camera=cam, conditions=conditions, measured=bool(t.is_measured),
+                              project_name=str(params.get("project_name", "")), bidder=str(params.get("bidder", "")))
+    return conf, md
+
+
+def export_plan_statement(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """EN 62676-4 conformity statement of the PLAN: zone x level x result, from the coverage
+    report already run. Returns the rows and the markdown; writes ``path`` (.md / .pdf) if given."""
+    from ..plan_statement import write_plan_statement_pdf
+
+    entry, t = _terrain_of(params)
+    got = _plan_statement(entry, t, params)
+    if got is None:
+        raise RpcError(APP_ERROR, "Önce Birleşik Kapsamayı hesaplayın: beyan onun sonuçlarından yazılır.")
+    conf, md = got
+    out = {**conf, "markdown": md, "measured": bool(t.is_measured), "path": None}
+    if params.get("path"):
+        p = _target(params, "path", (".md", ".pdf"))
+        try:
+            if p.suffix.lower() == ".pdf":
+                write_plan_statement_pdf(str(p), md)
+            else:
+                p.write_text(md, encoding="utf-8")
+        except OSError as exc:
+            raise RpcError(APP_ERROR, f"Beyan yazılamadı: {exc}") from None
+        out["path"] = str(p)
+    return out
+
+
 METHODS = {
+    "export.plan_statement": export_plan_statement,
     "export.site": export_site,
     "export.share_html": export_share_html,
     "export.package": export_package,

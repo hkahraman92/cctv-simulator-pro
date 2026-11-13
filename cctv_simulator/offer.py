@@ -311,7 +311,7 @@ def build_offer_package(zip_path: str | Path, *, project_name: str, terrain: Ter
                         network=None, cost=None, coverage=None, band_share: Optional[Dict] = None,
                         night: Optional[Dict] = None, photo=None, spec_result: Optional[Dict] = None,
                         spec_kw: Optional[Dict] = None, scenarios: Sequence[Dict] = (), weather: str = "",
-                        progress=None) -> Dict[str, Any]:
+                        plan_statement: Optional[str] = None, progress=None) -> Dict[str, Any]:
     """Write the offer ZIP; returns {"path", "files": [names], "skipped": [reasons]}."""
     import tempfile
 
@@ -372,6 +372,16 @@ def build_offer_package(zip_path: str | Path, *, project_name: str, terrain: Ter
                 skipped.append(f"Uygunluk beyanı PDF'i yazılamadı: {exc}")
         else:
             skipped.append("Şartname analizi yok — uygunluk beyanı eklenmedi")
+        if plan_statement:
+            from .plan_statement import write_plan_statement_pdf
+            files["05-plan-uygunluk-beyani.md"] = plan_statement.encode("utf-8")
+            try:
+                write_plan_statement_pdf(str(tdp / "ps.pdf"), plan_statement)
+                files["05-plan-uygunluk-beyani.pdf"] = (tdp / "ps.pdf").read_bytes()
+            except Exception as exc:                        # noqa: BLE001
+                skipped.append(f"Plan uygunluk beyanı PDF'i yazılamadı: {exc}")
+        else:
+            skipped.append("Birleşik kapsama çalıştırılmadı — plan uygunluk beyanı eklenmedi")
         step(3, "KMZ / DXF")
         try:
             geo_export.write_kml(tdp / "s.kmz", terrain, plan, network, coverage=coverage, name=project_name)

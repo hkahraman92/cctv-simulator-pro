@@ -329,6 +329,23 @@ export interface PatrolResult {
   plan: PlanResult;
 }
 
+/** EN 62676-4 conformity of the plan: zone x level x result, from the coverage report already run */
+export interface PlanStatement {
+  verdict: "Uygun" | "Kısmi" | "Uygun değil";
+  goal_frac: number;
+  thermal: boolean;
+  declared_level: DoriLevel;
+  declared_label: string;
+  declared_ppm: number;
+  clause: string;
+  has_patrol: boolean;
+  measured: boolean;
+  markdown: string;
+  path: string | null;
+  zones: { name: string; kind: "area" | "line"; size: number;
+    rows: { level: DoriLevel; label: string; required_ppm: number; continuous: number; patrol: number; verdict: string; declared: boolean }[] }[];
+}
+
 export interface OptimizeResult {
   before_m2: number;
   after_m2: number;
@@ -565,6 +582,8 @@ export function terrainApi(rpc: RpcClient) {
       rpc.call<{ path: string; exact_georef: boolean; has_latlon: boolean; with_network: boolean; with_coverage: boolean }>("export.site", p, { timeoutMs: 0 }),
     exportShare: (p: T & { path: string; title: string; scenarios?: Scenario[] }) =>
       rpc.call<{ path: string; bytes: number }>("export.share_html", p, { timeoutMs: 0 }),
+    planStatement: (p: T & { path?: string; project_name?: string; bidder?: string; goal_frac?: number }) =>
+      rpc.call<PlanStatement>("export.plan_statement", p, { timeoutMs: 0 }),
     exportPackage: (p: T & { path: string; project_name: string; bidder?: string; spec_result?: object; scenarios?: Scenario[] }, opts?: CallOptions) =>
       rpc.call<{ path: string; files: string[]; skipped: string[] }>("export.package", p, { timeoutMs: 0, ...opts }),
   };
