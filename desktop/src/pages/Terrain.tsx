@@ -115,6 +115,8 @@ export default function Terrain() {
   const [areaRes, setAreaRes] = useState<AreaPlanResult | null>(null);
   const isArea = plan.line_mode === "area";
   const reqLevel = levelOf(plan.target_ppm, isThermal);
+  // an area plan is built for the level (its threshold); a fence plan for the px/m itself
+  const reqPpm = isArea ? levelPpm(reqLevel, isThermal) : plan.target_ppm;
   const [planRes, setPlanRes] = useState<PlanResult | null>(null);
   const [coverage, setCoverage] = useState<CoverageResult | null>(null);
   // THE requirement: target px/m (plan.target_ppm) + the share of the protected area that must hold it
@@ -564,7 +566,7 @@ export default function Terrain() {
               ))}
             </div>
             <div className="rounded bg-bg-2 px-3 py-1.5 font-mono text-[11px] text-text-2">
-              İster: <span className="text-text">{levelName(reqLevel, isThermal)}</span> · ≥ {fmt(plan.target_ppm, plan.target_ppm % 1 ? 2 : 0)} px/m ·{" "}
+              İster: <span className="text-text">{levelName(reqLevel, isThermal)}</span> · ≥ {fmt(reqPpm, reqPpm % 1 ? 2 : 0)} px/m ·{" "}
               {isArea ? "alanın" : plan.line_mode === "border" ? "izlenen şeridin" : "bandın"} %{goal}'i
             </div>
             {mixedLayer && <Button className="w-full" onClick={() => setMixedLayer(null)}>Birleşik kapsamaya dön</Button>}
