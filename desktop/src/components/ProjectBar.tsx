@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { isTauri } from "@tauri-apps/api/core";
-import { FolderOpen, Save, SaveAll } from "lucide-react";
+import { FilePlus2, FolderOpen, Redo2, Save, SaveAll, Undo2 } from "lucide-react";
 import { useCore } from "../core/CoreProvider";
-import { useProject } from "../core/project";
+import { undoScope, useProject } from "../core/project";
+import { confirmDialog } from "./dialogs";
 import type { PPMLevel } from "../core/api";
 
 const FILTERS = [{ name: "CCTV projesi", extensions: ["json"] }];
@@ -40,7 +41,7 @@ export default function ProjectBar() {
   };
 
   const doOpen = async (forcedPath?: string) => {
-    if (!forcedPath && proj.dirty && !window.confirm("Kaydedilmemiş değişiklikler kaybolacak. Devam edilsin mi?")) return;
+    if (!forcedPath && proj.dirty && !(await confirmDialog("Kaydedilmemiş değişiklikler kaybolacak. Devam edilsin mi?"))) return;
     const p = forcedPath ?? (await open({ title: "Proje aç", filters: FILTERS }));
     if (typeof p !== "string") return;
     try {
@@ -59,11 +60,20 @@ export default function ProjectBar() {
     }
   };
 
+  const doNew = async () => {
+    if (proj.dirty && !(await confirmDialog("Kaydedilmemiş değişiklikler kaybolacak. Yeni proje açılsın mı?", { okLabel: "Yeni proje" }))) return;
+    proj.reset();
+    setMsg("");
+  };
+  // the active page first (terrain: fence edits), then the project's own history
+  const undo = () => { if (!undoScope.current?.undo()) proj.undo(); };
+  const redo = () => { if (!undoScope.current?.redo()) proj.redo(); };
+
   // Development builds only: lets the UI automation open / save without the native dialog.
   useEffect(() => {
     if (!import.meta.env.DEV) return;
     (window as unknown as { __cctvTest?: object }).__cctvTest = {
-      open: (path: string) => doOpen(path), save: (path: string) => doSave(false, path),
+      open: (path: string) => doOpen(path), save: (path: string) => doSave(false, path), reset: () => proj.reset(),
     };
   });
 
@@ -71,6 +81,12 @@ export default function ProjectBar() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      // in a text field Ctrl+Z / Ctrl+Y belong to the field
+      const typing = /^(input|textarea|select)$/i.test((e.target as Element)?.tagName ?? "");
+      if (k === "n") { e.preventDefault(); void doNew(); }
+      if (!typing && k === "z" && !e.shiftKey) { e.preventDefault(); undo(); }
+      if (!typing && (k === "y" || (k === "z" && e.shiftKey))) { e.preventDefault(); redo(); }
       if (e.key.toLowerCase() === "s") { e.preventDefault(); void doSave(e.shiftKey); }
       if (e.key.toLowerCase() === "o") { e.preventDefault(); void doOpen(); }
     };
@@ -86,6 +102,9 @@ export default function ProjectBar() {
         {proj.dirty ? "▲ Kaydedilmedi" : proj.path ? "● Kaydedildi" : ""}
       </span>
       {msg && <span className="max-w-[360px] truncate font-mono text-[10px] text-danger" title={msg}>■ {msg}</span>}
+      <button type="button" onClick={undo} title="Geri al (Ctrl+Z)" aria-label="Geri al" className="rounded p-1 text-text-2 hover:bg-bg-5 disabled:opacity-40"><Undo2 size={14} /></button>
+      <button type="button" onClick={redo} title="Yinele (Ctrl+Y)" aria-label="Yinele" className="rounded p-1 text-text-2 hover:bg-bg-5 disabled:opacity-40"><Redo2 size={14} /></button>
+      <button type="button" onClick={() => void doNew()} title="Yeni proje (Ctrl+N)" aria-label="Yeni proje" className="rounded p-1 text-text-2 hover:bg-bg-5"><FilePlus2 size={14} /></button>
       <button type="button" disabled={!can} onClick={() => void doOpen()} title="Proje aç (Ctrl+O)" className="rounded p-1 text-text-2 hover:bg-bg-5 disabled:opacity-40"><FolderOpen size={14} /></button>
       <button type="button" disabled={!can} onClick={() => doSave(false)} title="Kaydet (Ctrl+S)" className="rounded p-1 text-text-2 hover:bg-bg-5 disabled:opacity-40"><Save size={14} /></button>
       <button type="button" disabled={!can} onClick={() => doSave(true)} title="Farklı kaydet (Ctrl+Shift+S)" className="rounded p-1 text-text-2 hover:bg-bg-5 disabled:opacity-40"><SaveAll size={14} /></button>

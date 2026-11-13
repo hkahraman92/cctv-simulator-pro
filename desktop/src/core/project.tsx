@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import { DEFAULT_CAMERA, type CameraConfig, type PPMLevel } from "./api";
 
 /** One camera on the plan plus the focal it is being looked at with. */
@@ -45,7 +45,19 @@ interface ProjectCtx {
   setPlan: (patch: Partial<PlanSettings>) => void;
   load: (sites: Site[], path: string, name: string, plan?: Partial<PlanSettings>, terrain?: TerrainBlock, levels?: PPMLevel[] | null) => void;
   markSaved: (path: string, name: string) => void;
+  /** a blank project; resetNonce changes so pages holding their own state (terrain) start over */
+  reset: () => void;
+  resetNonce: number;
+  /** undo / redo of the project's cameras, plan settings and levels */
+  undo: () => void;
+  redo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
 }
+
+/** The active page may take Ctrl+Z / Ctrl+Y first (the terrain page: fence edits); a handler
+ *  returns false when it had nothing to undo and the project history gets the key. */
+export const undoScope: { current: null | { undo: () => boolean; redo: () => boolean } } = { current: null };
 
 const Ctx = createContext<ProjectCtx | null>(null);
 
@@ -84,8 +96,32 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [terrainBlock, setTerrainBlockState] = useState<TerrainBlock | null>(null);
   const [loadedTerrain, setLoadedTerrain] = useState<{ block: TerrainBlock; nonce: number } | null>(null);
   const sel = Math.min(selected, sites.length - 1);
+  const [resetNonce, setResetNonce] = useState(0);
 
-  const touch = useCallback((fn: (s: Site[]) => Site[]) => { setSites(fn); setDirty(true); }, []);
+  // History: snapshots of what the project file holds. Changes closer than 500 ms are one
+  // step, so a drag on the plan or a slider sweep undoes as a whole.
+  type Snap = { sites: Site[]; plan: PlanSettings; levels: PPMLevel[] | null; selected: number };
+  const snap = useRef<Snap>({ sites, plan, levels, selected: sel });
+  snap.current = { sites, plan, levels, selected: sel };
+  const hist = useRef<{ past: Snap[]; future: Snap[]; last: number }>({ past: [], future: [], last: 0 });
+  const [, setHistVer] = useState(0);
+  const record = useCallback(() => {
+    const h = hist.current, now = Date.now();
+    if (now - h.last > 500) {
+      h.past.push(snap.current);
+      if (h.past.length > 100) h.past.shift();
+      h.future = [];
+      setHistVer((v) => v + 1);
+    }
+    h.last = now;
+  }, []);
+  const restore = useCallback((s: Snap) => {
+    setSites(s.sites); setPlanState(s.plan); setLevelsState(s.levels); setSelected(s.selected);
+    hist.current.last = 0; setDirty(true); setHistVer((v) => v + 1);
+  }, []);
+  const clearHistory = () => { hist.current = { past: [], future: [], last: 0 }; setHistVer((v) => v + 1); };
+
+  const touch = useCallback((fn: (s: Site[]) => Site[]) => { record(); setSites(fn); setDirty(true); }, [record]);
   // Stable, and a no-op for an equal block: the terrain page publishes from an
   // effect that depends on it, so a fresh identity / fresh state per call looped.
   const setTerrainBlock = useCallback((b: TerrainBlock | null, opts?: { touch?: boolean }) => {
@@ -98,7 +134,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<ProjectCtx>(() => ({
     sites, selected: sel, site: sites[sel], plan, path, name, dirty, terrainBlock, loadedTerrain, levels,
-    setLevels: (l) => { setLevelsState(l); setDirty(true); },
+    setLevels: (l) => { record(); setLevelsState(l); setDirty(true); },
     setTerrainBlock,
     select: setSelected,
     add: () => {
@@ -115,15 +151,28 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     })),
     updateAt: (idx, patch) => touch((a) => a.map((s, i) => (i === idx ? { ...s, camera: { ...s.camera, ...patch } } : s))),
     replaceCamera: (camera) => touch((a) => a.map((s, i) => (i === sel ? { camera, focal: camera.focal_min_mm } : s))),
-    setPlan: (patch) => { setPlanState((p) => ({ ...p, ...patch })); setDirty(true); },
+    setPlan: (patch) => { record(); setPlanState((p) => ({ ...p, ...patch })); setDirty(true); },
     load: (next, p, n, pl, terrain, lv) => {
+      clearHistory();
       setLevelsState(lv ?? null);
       setSites(next.length ? next : [newSite(1)]); setSelected(0); setPath(p); setName(n);
       setPlanState({ ...DEFAULT_PLAN, ...pl }); setDirty(false);
       if (terrain) setLoadedTerrain((t) => ({ block: terrain, nonce: (t?.nonce ?? 0) + 1 }));
     },
     markSaved: (p, n) => { setPath(p); setName(n); setDirty(false); },
-  }), [sites, sel, plan, path, name, dirty, touch, setTerrainBlock, terrainBlock, loadedTerrain, levels]);
+    reset: () => {
+      clearHistory();
+      setSites([newSite(1)]); setSelected(0); setPlanState(DEFAULT_PLAN); setLevelsState(null);
+      setPath(""); setName("Yeni proje"); setTerrainBlockState(null); setLoadedTerrain(null); setDirty(false);
+      setResetNonce((n) => n + 1);
+    },
+    resetNonce,
+    undo: () => { const h = hist.current, s = h.past.pop(); if (!s) return; h.future.push(snap.current); restore(s); },
+    redo: () => { const h = hist.current, s = h.future.pop(); if (!s) return; h.past.push(snap.current); restore(s); },
+    canUndo: hist.current.past.length > 0, canRedo: hist.current.future.length > 0,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [sites, sel, plan, path, name, dirty, touch, setTerrainBlock, terrainBlock, loadedTerrain, levels, resetNonce, record, restore,
+    hist.current.past.length, hist.current.future.length]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

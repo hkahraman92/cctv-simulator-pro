@@ -8,6 +8,7 @@ import { useActiveTerrain, useSpecResult } from "../core/activeTerrain";
 import { useJob } from "../core/useJob";
 import JobBar from "../components/JobBar";
 import { Button, Panel } from "../components/ui";
+import { getPrefs, setPref } from "../core/prefs";
 
 /** Report files from the same writers as the classic app and the headless CLI. */
 export default function Reports() {
@@ -17,7 +18,7 @@ export default function Reports() {
   const specResult = useSpecResult();
   const [realWorld, setRealWorld] = useState(false);
   const job = useJob();
-  const [dir, setDir] = useState("");
+  const [dir, setDir] = useState(() => getPrefs().reportDir);
   const [stem, setStem] = useState("");
   const [mode, setMode] = useState<"min" | "max" | "compare">("compare");
   const [fmts, setFmts] = useState<Record<string, boolean>>({ pdf: true, xlsx: true, csv: false });
@@ -29,7 +30,7 @@ export default function Reports() {
 
   const pickDir = async () => {
     const d = await open({ title: "Raporların yazılacağı klasör", directory: true });
-    if (typeof d === "string") setDir(d);
+    if (typeof d === "string") { setDir(d); setPref("reportDir", d); }
   };
 
   const done = (r: { files: string[] } | undefined, extra = "") => {

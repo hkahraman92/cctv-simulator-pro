@@ -135,7 +135,7 @@ export default function MapView(p: Props) {
       <svg
         ref={svg}
         viewBox={`${vb.x} ${vb.y} ${vb.w} ${vb.h}`}
-        className={`block h-full w-full ${p.tool === "none" ? "cursor-grab" : "cursor-crosshair"}`}
+        className={`on-imagery block h-full w-full ${p.tool === "none" ? "cursor-grab" : "cursor-crosshair"}`}
         onWheel={onWheel}
         onPointerDown={onDown}
         onPointerMove={onMove}

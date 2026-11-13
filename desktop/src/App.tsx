@@ -1,9 +1,11 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
-  Box, ClipboardCheck, Database, FileText, Mountain, RefreshCw, SlidersHorizontal, SquareDashedMousePointer, Video,
+  Box, ClipboardCheck, Database, FileText, Mountain, RefreshCw, Settings as SettingsIcon, SlidersHorizontal, SquareDashedMousePointer, Video,
 } from "lucide-react";
 import { CoreProvider, useCore } from "./core/CoreProvider";
-import { ProjectProvider } from "./core/project";
+import { ProjectProvider, useProject } from "./core/project";
+import { DialogHost } from "./components/dialogs";
+import SettingsDialog from "./components/SettingsDialog";
 import { ActiveTerrainProvider } from "./core/activeTerrain";
 import ProjectBar from "./components/ProjectBar";
 import { PageActive } from "./core/pageActive";
@@ -48,14 +50,26 @@ function Shell() {
   const [visited, setVisited] = useState<Set<Page>>(() => new Set(["workspace"]));
   const [status, setStatus] = useState("");
   const current = NAV.find((n) => n.id === page)!;
+  const { resetNonce } = useProject();
+  const [settings, setSettings] = useState(false);
   const go = (p: Page) => { setPage(p); setVisited((v) => (v.has(p) ? v : new Set(v).add(p))); };
+  // Ctrl+1 … Ctrl+7: the modules, in the order of the side bar
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+      const n = Number(e.key);
+      if (n >= 1 && n <= NAV.length) { e.preventDefault(); go(NAV[n - 1].id); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // A page is mounted on first visit and then kept: leaving the terrain page
   // used to throw away the loaded terrain, the plan and every result.
   const pages: Record<Page, ReactNode> = {
     workspace: <Workspace onStatus={setStatus} />,
     library: <Library />,
-    terrain: <Terrain />,
+    terrain: <Terrain key={resetNonce} />,       // a new project starts the terrain page over
     optics: <Optics />,
     view3d: <View3D />,
     spec: <Spec />,
@@ -71,13 +85,14 @@ function Shell() {
         <span className="font-mono text-[11px] text-text-2">{current.label}</span>
         <div className="flex-1" />
         <ProjectBar />
+        <button type="button" onClick={() => setSettings(true)} title="Ayarlar, kısayollar, hakkında" aria-label="Ayarlar" className="rounded p-1 text-text-2 hover:bg-bg-5"><SettingsIcon size={14} /></button>
         <span className="ml-2 font-mono text-[10px] text-text-3">EN 62676-4:2015</span>
       </header>
 
       <div className="flex min-h-0 flex-1">
         <nav className="flex w-[210px] shrink-0 flex-col border-r border-bg-5 bg-bg-3" aria-label="Modüller">
           <div className="label px-3.5 pt-3 pb-2">Modüller</div>
-          {NAV.map(({ id, label, icon: Icon }) => {
+          {NAV.map(({ id, label, icon: Icon }, idx) => {
             const active = id === page;
             return (
               <button
@@ -85,6 +100,7 @@ function Shell() {
                 type="button"
                 onClick={() => go(id)}
                 aria-current={active ? "page" : undefined}
+                title={`Ctrl+${idx + 1}`}
                 className={`flex items-center gap-2.5 border-l-2 px-3.5 py-2.5 text-left text-[13px] font-medium ${
                   active
                     ? "border-primary bg-bg-5 font-semibold text-primary"
@@ -107,6 +123,8 @@ function Shell() {
         </main>
       </div>
 
+      {settings && <SettingsDialog onClose={() => setSettings(false)} />}
+      <DialogHost />
       <footer className="flex h-[26px] shrink-0 items-center gap-4 border-t border-bg-5 bg-bg-0 px-3 font-mono text-[11px]">
         <CoreBadge />
         <span className="text-text-3">{status}</span>

@@ -13,7 +13,8 @@ import type {
 } from "../core/terrainApi";
 import { useJob } from "../core/useJob";
 import { useActiveTerrain } from "../core/activeTerrain";
-import { useProject } from "../core/project";
+import { undoScope, useProject } from "../core/project";
+import { confirmDialog } from "../components/dialogs";
 import MapView from "../components/MapView";
 import JobBar from "../components/JobBar";
 import { FocalCurve, ProfileChart } from "../components/charts";
@@ -255,7 +256,45 @@ export default function Terrain() {
   };
 
   // ── project file: publish this page's state, restore it when a project opens ──
-  const { setTerrainBlock, loadedTerrain } = useProject();
+  const { setTerrainBlock, loadedTerrain, sites: projectSites } = useProject();
+  // Fence edits undo with Ctrl+Z while this tab is in front (ProjectBar asks undoScope first).
+  // Changes closer than 500 ms (a corner drag) are one step.
+  const fenceHist = useRef<{ past: [number, number][][]; future: [number, number][][]; last: number; prev: [number, number][] | null; skip: boolean }>(
+    { past: [], future: [], last: 0, prev: null, skip: false });
+  useEffect(() => {
+    const h = fenceHist.current;
+    if (h.prev === fence) return;
+    if (h.prev === null) { h.prev = fence; return; }      // the first render is not an edit
+    if (!h.skip) {
+      const now = Date.now();
+      // only a drag (same number of corners) is merged; every added / removed corner is its own step
+      if (now - h.last > 500 || h.prev.length !== fence.length) { h.past.push(h.prev); if (h.past.length > 100) h.past.shift(); h.future = []; }
+      h.last = now;
+    }
+    h.skip = false; h.prev = fence;
+  }, [fence]);
+  useEffect(() => {
+    if (!active || tab !== "perimeter") return;
+    const step = (from: "past" | "future", to: "past" | "future") => {
+      const h = fenceHist.current, f = h[from].pop();
+      if (!f) return false;
+      h[to].push(h.prev ?? []); h.skip = true; h.last = 0;
+      setFence(f); replacePlan(null);
+      return true;
+    };
+    undoScope.current = { undo: () => step("past", "future"), redo: () => step("future", "past") };
+    return () => { undoScope.current = null; };
+  }, [active, tab, replacePlan]);
+  const adoptProjectCamera = async (i: number) => {
+    const s = projectSites[i];
+    if (!s) return;
+    // flags come from the library when the model is in it; a custom camera is a fixed, visible one
+    const flags = await api.cameraFor(s.camera.model_name, s.camera).catch(() => ({ is_ptz: false, thermal: false }));
+    setCamera(s.camera); setIsPtz(flags.is_ptz); setIsThermal(flags.thermal);
+    setMount((m) => ({ ...m, mast: s.camera.pole_height_m || m.mast, focal: s.focal, tilt: -5 }));
+    setPlan((p) => ({ ...p, mast_m: s.camera.pole_height_m || p.mast_m }));
+    setSweep(null); setPtzLayer(null);
+  };
   const restoring = useRef(false);     // a project being reopened is not an unsaved change
   useEffect(() => {
     if (!info) return;
@@ -472,6 +511,12 @@ export default function Terrain() {
             {models.map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
           </select>
           <div className="mt-1 font-mono text-[10px] text-text-3">{camera.sensor_name} · {camera.resolution_name} · {fmt(camera.focal_min_mm)}–{fmt(camera.focal_max_mm)} mm</div>
+          {/* the CAD page's cameras: same lens, sensor and mast here, instead of setting them up twice */}
+          <select className="mt-2 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" aria-label="Proje kamerasını kullan" value=""
+            onChange={(e) => { if (e.target.value !== "") void adoptProjectCamera(Number(e.target.value)); }}>
+            <option value="">Proje kamerasını kullan…</option>
+            {projectSites.map((s, i) => <option key={i} value={i}>{s.camera.name} · {s.camera.model_name} · direk {fmt(s.camera.pole_height_m, 1)} m</option>)}
+          </select>
           <label className="mt-2 block">
             <span className="label">Hava (görüş)</span>
             <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={weather} onChange={(e) => setWeather(e.target.value)}>
@@ -962,7 +1007,7 @@ function SourcePanel({ catalog, regions, busy, onLoad, T, refreshRegions }: {
           <div className="mt-2 flex gap-1.5">
             <Button primary className="flex-1" disabled={busy || !region} onClick={() => onLoad(() => T.openRegion(region), "Kayıtlı bölge")}><FolderOpen size={14} /> Aç</Button>
             <Button disabled={busy || !region} title="Bölgeyi diskten kalıcı olarak sil"
-              onClick={() => { if (window.confirm("Bölge diskten silinsin mi? Geri alınamaz.")) void T.deleteRegion(region).then(() => { setRegion(""); refreshRegions(); }); }}><Trash2 size={14} /></Button>
+              onClick={async () => { if (await confirmDialog("Bölge diskten silinsin mi? Geri alınamaz.", { okLabel: "Sil", danger: true })) void T.deleteRegion(region).then(() => { setRegion(""); refreshRegions(); }); }}><Trash2 size={14} /></Button>
           </div>
         </>
       )}

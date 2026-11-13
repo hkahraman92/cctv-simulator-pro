@@ -1154,6 +1154,35 @@ Modu" satırı.
   durumunda sonuç tutan paneller (ağ, gece, yaklaşma, karşılaştırma) sonucunu
   korur. Şehir paneli plansız da açıktır (yalnız-sokak alan planı ondan önce
   sokakları ister).
+- **Masaüstü kabuğu: temel kullanım.**
+  - *Yeni proje* (Ctrl+N, `project.reset`): kameralar / plan / seviyeler
+    sıfırlanır, `resetNonce` Arazi sayfasını `key` ile yeniden kurar.
+  - *Geri al / yinele* (Ctrl+Z / Ctrl+Y): proje geçmişi (`core/project.tsx`,
+    kameralar + plan ayarı + seviyeler; 500 ms içindeki değişiklikler tek adım
+    — sürükleme bütün olarak geri alınır). Öndeki sayfa tuşu önce alabilir:
+    `undoScope` (Arazi → Çevre Çiti: çit geçmişi; köşe ekleme / silme ayrı
+    adım, yalnız sürükleme birleştirilir). Metin kutusundayken tuş kutuya aittir.
+  - *Kaydırıcıya yazarak giriş* (`ui.Slider`): değere tıkla, yaz, Enter;
+    aralığa sıkıştırılır, adıma yuvarlanmaz.
+  - *Çit köşeleri haritada düzenlenir* (`MapView.onFenceChange`): sürükle /
+    çift tık sil / kenar ortasından ekle; düzenlenen çitin eski planı düşer.
+  - *Ayarlar* (`SettingsDialog`, `core/prefs.ts` → localStorage): tema
+    (Konsol / Ofis — `:root[data-theme="light"]` aynı token adları), rapor
+    klasörü hatırlanır, kısayol listesi, hakkında. Harita üstündeki işaretler
+    iki temada da koyu temanın parlak renklerini kullanır (`.on-imagery`):
+    açık temanın koyu sarısı uydu görüntüsünde görünmüyordu.
+  - *Uygulama içi onay / giriş* (`components/dialogs.tsx`: `confirmDialog`,
+    `promptDialog`): yerel `window.confirm/prompt` kalmadı (web görünümünü
+    donduruyor, temayı yok sayıyor, şifreyi açık gösteriyordu).
+  - *Proje kamerasını kullan* (Arazi → Kamera): CAD sayfasındaki kameranın
+    lens / sensör / direk yüksekliği Arazi'ye alınır.
+  - Modül kısayolları Ctrl+1…7.
+- **Arayüzü ekranda doğrulama (masaüstü).** `npm run tauri dev`,
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` ve
+  `APPDATA` geçici klasöre; sonra CDP (`http://127.0.0.1:9333/json`) ile
+  `Runtime.evaluate`, `Input.dispatchMouseEvent`, `Page.captureScreenshot`.
+  Yerel depolama gerçek kullanıcı profilindedir: denemede değiştirilen tema
+  geri alınır.
 
 ## Açık işler
 

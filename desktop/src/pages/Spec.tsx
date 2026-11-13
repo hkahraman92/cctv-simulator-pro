@@ -9,6 +9,7 @@ import { publishSpecResult } from "../core/activeTerrain";
 import type { Analysis, MatrixRow, Status } from "../core/specApi";
 import JobBar from "../components/JobBar";
 import { Button, Panel, fmt } from "../components/ui";
+import { confirmDialog, promptDialog } from "../components/dialogs";
 
 const STATUSES: Status[] = ["Uyumlu", "Kısmi", "Uyumsuz", "Bulunamadı"];
 const STATUS_STYLE: Record<Status, string> = {
@@ -86,7 +87,7 @@ export default function Spec() {
 
   const overrideRow = async (row: MatrixRow, status: Status) => {
     if (!analysis) return;
-    const reason = window.prompt(`"${row.requirement}" → ${status}. Gerekçe (eğitim verisine yazılır):`, "") ?? null;
+    const reason = await promptDialog(`"${row.requirement}" → ${status}. Gerekçe (eğitim verisine yazılır):`);
     if (reason === null) return;
     await spec.override(analysedText, row, status, reason);
     setAnalysis({
@@ -157,10 +158,10 @@ export default function Spec() {
               {templates.map((t) => <option key={t} value={t}>{t}</option>)}
             </select>
             <Button disabled={!tplName || job.running} onClick={() => job.run("Şablon değerlendiriliyor", () => spec.runTemplate(tplName)).then((a) => adopt(a, ""))}><Play size={14} /></Button>
-            <Button disabled={!tplName} title="Şablonu sil" onClick={() => { if (window.confirm(`"${tplName}" silinsin mi?`)) void spec.deleteTemplate(tplName).then(() => spec.templates()).then((t) => { setTemplates(t.templates); setTplName(""); }); }}><Trash2 size={14} /></Button>
+            <Button disabled={!tplName} title="Şablonu sil" onClick={async () => { if (await confirmDialog(`"${tplName}" silinsin mi?`, { okLabel: "Sil", danger: true })) void spec.deleteTemplate(tplName).then(() => spec.templates()).then((t) => { setTemplates(t.templates); setTplName(""); }); }}><Trash2 size={14} /></Button>
           </div>
           <Button className="mt-2 w-full" disabled={!result?.requirements.length} onClick={async () => {
-            const n = window.prompt("Şablon adı (ör. firma adı):", "");
+            const n = await promptDialog("Şablon adı (ör. firma adı):");
             if (!n) return;
             await spec.saveTemplate(n, result!.requirements);
             setTemplates((await spec.templates()).templates);

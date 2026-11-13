@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { KeyRound, Lock, Plus, Save, Trash2, Unlock } from "lucide-react";
 import { useCore } from "../core/CoreProvider";
 import { Button, Panel } from "./ui";
+import { confirmDialog, promptDialog } from "./dialogs";
 
 type Field = { key: string; label: string; group: string; numeric: boolean; multiline: boolean };
 
@@ -60,7 +61,7 @@ export default function LibraryEditor({ selected, onSaved }: { selected: string;
       onSaved(r.name);
     } catch (e: unknown) {
       const err = e as { message?: string; data?: { exists?: boolean } };
-      if (err.data?.exists && window.confirm(`${form.model_name} zaten var. Üzerine yazılsın mı?`)) return save(true);
+      if (err.data?.exists && (await confirmDialog(`${form.model_name} zaten var. Üzerine yazılsın mı?`, { okLabel: "Üzerine yaz", danger: true }))) return save(true);
       setMsg({ ok: false, text: err.message ?? String(e) });
     }
   };
@@ -96,12 +97,12 @@ export default function LibraryEditor({ selected, onSaved }: { selected: string;
         <Button primary disabled={!form.model_name?.trim()} onClick={() => void save()}><Save size={14} /> Kaydet</Button>
         <Button onClick={() => { setEditing(null); setMeta(null); setForm({ source_sheet: "Manuel veri girişi" }); setMsg(null); }}><Plus size={14} /> Yeni</Button>
         <Button disabled={!editing || !meta?.user_entry} title={meta?.builtin && !meta.user_entry ? "Hazır şablon model silinemez" : "Kaydı sil"}
-          onClick={() => { if (editing && window.confirm(`${editing} kullanıcı veritabanından silinsin mi?`)) void api.libDelete(password, editing).then(() => { setMsg({ ok: true, text: `${editing} silindi` }); setEditing(null); setForm({}); onSaved(""); }).catch((e) => setMsg({ ok: false, text: String(e.message ?? e) })); }}>
+          onClick={async () => { if (editing && (await confirmDialog(`${editing} kullanıcı veritabanından silinsin mi?`, { okLabel: "Sil", danger: true }))) void api.libDelete(password, editing).then(() => { setMsg({ ok: true, text: `${editing} silindi` }); setEditing(null); setForm({}); onSaved(""); }).catch((e) => setMsg({ ok: false, text: String(e.message ?? e) })); }}>
           <Trash2 size={14} /> Sil
         </Button>
       </div>
-      <Button className="mt-1.5 w-full" onClick={() => {
-        const n = window.prompt("Yeni yönetici şifresi:", "");
+      <Button className="mt-1.5 w-full" onClick={async () => {
+        const n = await promptDialog("Yeni yönetici şifresi:", { password: true });
         if (!n) return;
         void api.libSetPassword(password, n).then(() => { setPassword(n); setMsg({ ok: true, text: "Yönetici şifresi değiştirildi." }); }).catch((e) => setMsg({ ok: false, text: String(e.message ?? e) }));
       }}><KeyRound size={14} /> Şifreyi değiştir</Button>

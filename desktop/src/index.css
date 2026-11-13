@@ -44,6 +44,51 @@
   --color-dori-detect: #1f5f86;
 }
 
+/* "Ofis" (light) theme: the same token names, the classic app's light values (design_tokens.py). */
+:root[data-theme="light"] {
+  --color-bg-0: #ffffff;
+  --color-bg-1: #e9edf2;
+  --color-bg-2: #f8fafc;
+  --color-bg-3: #e4e9f0;
+  --color-bg-4: #dce4ee;
+  --color-bg-5: #d0d8e2;
+  --color-bg-6: #bcc8d6;
+  --color-line: #a8b3c2;
+  --color-line-soft: #dce4ee;
+  --color-text: #0e1726;
+  --color-text-2: #384559;
+  --color-text-3: #566276;
+  --color-primary: #1c7a51;
+  --color-on-primary: #ffffff;
+  --color-secondary: #1f5e98;
+  --color-on-secondary: #ffffff;
+  --color-warn: #8a5a00;
+  --color-warn-bg: #fbefd3;
+  --color-danger: #b3261e;
+  --color-danger-bg: #fbe3e0;
+  --color-ok-bg: #ddf1e6;
+  --color-info: #1f5e98;
+  --color-info-bg: #e1ecf8;
+  --color-ptz: #6b46c1;
+  --color-dori-identify: #0f3f73;
+  --color-dori-recognize: #2467a6;
+  --color-dori-observe: #4f8fc7;
+  --color-dori-detect: #8db9e0;
+}
+
+/* Markers drawn on satellite / relief pictures keep the dark theme's bright values in both
+   themes: the light theme's dark amber fence was invisible on the map. */
+.on-imagery {
+  --color-primary: #4edea3;
+  --color-secondary: #4cd7f6;
+  --color-warn: #ffb95f;
+  --color-danger: #ffb4ab;
+  --color-ptz: #b18cff;
+  --color-bg-0: #0a0e16;
+  --color-bg-6: #31353e;
+  --color-text: #dfe2ee;
+}
+
 html,
 body,
 #root {
