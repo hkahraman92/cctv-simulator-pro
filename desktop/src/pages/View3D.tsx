@@ -2,7 +2,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useCoalesced, useCore } from "../core/CoreProvider";
 import { usePageActive } from "../core/pageActive";
 import { useProject } from "../core/project";
-import { Panel, Slider, fmt } from "../components/ui";
+import { isTauri } from "@tauri-apps/api/core";
+import { save } from "@tauri-apps/plugin-dialog";
+import { Camera } from "lucide-react";
+import { Button, Panel, Slider, fmt } from "../components/ui";
 
 const PALETTES = [
   ["auto", "Otomatik"], ["day", "Gündüz"], ["ir", "Gece IR"],
@@ -21,13 +24,52 @@ function textWidth(text: string): number {
   return measureCtx.measureText(text).width;
 }
 
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error("Görüntü yüklenemedi."));
+    img.src = src;
+  });
+}
+
+/**
+ * Frame + SVG overlay as one PNG data URL at the frame's native pixel size. CSS variables do not resolve
+ * inside an SVG loaded as an image, so the clone gets the resolved font stack inlined. Web fonts of the
+ * page are not available to such an SVG: the generic monospace fallback is used for the overlay text.
+ */
+async function composeSnapshot(frameSrc: string, svg: SVGSVGElement | null, width: number, height: number): Promise<string> {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Tuval oluşturulamadı.");
+  ctx.drawImage(await loadImage(frameSrc), 0, 0, width, height);
+  if (svg) {
+    const clone = svg.cloneNode(true) as SVGSVGElement;
+    let mono = "";
+    try { mono = getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim(); } catch { /* fallback below */ }
+    const family = mono ? `${mono}, monospace` : "monospace";
+    clone.querySelectorAll("[font-family]").forEach((n) => n.setAttribute("font-family", family));
+    clone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    clone.setAttribute("width", String(width));
+    clone.setAttribute("height", String(height));
+    clone.removeAttribute("class");
+    const xml = new XMLSerializer().serializeToString(clone);
+    ctx.drawImage(await loadImage(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(xml)}`), 0, 0, width, height);
+  }
+  return canvas.toDataURL("image/png");
+}
+
 /** What the camera itself would show: real FOV, sensor and MTF loss, palette, weather. */
 export default function View3D() {
   const active = usePageActive();
-  const { bench, terrain, state } = useCore();
+  const { bench, terrain, report, state } = useCore();
   const { site, update } = useProject();
   const c = site.camera;
   const box = useRef<HTMLDivElement>(null);
+  const svgRef = useRef<SVGSVGElement>(null);
+  const [note, setNote] = useState<{ text: string; error: boolean } | null>(null);
   const [size, setSize] = useState({ w: 960, h: 540 });
   const [weathers, setWeathers] = useState<string[]>(["Berrak hava"]);
   const [p, setP] = useState({ target: "human", dist: 15, lateral: 0, palette: "auto", weather: "Berrak hava", dori: true, grid: true });
@@ -74,13 +116,29 @@ export default function View3D() {
   const atmAlarm = f && f.visibility_km < 20 && f.transmittance < 0.3;
   const varifocal = c.focal_max_mm > c.focal_min_mm;
 
+  const snapshot = async () => {
+    if (!f) return;
+    try {
+      const data = await composeSnapshot(f.frame.data, svgRef.current, f.width, f.height);
+      const d = new Date();
+      const z = (n: number) => String(n).padStart(2, "0");
+      const stamp = `${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}`;
+      const path = await save({ title: "Anlık görüntü (PNG)", filters: [{ name: "PNG", extensions: ["png"] }], defaultPath: `kamera-goruntusu-${stamp}.png` });
+      if (!path) return;
+      const r = await report.writeFile({ path, data_url: data });
+      setNote({ text: `Görüntü yazıldı: ${r.path}`, error: false });
+    } catch (e) {
+      setNote({ text: e instanceof Error ? e.message : String(e), error: true });
+    }
+  };
+
   return (
     <div className="flex min-h-full flex-wrap content-start gap-3 p-3">
       <div className="flex min-w-[480px] flex-[3_1_640px] flex-col gap-2">
         <div ref={box} className="relative w-full overflow-hidden rounded-md bg-bg-0" style={{ aspectRatio: "16 / 9" }}>
           {f && <img src={f.frame.data} alt={`${c.name} kamera görüntüsü, hedef ${fmt(p.dist)} m`} className="absolute inset-0 h-full w-full" />}
           {f && (
-            <svg viewBox={`0 0 ${f.width} ${f.height}`} className="absolute inset-0 h-full w-full" aria-hidden>
+            <svg ref={svgRef} viewBox={`0 0 ${f.width} ${f.height}`} className="absolute inset-0 h-full w-full" aria-hidden>
               {p.grid && f.grid.map((g, i) => (
                 <line key={i} x1={g.u1} y1={g.v1} x2={g.u2} y2={g.v2} stroke={g.center ? "rgba(120,140,150,.8)" : "rgba(176,190,197,.35)"} strokeWidth={g.major || g.center ? 1.5 : 0.8} />
               ))}
@@ -112,9 +170,11 @@ export default function View3D() {
             <span>{f.is_thermal ? `${fmt(f.target_px, 1)} px (%${fmt(f.target_pct_h, 2)}) · ${fmt(f.ppm, 2)} PPM` : `${fmt(f.ppm, 1)} PPM`}</span>
             <span className="text-text-3">HFOV {fmt(f.hfov_deg)}° · lens {fmt(site.focal)} mm · direk {fmt(c.pole_height_m)} m</span>
             {f.visibility_km < 20 && <span className={f.transmittance < 0.5 ? "text-warn" : "text-text-3"}>hava: {f.weather} · iletim %{fmt(f.transmittance * 100, 0)}</span>}
+            <span className="ml-auto"><Button disabled={!isTauri()} onClick={() => void snapshot()}><Camera size={14} /> Anlık görüntü</Button></span>
             {f.is_thermal && <span className={f.target_pct_h >= 1.5 ? "text-primary" : "text-warn"}>{f.target_pct_h >= 1.5 ? "● Algoritma %1,5 eşiği OK" : "▲ Algoritma %1,5 eşiği altında"}</span>}
           </div>
         )}
+        {note && <div role="status" className={`rounded-md bg-bg-4 px-3 py-2 font-mono text-[11px] ${note.error ? "text-danger" : "text-text-2"}`}>{note.text}</div>}
       </div>
 
       <div className="flex w-[320px] shrink-0 flex-col gap-3">

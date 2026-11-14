@@ -85,8 +85,8 @@ function Shell() {
         <span className="font-mono text-[11px] text-text-2">{current.label}</span>
         <div className="flex-1" />
         <ProjectBar />
-        <button type="button" onClick={() => setSettings(true)} title="Ayarlar, kısayollar, hakkında" aria-label="Ayarlar" className="rounded p-1 text-text-2 hover:bg-bg-5"><SettingsIcon size={14} /></button>
-        <span className="ml-2 font-mono text-[10px] text-text-3">EN 62676-4:2015</span>
+        <button type="button" onClick={() => setSettings(true)} title="Ayarlar, kısayollar, hakkında" aria-label="Ayarlar, kısayollar, hakkında" className="flex h-7 w-7 items-center justify-center rounded text-text-2 hover:bg-bg-5"><SettingsIcon size={14} /></button>
+        <span className="ml-2 font-mono text-[11px] text-text-3">EN 62676-4:2015</span>
       </header>
 
       <div className="flex min-h-0 flex-1">

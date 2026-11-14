@@ -20,7 +20,7 @@ import JobBar from "../components/JobBar";
 import { FocalCurve, ProfileChart } from "../components/charts";
 import { MixedPanel, PtzPanel, type Layer, type Patrol } from "../components/PtzPanels";
 import PtzSweep from "../components/PtzSweep";
-import { ComparePanel, EMPTY_PRICES, NetworkPanel, type NetworkResult, type PriceBook } from "../components/PlanningPanels";
+import { AssistPanel, ComparePanel, EMPTY_PRICES, NetworkPanel, type NetworkResult, type PriceBook } from "../components/PlanningPanels";
 import { NightPanel, ScenarioPanel } from "../components/DeliveryPanels";
 import { ApproachPanel, type ApproachMarks } from "../components/ApproachPanel";
 import { CityPanel } from "../components/CityPanel";
@@ -916,6 +916,14 @@ export default function Terrain() {
                 </div>
               )}
                 </Panel>
+              )}
+              {!isArea && fence.length >= 2 && (
+                <AssistPanel T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} models={models} camera={camera}
+                  planArgs={planParams()} goal={goal} resetKey={planVer}
+                  levels={levelsFor(isThermal).filter(([k]) => k !== "monitor" && k !== "detect")}
+                  defaultLevel={reqLevel === "identify" && isThermal ? "recognize" : reqLevel === "monitor" || reqLevel === "detect" ? "recognize" : reqLevel}
+                  ptzModelFor={async (n) => (await api.cameraFor(n, undefined, true)).camera} onPlan={replacePlan}
+                  onApplied={(c, n) => setMixedPtz((m) => ({ ...m, camera: c, everyN: n }))} />
               )}
               {fence.length >= 2 && !isArea && (
                 <ComparePanel T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} models={models} camera={camera}

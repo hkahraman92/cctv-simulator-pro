@@ -79,6 +79,9 @@ export function reportApi(rpc: RpcClient) {
     engineering: (p: { terrain_id: string; use_obstacles: boolean; camera: import("./api").CameraConfig; weather: string; formats: string[]; out_dir: string; stem: string; project_name: string }) =>
       rpc.call<{ files: string[]; sections: Record<string, boolean>; measured: boolean }>("report.engineering", p, { timeoutMs: 0 }),
     open: (path: string) => rpc.call<{ opened: string }>("report.open", { path }),
+    /** The webview cannot write files; the core does. Exactly one of `text` (.csv/.txt) or `data_url` (.png). */
+    writeFile: (p: { path: string; text: string } | { path: string; data_url: string }) =>
+      rpc.call<{ path: string; bytes: number }>("export.write_file", p),
   };
 }
 

@@ -123,7 +123,13 @@ def evaluate_mixed_perimeter(terrain: TerrainData, plan: PerimeterPlanResult,
                              slew_speed_deg_s: float = 90.0, zoom_full_sweep_s: float = 3.0,
                              settle_s: float = 1.5, max_range_cap_m: float = 3000.0,
                              visibility_km: float = 40.0, weather: str = "",
-                             earth_curvature: bool = True) -> MixedPerimeterResult:
+                             earth_curvature: bool = True,
+                             fixed_reach_level: Optional[int] = None) -> MixedPerimeterResult:
+    """``fixed_reach_level``: None keeps each fixed pole at the plan's own range
+    (its fence target, e.g. 40 px/m). A DORI zone (ZONE_DETECT) reaches every
+    fixed pole out to that level's own range, built by ``focal_optimizer.
+    full_reach_placements`` -- the rule coverage and the plan statement use, so
+    "detected by a fixed camera" counts the same cells there and here."""
     if not plan.ptz_cameras:
         raise ValueError("Planda PTZ yok: 'her N direkte bir PTZ' seçip yeniden dizin.")
     if cue_target_ppm is None:              # the PTZ's own identification level (thermal: Johnson)
@@ -131,8 +137,12 @@ def evaluate_mixed_perimeter(terrain: TerrainData, plan: PerimeterPlanResult,
     atm = dict(visibility_km=visibility_km, weather=weather)
     static = None
     if plan.placed_cameras:
-        static = calculate_multi_camera_viewshed(
-            terrain, plan_placements(plan, fixed_camera), earth_curvature=earth_curvature, **atm)
+        if fixed_reach_level is None:
+            placements = plan_placements(plan, fixed_camera)
+        else:
+            from .focal_optimizer import full_reach_placements
+            placements = full_reach_placements(plan, fixed_camera, fixed_reach_level)
+        static = calculate_multi_camera_viewshed(terrain, placements, earth_curvature=earth_curvature, **atm)
 
     sweeps: List[SweepResult] = []
     cues: List[CueResponse] = []

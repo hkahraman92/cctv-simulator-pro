@@ -74,7 +74,7 @@ desktop/                             yeni arayüz: Tauri 2 (Rust) + React/TS/Tai
 
 **Yeni masaüstü kabuğu.** `desktop/` Python çekirdeği (`python -m
 cctv_simulator.service`, yayında `cctv-core.exe`) alt süreç olarak başlatır,
-satır başına bir JSON-RPC nesnesi taşır (API v1, 76 yöntem; liste ve
+satır başına bir JSON-RPC nesnesi taşır (API v1, 78 yöntem; liste ve
 sözleşme `docs/masaustu-mimari.md`). Ekran fizik türetmez; her sayı bir API
 yönteminden gelir. Yeni özellik için: önce `service/*_methods.py`'ye yöntem +
 `tests/test_service_*.py`'ye motorla birebir eşlik testi, sonra
@@ -698,6 +698,41 @@ bant kapsaması odak optimizasyonu sonrası bile ≤%97: kameralar çit boyunca
 baktığından bandın dış kenarına yetişmez. `_plan_kwargs` / `_refresh_plan_stats`
 "Otomatik Diz" ile aramanın aynı ayarla planlamasını sağlar.
 
+**PTZ destekli en az direk (`pole_optimizer.minimize_poles_assisted`,
+`perimeter.plan_assisted`).** Tanıma / Teşhis'i yalnız sabit kameralarla
+sürekli tutmak çok sık hat ister; gerçek tasarımda sabitler sürekli algılar,
+alarmda PTZ yakınlaşır. İster, plan uygunluk beyanındaki `assist` tanımının
+kendisi: korunan bantta (a) sabitler Algılamayı sürekli ≥ hedef payda tutar VE
+(b) ≥ hedef payda hücre bir sabit kamerayla algılanıp bir PTZ `zone_ppm(L)`'yi
+`max_s` sn içinde tutar (`detect_to_identify_s <= max_s`). L > Algılama
+olmalı (termalde Teşhis yok). Arama: (1) sabit hat = `minimize_poles` Algılama
+seviyesinde, hedef pay aynı (L seviyesinde sabit arama bilerek koşmaz), lens
+seçimi uygulanır; (2) o hatta en büyük `ptz_every_n` ikiye bölünerek aranır
+(n = 1 her direğe PTZ, n = düzenli direk sayısı tek PTZ; sabit direkler n ile
+oynamaz), her aday `evaluate_mixed_perimeter` + beyanın kendi maskeleriyle
+(`band_area` Algılama ∩ `d2i <= max_s`) puanlanır, seçilen n ve n+1
+değerlendirilir, 14 değerlendirmede sınır (`capped` + not); (3) her direğe PTZ
+yetmezse ya da (a) otoriter motorda tutmazsa sabit hat en çok 2 adım (×0,8
+aralık) sıklaştırılır; yine olmazsa `met=False`, not (a) / (b)'yi ve payları
+adlandırır, servis planı DEĞİŞTİRMEZ. Raporlanan paylar son otoriter
+değerlendirmedir, tahmin değil. Servis yalnız `met` iken planı oturuma yazar
+(`ptz_camera` + seçilen `ptz_every_n` ile; ardından `perimeter.mixed
+cue_target_ppm=target_ppm` + `export.plan_statement` aynı `max_s`'de bölümü
+"Uygun" verir, testte uçtan uca). Tespit tanımı tek: `evaluate_mixed_perimeter(
+fixed_reach_level=ZONE_DETECT)` sabit direkleri `focal_optimizer.
+full_reach_placements` ile (band_area'nın aralık kuralı) Algılamanın kendi
+menziline uzatır; `perimeter.mixed` ve planlayıcı bunu geçer, yoksa varsayılan
+40 px/m çit hedefi sabitleri hedef menzilinde keserdi ve bandın dış kenarı
+karma tespite girmeden pay ~%62'de doyardı (None = eski davranış, bit-aynı;
+Tk penceresi hâlâ None). Arama ikiye bölmedir: bulunan PTZ sayısı "bulunan en
+küçük"tür, daha seyreği tüm seçenekler denenerek elenmedi (not düşer). Ölçüldü
+(`ridge_and_valley` 1 km, 10 m hücre, 400 m kare çit, 4 MP 2,8–12 mm, 8 m
+direk, varsayılan 40 px/m hedef, Tanıma %90, en çok 10 sn, PTZ 4,8–153 mm):
+60 direk / 64 sabit kamera / 9 PTZ (her 7. direk), sürekli algılama %90,2,
+PTZ destekli pay %90,2; 7,6 sn (8 PTZ → %89,4 tutmaz). Aynı hedefte yalnız
+sabit kameralarla Tanıma: 144 direkte bile %16,9.
+Testler: `tests/test_plan_assisted.py`.
+
 **Alan hedefi (`area_planner.plan_area`).** Çit planlayıcısı bir ÇİZGİYİ
 (±40 m bant) korur; otopark, avlu, depo sahası, meydan bir ALANDIR. Kullanıcı
 poligon çizer, hedef seviye + oran verir ("%95'i Tanıma"). Aday direk yerleri
@@ -1152,8 +1187,10 @@ Modu" satırı.
   sabit + PTZ değerlendirmesi koştuysa (`entry.results["mixed"]`) beyana ayrı
   bir bölüm girer — sabit kameralar sürekli algılar VE bir PTZ `assist_max_s`
   (vars. 10 sn) içinde teşhis hedefini tutar (`detect_to_identify_s` ızgarası);
-  devriye kapsamasından ayrı bir isterdir. Planlayıcı seçeneği değil,
-  değerlendirmedir: plan PTZ'yi sayarak kurulmaz. Teklif paketine
+  devriye kapsamasından ayrı bir isterdir. Bu ister için plan
+  `pole_optimizer.minimize_poles_assisted` ile kurulabilir (yukarıda "PTZ
+  destekli en az direk"); `perimeter.plan` kendiliğinden PTZ'yi sayarak
+  kurmaz. Teklif paketine
   `05-plan-uygunluk-beyani.md/.pdf` olarak girer; Raporlar sayfasında düğme.
   Testler: `tests/test_plan_statement.py`.
 - **Kamera çizelgesi** (`offer.pole_rows(plan, terrain=, camera=, ptz_camera=,

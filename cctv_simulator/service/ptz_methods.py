@@ -171,7 +171,7 @@ def perimeter_mixed(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """The last plan's fixed poles + co-mounted PTZs: continuous vs intermittent detection, detect -> identify."""
     from .. import map_render
     from ..perimeter_ptz import evaluate_mixed_perimeter
-    from ..viewshed_3d import is_thermal_camera
+    from ..viewshed_3d import ZONE_DETECT, is_thermal_camera
 
     entry, t = _terrain_of(params)
     if "plan" not in entry.results:
@@ -186,7 +186,8 @@ def perimeter_mixed(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
                                        speed_deg_s=_num(params, "speed_deg_s", 20.0, lo=0.5, hi=400),
                                        end_dwell_s=_num(params, "end_dwell_s", 2.0, lo=0, hi=600),
                                        cue_target_ppm=_opt_num(params, "cue_target_ppm", lo=1, hi=2000),
-                                       visibility_km=kw["visibility_km"], weather=kw["weather"])
+                                       visibility_km=kw["visibility_km"], weather=kw["weather"],
+                                       fixed_reach_level=ZONE_DETECT)       # same detection as coverage / statement
     except ValueError as exc:
         raise RpcError(APP_ERROR, str(exc)) from None
     entry.results["mixed"] = res

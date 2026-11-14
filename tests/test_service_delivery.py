@@ -127,3 +127,44 @@ def test_offer_package_has_the_parts_and_names_what_is_missing(planned, tmp_path
     assert "06-saha.kmz" not in names                       # procedural terrain: no position
     assert any("uygunluk" in s for s in r["skipped"]) and any("KMZ" in s for s in r["skipped"])
     assert "UYARI" in readme
+
+
+# -- export.write_file -------------------------------------------------------
+_PNG_1PX = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+
+
+def test_write_file_text_roundtrips_bytes_exactly(tmp_path):
+    text = "\ufeffad;değer\r\nşğüöçı İ;1,5\r\n"
+    r = ok("export.write_file", path=str(tmp_path / "m.CSV"), text=text)
+    assert (tmp_path / "m.CSV").read_bytes() == text.encode("utf-8")
+    assert r == {"path": str(tmp_path / "m.CSV"), "bytes": len(text.encode("utf-8"))}
+    assert [p.name for p in tmp_path.iterdir()] == ["m.CSV"]          # no temp file left behind
+    ok("export.write_file", path=str(tmp_path / "m.CSV"), text="b")   # overwrite
+    assert (tmp_path / "m.CSV").read_bytes() == b"b"
+
+
+def test_write_file_png_roundtrip(tmp_path):
+    import base64
+    r = ok("export.write_file", path=str(tmp_path / "a.png"), data_url="data:image/png;base64," + _PNG_1PX)
+    assert (tmp_path / "a.png").read_bytes() == base64.b64decode(_PNG_1PX)
+    assert r["bytes"] == len(base64.b64decode(_PNG_1PX))
+
+
+@pytest.mark.parametrize("params", [
+    {"path": "X/a.exe", "text": "x"},                       # extension
+    {"path": "X/a.csv"},                                    # neither payload
+    {"path": "X/a.csv", "text": "x", "data_url": "data:image/png;base64,AA=="},   # both
+    {"path": "X/a.png", "text": "x"},                       # text for png
+    {"path": "X/a.csv", "data_url": "data:image/png;base64," + _PNG_1PX},          # data_url for csv
+    {"path": "X/a.png", "data_url": "data:image/png;base64,aGVsbG8="},             # not a PNG
+    {"path": "X/a.png", "data_url": "data:image/png;base64,@@@"},                  # bad base64
+    {"path": "X/yok/a.csv", "text": "x"},                   # missing parent
+    {"path": "a.csv", "text": "x"},                         # relative
+])
+def test_write_file_rejects_bad_requests(params, tmp_path):
+    p = dict(params)
+    if not p["path"].startswith("a."):
+        p["path"] = p["path"].replace("X", str(tmp_path), 1)
+    r = call("export.write_file", **p)
+    assert "error" in r and r["error"]["message"]
+    assert list(tmp_path.iterdir()) == []

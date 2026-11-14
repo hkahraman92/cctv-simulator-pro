@@ -32,8 +32,8 @@ export default function LevelEditor({ levels, defaults, custom, onChange, onRese
   };
 
   return (
-    <Panel title="PPM seviyeleri" icon={<Gauge size={16} className="text-secondary" />} className="w-[260px] shrink-0 self-start"
-      right={<button type="button" className="text-[11px] text-text-2 underline" onClick={() => setOpen((o) => !o)}>{open ? "kapat" : `${levels.length} seviye`}</button>}>
+    <Panel title="PPM seviyeleri" icon={<Gauge size={16} className="text-secondary" />} className="w-full min-w-0 self-start"
+      right={<button type="button" className="inline-flex h-7 items-center px-1 text-[11px] text-text-2 underline" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{open ? "kapat" : `${levels.length} seviye`}</button>}>
       {!open ? (
         <p className="text-[11px] text-text-3">{custom ? "● Projeye özel seviyeler var." : "Motorun varsayılan seviyeleri (EN 62676-4 DORI, Johnson, plaka…)."} Mesafe tablosu, kontrol noktası ve raporlar bu listeyi kullanır.</p>
       ) : (
@@ -44,7 +44,7 @@ export default function LevelEditor({ levels, defaults, custom, onChange, onRese
                 <span className="w-12 shrink-0 text-right">{fmt(l.ppm, l.ppm % 1 ? 1 : 0)}</span>
                 <span className="min-w-0 flex-1 truncate font-sans" title={l.name}>{l.name}</span>
                 {!builtin.has(l.key) && (
-                  <button type="button" aria-label={`${l.name} sil`} className="text-text-3 hover:text-danger"
+                  <button type="button" aria-label={`${l.name} sil`} className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-text-3 hover:text-danger"
                     onClick={() => onChange(levels.filter((x) => x.key !== l.key))}><X size={12} /></button>
                 )}
               </li>
@@ -61,7 +61,7 @@ export default function LevelEditor({ levels, defaults, custom, onChange, onRese
           </select>
           <div className="mt-1.5 flex gap-1.5">
             <Button className="flex-1" disabled={!valid} onClick={add}><Plus size={14} /> Ekle</Button>
-            {custom && <Button title="Varsayılan seviyelere dön" onClick={onReset}><RotateCcw size={14} /></Button>}
+            {custom && <Button title="Varsayılan seviyelere dön" aria-label="Varsayılan seviyelere dön" onClick={onReset}><RotateCcw size={14} /></Button>}
           </div>
         </>
       )}

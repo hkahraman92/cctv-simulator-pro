@@ -292,6 +292,32 @@ export interface PoleSearch {
   plan: PlanResult | null;
 }
 
+export interface AssistTrial { ptz_every_n: number; ptz_count: number; assisted_share: number; fixed_poles: number }
+
+/** perimeter.plan_assisted: fixed cameras detect continuously, a PTZ holds `level` within `max_s` of the alarm */
+export interface AssistedPlan {
+  met: boolean;
+  level: string;
+  goal_frac: number;
+  max_s: number;
+  target_ppm: number;
+  roi_area_m2: number;
+  pole_count: number;
+  fixed_cameras: number;
+  ptz_count: number;
+  ptz_every_n: number;
+  /** continuous Detection share of the band (fixed cameras) */
+  detect_share: number;
+  /** share detected by a fixed camera AND reached by a PTZ in time */
+  assisted_share: number;
+  capped: boolean;
+  notes: string[];
+  trials: AssistTrial[];
+  fixed: { met: boolean; base: PoleTrial; best: PoleTrial | null; trials: PoleTrial[] } | null;
+  /** null when not met: the session plan is left unchanged */
+  plan: PlanResult | null;
+}
+
 export interface FocalChoice {
   focal_mm: number;
   tilt_deg: number;
@@ -561,6 +587,8 @@ export function terrainApi(rpc: RpcClient) {
       rpc.call<PatrolResult>("perimeter.ptz_patrol", p, { timeoutMs: 0, ...opts }),
     minimizePoles: (p: T & PlanParams & { camera: CameraConfig; goal_frac: number; level: string; position_steps?: number; band_m?: number; band_in_m?: number }, opts?: CallOptions) =>
       rpc.call<PoleSearch>("perimeter.minimize_poles", p, { timeoutMs: 0, ...opts }),
+    assistedPlan: (p: T & PlanParams & { camera: CameraConfig; ptz_camera: CameraConfig; goal_frac: number; level: string; max_s: number; position_steps?: number; band_m?: number; band_in_m?: number }, opts?: CallOptions) =>
+      rpc.call<AssistedPlan>("perimeter.plan_assisted", p, { timeoutMs: 0, ...opts }),
     focalSweep: (
       p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; pan_deg: number; level: string; pan_search_deg?: number; weather?: string; n_focals?: number; range_m?: number; current_tilt_deg?: number; current_focal_mm?: number },
       opts?: CallOptions,

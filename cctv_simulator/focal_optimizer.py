@@ -623,6 +623,22 @@ def apply_layout_keeping_fence(plan, layout: LayoutResult, camera: CameraConfig,
                          visibility_km=visibility_km, weather=weather), kept, reverted)
 
 
+def full_reach_placements(plan, camera: CameraConfig, level: int):
+    """The plan's fixed poles as viewshed placements, each reaching out to
+    ``level``'s own range instead of the plan's fence-target cap (the one range
+    rule: ``band_area`` and the mixed evaluation both build placements here)."""
+    from dataclasses import replace
+
+    from .perimeter_ptz import plan_placements
+
+    def full_reach(pl):
+        f = pl.focal_mm_override or camera.focal_min_mm
+        slant = camera_optics(camera, f).distance_for_ppm(level_ppm(camera, level))
+        return replace(pl, max_range_m=min(max(pl.max_range_m, slant), MAX_RANGE_CAP_M))
+
+    return [full_reach(pl) for pl in plan_placements(plan, camera)]
+
+
 def band_area(terrain: TerrainData, plan, camera: CameraConfig, roi: Optional[np.ndarray], level: int, *,
               visibility_km: float = 40.0, weather: str = "", transform=None):
     """(MultiViewshedResult, m2 at >= ``level`` inside ``roi``) for a plan's
@@ -635,17 +651,9 @@ def band_area(terrain: TerrainData, plan, camera: CameraConfig, roi: Optional[np
     ``level=ZONE_MONITOR`` runs the engine with the Monitoring floor (the one
     opt-in: every other level keeps the Detection floor); a thermal camera
     has no such level and ``level_ppm`` rejects it with a Turkish error."""
-    from dataclasses import replace
-
-    from .perimeter_ptz import plan_placements
     from .viewshed_3d import calculate_multi_camera_viewshed
 
-    def full_reach(pl):
-        f = pl.focal_mm_override or camera.focal_min_mm
-        slant = camera_optics(camera, f).distance_for_ppm(level_ppm(camera, level))
-        return replace(pl, max_range_m=min(max(pl.max_range_m, slant), MAX_RANGE_CAP_M))
-
-    placements = [full_reach(pl) for pl in plan_placements(plan, camera)]
+    placements = full_reach_placements(plan, camera, level)
     if transform is not None:              # e.g. night.capped_placements: a shorter reach, same engine
         placements = transform(placements)
     mv = calculate_multi_camera_viewshed(terrain, placements, visibility_km=visibility_km, weather=weather,

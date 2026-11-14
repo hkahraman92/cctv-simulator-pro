@@ -7,6 +7,9 @@ import { undoScope, useProject } from "../core/project";
 import { confirmDialog, promptDialog } from "./dialogs";
 import type { PPMLevel } from "../core/api";
 
+// 28x28 hit area, icon stays 14 px; focus ring comes from the global :focus-visible rule
+const ICON_BTN = "flex h-7 w-7 items-center justify-center rounded text-text-2 hover:bg-bg-5 disabled:opacity-40";
+
 const FILTERS = [{ name: "CCTV projesi", extensions: ["json"] }];
 
 /** Project name + saved state + open / save, in the title bar. Same .json schema as the classic app. */
@@ -97,18 +100,18 @@ export default function ProjectBar() {
   const can = state === "ready" && isTauri();
   return (
     <div className="flex items-center gap-2">
-      <button type="button" title="Proje adını değiştir" className="rounded px-1 font-mono text-[11px] text-secondary hover:bg-bg-5"
+      <button type="button" title="Proje adını değiştir" aria-label={`Proje adını değiştir: ${proj.name}`} className="inline-flex h-7 items-center rounded px-1.5 font-mono text-[11px] text-secondary hover:bg-bg-5"
         onClick={async () => { const n = await promptDialog("Proje adı:", { initial: proj.name }); if (n) proj.rename(n); }}>{proj.name}</button>
-      <span className={`font-mono text-[10px] ${proj.dirty ? "text-warn" : "text-text-3"}`}>
+      <span className={`font-mono text-[11px] ${proj.dirty ? "text-warn" : "text-text-3"}`}>
         {proj.dirty ? "▲ Kaydedilmedi" : proj.path ? "● Kaydedildi" : ""}
       </span>
-      {msg && <span className="max-w-[360px] truncate font-mono text-[10px] text-danger" title={msg}>■ {msg}</span>}
-      <button type="button" onClick={undo} title="Geri al (Ctrl+Z)" aria-label="Geri al" className="rounded p-1 text-text-2 hover:bg-bg-5 disabled:opacity-40"><Undo2 size={14} /></button>
-      <button type="button" onClick={redo} title="Yinele (Ctrl+Y)" aria-label="Yinele" className="rounded p-1 text-text-2 hover:bg-bg-5 disabled:opacity-40"><Redo2 size={14} /></button>
-      <button type="button" onClick={() => void doNew()} title="Yeni proje (Ctrl+N)" aria-label="Yeni proje" className="rounded p-1 text-text-2 hover:bg-bg-5"><FilePlus2 size={14} /></button>
-      <button type="button" disabled={!can} onClick={() => void doOpen()} title="Proje aç (Ctrl+O)" className="rounded p-1 text-text-2 hover:bg-bg-5 disabled:opacity-40"><FolderOpen size={14} /></button>
-      <button type="button" disabled={!can} onClick={() => doSave(false)} title="Kaydet (Ctrl+S)" className="rounded p-1 text-text-2 hover:bg-bg-5 disabled:opacity-40"><Save size={14} /></button>
-      <button type="button" disabled={!can} onClick={() => doSave(true)} title="Farklı kaydet (Ctrl+Shift+S)" className="rounded p-1 text-text-2 hover:bg-bg-5 disabled:opacity-40"><SaveAll size={14} /></button>
+      {msg && <span className="max-w-[360px] truncate font-mono text-[11px] text-danger" title={msg}>■ {msg}</span>}
+      <button type="button" onClick={undo} title="Geri al (Ctrl+Z)" aria-label="Geri al (Ctrl+Z)" className={ICON_BTN}><Undo2 size={14} /></button>
+      <button type="button" onClick={redo} title="Yinele (Ctrl+Y)" aria-label="Yinele (Ctrl+Y)" className={ICON_BTN}><Redo2 size={14} /></button>
+      <button type="button" onClick={() => void doNew()} title="Yeni proje (Ctrl+N)" aria-label="Yeni proje (Ctrl+N)" className={ICON_BTN}><FilePlus2 size={14} /></button>
+      <button type="button" disabled={!can} onClick={() => void doOpen()} title="Proje aç (Ctrl+O)" aria-label="Proje aç (Ctrl+O)" className={ICON_BTN}><FolderOpen size={14} /></button>
+      <button type="button" disabled={!can} onClick={() => doSave(false)} title="Kaydet (Ctrl+S)" aria-label="Kaydet (Ctrl+S)" className={ICON_BTN}><Save size={14} /></button>
+      <button type="button" disabled={!can} onClick={() => doSave(true)} title="Farklı kaydet (Ctrl+Shift+S)" aria-label="Farklı kaydet (Ctrl+Shift+S)" className={ICON_BTN}><SaveAll size={14} /></button>
     </div>
   );
 }

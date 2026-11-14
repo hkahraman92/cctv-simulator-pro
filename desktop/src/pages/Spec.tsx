@@ -53,7 +53,7 @@ export function buildMatrixCsv(result: ComplianceResult): string {
 }
 
 export default function Spec() {
-  const { spec, state } = useCore();
+  const { spec, report, state } = useCore();
   const { name: projectName } = useProject();
   const job = useJob();
   const [text, setText] = useState("");
@@ -139,6 +139,16 @@ export default function Spec() {
     const r = await spec.statement(result, projectName, path);
     setStatement(r.markdown);
     if (r.pdf_path) setNote(`PDF yazıldı: ${r.pdf_path}`);
+  };
+
+  const saveMatrixCsv = async () => {
+    if (!result) return;
+    const p = await save({ title: "Uygunluk matrisi (CSV)", filters: [{ name: "CSV", extensions: ["csv"] }], defaultPath: "uygunluk-matrisi.csv" });
+    if (!p) return;
+    try {
+      const r = await report.writeFile({ path: p, text: buildMatrixCsv(result) });
+      setNote(`CSV yazıldı: ${r.path}`);
+    } catch (e) { setNote(e instanceof Error ? e.message : String(e)); }
   };
 
   return (
@@ -259,7 +269,7 @@ export default function Spec() {
             <p className="mt-2 text-[11px] text-text-2">{result.recommendation}</p>
           </Panel>
           {(result.ambiguities.length > 0 || result.clarification_questions.length > 0) && (
-            <details className="rounded-md bg-bg-4">
+            <details open className="rounded-md bg-bg-4">
               <summary className="cursor-pointer select-none px-3 py-2 text-[13px] font-semibold">
                 Belirsiz ifadeler <span className="font-mono text-[11px] text-warn">({result.ambiguities.length})</span>
               </summary>
@@ -283,6 +293,7 @@ export default function Spec() {
             <div className="flex flex-col gap-1.5">
               <Button onClick={() => void makeStatement(false)}><FileDown size={14} /> Beyanı Önizle</Button>
               <Button primary disabled={!isTauri()} onClick={() => void makeStatement(true)}><FileDown size={14} /> Uygunluk Beyanı (PDF)</Button>
+              <Button disabled={!isTauri()} onClick={() => void saveMatrixCsv()}><FileDown size={14} /> Matrisi CSV olarak kaydet</Button>
               <Button disabled={!isTauri()} onClick={async () => {
                 const p = await save({ title: "Eğitim veri seti", filters: [{ name: "JSON Lines", extensions: ["jsonl"] }], defaultPath: "cctv_compliance_train.jsonl" });
                 if (!p) return;

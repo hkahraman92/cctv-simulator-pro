@@ -170,7 +170,7 @@ export default function SitePlan(p: Props) {
       })}
     </svg>
       {/* top corner: at the bottom it sat on the axis' last metre label */}
-      <div className="pointer-events-none absolute right-2 top-1.5 font-mono text-[10px] text-text-3">
+      <div className="pointer-events-none absolute right-2 top-1.5 font-mono text-[11px] text-text-3">
         {vw.k > 1.01 ? `${fmt(vw.k, 1)}× · sürükle: kaydır · çift tık: sığdır` : "tekerlek: yakınlaştır"}
       </div>
     </div>

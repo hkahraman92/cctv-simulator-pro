@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
-import { Cable, Play, Scale, Trophy } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { Cable, Play, RotateCw, Scale, Trophy } from "lucide-react";
 import type { CameraConfig, ModelSummary } from "../core/api";
-import type { PlanResult, TerrainApi } from "../core/terrainApi";
+import type { AssistedPlan, PlanResult, TerrainApi } from "../core/terrainApi";
 import type { useJob } from "../core/useJob";
 import { Button, Panel, fmt } from "./ui";
 
@@ -105,6 +105,73 @@ export function NetworkPanel({ T, job, terrainId, useObstacles, prices, onPrices
           </table>
           {res.cost.unpriced.length > 0 && <div className="mt-1 font-sans text-text-3">◆ Fiyatı girilmeyen: {res.cost.unpriced.join(", ")} — toplama dahil değil.</div>}
           <details className="mt-1 font-sans text-text-3"><summary className="cursor-pointer">Varsayımlar</summary><ul className="list-disc pl-4">{n.assumptions.map((a) => <li key={a}>{a}</li>)}</ul></details>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+/** Fewest poles + PTZs when the fixed cameras detect and a PTZ zooms in on alarm (instead of fixed-only Recognition). */
+export function AssistPanel({ T, job, terrainId, useObstacles, models, camera, planArgs, goal, levels, defaultLevel, ptzModelFor, onPlan, onApplied, resetKey }: {
+  T: TerrainApi; job: Job; terrainId: string; useObstacles: boolean; models: ModelSummary[]; camera: CameraConfig;
+  /** the project's coverage goal (%) */
+  goal: number;
+  /** levels above Detection the PTZ can be asked for (the camera scale's own list) */
+  levels: readonly (readonly [string, string])[]; defaultLevel: string;
+  planArgs: Record<string, unknown>;
+  ptzModelFor: (name: string) => Promise<CameraConfig>;
+  onPlan: (p: PlanResult) => void;
+  /** a met plan was applied: its PTZ model and density, for the mixed panel to re-plan with the same PTZs */
+  onApplied: (ptz: CameraConfig, everyN: number) => void;
+  /** changes with every new plan: the shown result belongs to an older one */
+  resetKey?: number;
+}) {
+  const ptzModels = models.filter((m) => m.is_ptz);
+  const [ptz, setPtz] = useState<CameraConfig | null>(null);
+  const [level, setLevel] = useState(defaultLevel);
+  const [maxS, setMaxS] = useState(10);
+  const [res, setRes] = useState<AssistedPlan | null>(null);
+  const own = useRef(false);               // the next plan change is this panel's own result
+  useEffect(() => { if (own.current) own.current = false; else setRes(null); }, [resetKey, terrainId]);
+  const run = () => ptz && void job.run("PTZ destekli en az direk", (o) => T.assistedPlan({
+    terrain_id: terrainId, use_obstacles: useObstacles, camera, ...planArgs, ptz_camera: ptz,
+    goal_frac: goal / 100, level, max_s: maxS, position_steps: 0,
+  } as Parameters<TerrainApi["assistedPlan"]>[0], o)).then((r) => {
+    if (!r) return;
+    setRes(r);
+    if (r.plan) { own.current = true; onPlan(r.plan); onApplied(ptz, r.ptz_every_n); }
+  });
+  const pctOf = (f: number) => `%${fmt(f * 100, 1)}`;
+  return (
+    <Panel title="PTZ destekli hedef" icon={<RotateCw size={16} className="text-ptz" />}>
+      <p className="text-[11px] text-text-3">Sabit kameralar bandın %{fmt(goal, goal % 1 ? 1 : 0)}'inde sürekli algılar; alarmda bir PTZ seçilen seviyeyi en çok {fmt(maxS, 0)} sn içinde tutar.</p>
+      <select className="mt-2 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" aria-label="PTZ modeli (destekli hedef)"
+        value={ptz?.model_name ?? ""} onChange={async (e) => setPtz(e.target.value ? await ptzModelFor(e.target.value) : null)}>
+        <option value="">— PTZ modeli seçin —</option>
+        {ptzModels.map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
+      </select>
+      <div className="mt-2 grid grid-cols-2 gap-1.5 text-[12px]">
+        <label className="flex flex-col gap-0.5 text-text-3">Seviye
+          <select className="h-8 rounded border border-line bg-bg-0 px-2 text-text" aria-label="PTZ seviyesi" value={level} onChange={(e) => setLevel(e.target.value)}>
+            {levels.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>
+        </label>
+        <label className="flex flex-col gap-0.5 text-text-3">En çok (sn)
+          <input type="number" min={1} max={600} step={1} value={maxS} aria-label="PTZ varış süresi (sn)"
+            onChange={(e) => setMaxS(Math.min(600, Math.max(1, Number(e.target.value) || 10)))}
+            className="h-8 rounded border border-line bg-bg-0 px-2 font-mono text-text" />
+        </label>
+      </div>
+      <Button className="mt-2 w-full" disabled={job.running || !ptz} onClick={run}><Play size={14} /> Aramayı Başlat</Button>
+      {res && (
+        <div className="mt-2 text-[12px]">
+          {res.met ? (
+            <div className="text-primary">● <b>{res.pole_count} direk</b> · {res.fixed_cameras} sabit kamera · {res.ptz_count} PTZ (her {res.ptz_every_n}. direk)</div>
+          ) : (
+            <div className="text-warn">▲ Hedef tutmadı; plan değiştirilmedi.</div>
+          )}
+          <div className="mt-1 text-[11px] text-text-2">Sürekli algılama {pctOf(res.detect_share)} · PTZ destekli {pctOf(res.assisted_share)} (hedef %{fmt(res.goal_frac * 100, 0)}, {fmt(res.target_ppm, res.target_ppm % 1 ? 2 : 0)} px/m, ≤ {fmt(res.max_s, 0)} sn)</div>
+          {res.notes.map((n) => <div key={n} className="mt-1 text-[11px] text-text-3">◆ {n}</div>)}
         </div>
       )}
     </Panel>

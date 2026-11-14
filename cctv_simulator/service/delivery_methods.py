@@ -344,10 +344,79 @@ def export_plan_statement(params: Dict[str, Any], ctx: Context) -> Dict[str, Any
     return out
 
 
+# -- generic file writer for the webview (no fs plugin) ------------------
+_WRITE_MAX_BYTES = 50 * 1024 * 1024
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_WRITE_SUFFIXES = (".csv", ".txt", ".png")
+
+
+def export_write_file(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """Write text (.csv / .txt, UTF-8 verbatim) or a PNG data URL to a user-chosen path."""
+    import base64
+    import binascii
+    import os
+    import tempfile
+
+    p = Path(_require(params, "path", str))
+    if not p.is_absolute():
+        raise RpcError(INVALID_PARAMS, "'path' mutlak bir yol olmalı.")
+    suffix = p.suffix.lower()
+    if suffix not in _WRITE_SUFFIXES:
+        raise RpcError(INVALID_PARAMS, f"'path' uzantısı şunlardan biri olmalı: {', '.join(_WRITE_SUFFIXES)}")
+    if not p.parent.is_dir():
+        raise RpcError(APP_ERROR, f"Klasör bulunamadı: {p.parent}")
+    has_text, has_url = params.get("text") is not None, params.get("data_url") is not None
+    if has_text == has_url:
+        raise RpcError(INVALID_PARAMS, "'text' ya da 'data_url' parametrelerinden tam biri verilmeli.")
+    if has_text:
+        text = params["text"]
+        if not isinstance(text, str):
+            raise RpcError(INVALID_PARAMS, "'text' metin olmalı.")
+        if suffix == ".png":
+            raise RpcError(INVALID_PARAMS, "PNG dosyası için 'data_url' kullanılmalı, 'text' değil.")
+        data = text.encode("utf-8")
+    else:
+        url = params["data_url"]
+        if not isinstance(url, str):
+            raise RpcError(INVALID_PARAMS, "'data_url' metin olmalı.")
+        if suffix != ".png":
+            raise RpcError(INVALID_PARAMS, "'data_url' yalnız .png dosyası için kullanılabilir.")
+        head, sep, payload = url.partition(",")
+        if not sep or head.lower() != "data:image/png;base64":
+            raise RpcError(INVALID_PARAMS, "'data_url' 'data:image/png;base64,...' biçiminde olmalı.")
+        if len(payload) > _WRITE_MAX_BYTES * 4 // 3 + 8:
+            raise RpcError(APP_ERROR, "Veri 50 MB sınırını aşıyor.")
+        try:
+            data = base64.b64decode(payload, validate=True)
+        except (binascii.Error, ValueError):
+            raise RpcError(INVALID_PARAMS, "'data_url' içindeki base64 verisi geçersiz.") from None
+        if not data.startswith(_PNG_SIGNATURE):
+            raise RpcError(INVALID_PARAMS, "'data_url' içindeki veri bir PNG görüntüsü değil.")
+    if len(data) > _WRITE_MAX_BYTES:
+        raise RpcError(APP_ERROR, "Veri 50 MB sınırını aşıyor.")
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(prefix=".yaz-", suffix=".tmp", dir=str(p.parent))
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.replace(tmp, p)
+        tmp = None
+    except OSError as exc:
+        raise RpcError(APP_ERROR, f"Dosya yazılamadı: {exc}") from None
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    return {"path": str(p), "bytes": len(data)}
+
+
 METHODS = {
     "export.plan_statement": export_plan_statement,
     "export.site": export_site,
     "export.share_html": export_share_html,
+    "export.write_file": export_write_file,
     "export.package": export_package,
     "night.condition": night_condition,
     "night.timeline": night_timeline,

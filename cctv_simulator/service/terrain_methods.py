@@ -800,6 +800,52 @@ def perimeter_minimize_poles(params: Dict[str, Any], ctx: Context) -> Dict[str, 
     }
 
 
+def perimeter_plan_assisted(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """Fewest poles + PTZs for a PTZ-assisted target: fixed cameras detect continuously and a PTZ
+    holds ``level`` within ``max_s`` of the alarm. The session plan changes only when it is met."""
+    from ..pole_optimizer import minimize_poles_assisted
+
+    entry, t = _terrain_of(params)
+    cam = _camera_from(params.get("camera", {}))
+    if not params.get("ptz_camera"):
+        raise RpcError(INVALID_PARAMS, "'ptz_camera' (PTZ modeli) gerekli.")
+    ptz_cam = _camera_from(params["ptz_camera"])
+    fence = _fence(params)
+    kw = _plan_kwargs(params)
+    level = _level_of(params, ptz_cam, "recognize")
+    goal = _num(params, "goal_frac", 0.95, lo=0.05, hi=1.0)
+    max_s = _num(params, "max_s", 10.0, lo=1.0, hi=600.0)
+    band, inside = _band_params(params)
+    try:
+        res = minimize_poles_assisted(
+            t, fence, cam, ptz_cam, level=level, goal_frac=goal, max_s=max_s, plan_kwargs=kw,
+            band_m=band, inside_m=inside, position_steps=int(_num(params, "position_steps", 0, lo=0, hi=4)),
+            speed_deg_s=_num(params, "speed_deg_s", 20.0, lo=0.5, hi=400),
+            end_dwell_s=_num(params, "end_dwell_s", 2.0, lo=0, hi=600),
+            progress=lambda d, n: ctx.progress(d, n, f"PTZ yoğunluğu {d}/{n}"))
+    except ValueError as exc:
+        raise RpcError(APP_ERROR, str(exc)) from None
+    plan = None
+    if res.met and res.plan is not None:
+        # the session keeps the plan the mixed evaluation / statement will judge: PTZ model + the chosen density
+        kw_plan = dict(kw, ptz_camera=ptz_cam, ptz_every_n=res.ptz_every_n,
+                       ptz_patrol_span_deg=kw.get("ptz_patrol_span_deg", 360.0))
+        plan = res.plan
+        entry.set_plan((plan, cam, kw_plan, fence))
+    s = res.pole_search
+    names = {v: k for k, v in _levels_table().items()}
+    return {
+        "met": res.met, "level": names[res.level], "goal_frac": res.goal_frac, "max_s": res.max_s,
+        "target_ppm": res.target_ppm, "roi_area_m2": res.roi_area_m2, "notes": res.notes, "capped": res.capped,
+        "pole_count": res.pole_count, "fixed_cameras": res.fixed_cameras, "ptz_count": res.ptz_count,
+        "ptz_every_n": res.ptz_every_n, "detect_share": res.detect_share, "assisted_share": res.assisted_share,
+        "trials": [dataclasses.asdict(x) for x in res.trials],
+        "fixed": {"met": s.met, "base": dataclasses.asdict(s.base), "best": dataclasses.asdict(s.best) if s.best else None,
+                  "trials": [dataclasses.asdict(x) for x in s.trials]} if s is not None else None,
+        "plan": _plan_json(plan) if plan is not None else None,
+    }
+
+
 def perimeter_optimize(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """Optimise the last plan's poles in place: focal / tilt (/ heading) and optionally
     their place along the fence; both plans re-scored by the authoritative engine."""
@@ -1147,6 +1193,7 @@ METHODS = {
     "perimeter.plan": perimeter_plan,
     "perimeter.coverage": perimeter_coverage,
     "perimeter.minimize_poles": perimeter_minimize_poles,
+    "perimeter.plan_assisted": perimeter_plan_assisted,
     "perimeter.optimize": perimeter_optimize,
     "area.plan": area_plan,
     "city.osm": city_osm,

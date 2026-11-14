@@ -11,6 +11,9 @@ import { Button, Panel, Slider, Tile, fmt } from "../components/ui";
 import PlanView, { atGeomLimit } from "../components/PlanView";
 import SitePlan from "../components/SitePlan";
 
+// 28x28 hit area, icon stays 15 px; ring from the global :focus-visible rule
+const TOOL_BTN = "flex h-7 w-7 items-center justify-center rounded";
+
 export default function Workspace({ onStatus }: { onStatus: (s: string) => void }) {
   const active = usePageActive();
   const { api, bench, state } = useCore();
@@ -71,8 +74,9 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
   const identify = r?.ground_distances.Characterize;
 
   return (
-    <div className="flex min-h-full flex-wrap content-start gap-3 p-3">
-      <Panel title="Kameralar" icon={<Camera size={16} className="text-secondary" />} className="w-[220px] shrink-0"
+    <div className="grid min-h-full grid-cols-1 content-start items-start gap-3 p-3 lg:grid-cols-[200px_minmax(280px,1fr)_260px] xl:grid-cols-[220px_minmax(380px,1fr)_300px]">
+      <div className="flex min-w-0 flex-col gap-3">
+      <Panel title="Kameralar" icon={<Camera size={16} className="text-secondary" />} className="min-w-0"
         right={
           <button type="button" aria-label="Kamera ekle" title="Kamera ekle" className="flex h-7 w-7 items-center justify-center rounded text-text-2 hover:bg-bg-5 hover:text-primary"
             onClick={add}>
@@ -85,7 +89,7 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
               <button type="button" onClick={() => setSel(i)}
                 className={`flex w-full items-center gap-2 rounded px-2 py-1.5 text-left ${i === sel ? "bg-bg-5 text-primary" : "text-text-2 hover:bg-bg-5"}`}>
                 <span className="flex-1 truncate">{s.camera.name}</span>
-                <span className="font-mono text-[10px] text-text-3">{fmt(s.focal)} mm</span>
+                <span className="font-mono text-[11px] text-text-3">{fmt(s.focal)} mm</span>
               </button>
             </li>
           ))}
@@ -98,9 +102,9 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
         <div className="label mt-4 mb-1">Plan</div>
         <div className="flex gap-1.5">
           <Button className="flex-1" disabled={!isTauri()} onClick={pickPlan}><ImagePlus size={14} /> Resim</Button>
-          {plan.plan_path && <Button title="Plan resmini kaldır" onClick={() => setPlan({ plan_path: "" })}><X size={14} /></Button>}
+          {plan.plan_path && <Button title="Plan resmini kaldır" aria-label="Plan resmini kaldır" onClick={() => setPlan({ plan_path: "" })}><X size={14} /></Button>}
         </div>
-        {plan.plan_path && <div className="mt-1 truncate font-mono text-[10px] text-text-3" title={plan.plan_path}>{plan.plan_path.split(/[\\/]/).pop()}</div>}
+        {plan.plan_path && <div className="mt-1 truncate font-mono text-[11px] text-text-3" title={plan.plan_path}>{plan.plan_path.split(/[\\/]/).pop()}</div>}
         {planErr && <div className="mt-1 text-[11px] text-danger">■ {planErr}</div>}
         <label className="mt-2 block"><span className="label">Plan genişliği (m)</span>
           <input type="number" min={5} step={1} value={plan.plan_width_m} onChange={(e) => { const v = Number(e.target.value); if (v >= 5) setPlan({ plan_width_m: v }); }}
@@ -115,7 +119,7 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
               onChange={(e) => setPlan({ level_key: e.target.value })}>
               {[...effLevels].sort((a, b) => b.ppm - a.ppm).map((lv) => <option key={lv.key} value={lv.key}>{lv.name} · {fmt(lv.ppm, lv.ppm % 1 ? 1 : 0)}</option>)}
             </select>
-            <div className="mt-1 font-mono text-[10px] text-text-3">({fmt(plan.target.x_m)}, {fmt(plan.target.y_m)}) m · ⌖ ile haritaya tıklayın</div>
+            <div className="mt-1 font-mono text-[11px] text-text-3">({fmt(plan.target.x_m)}, {fmt(plan.target.y_m)}) m · ⌖ ile haritaya tıklayın</div>
             <ul className="mt-2 flex flex-col gap-1 text-[11px]">
               {proj.value?.cameras.map((pc) => pc.target && (
                 <li key={pc.name} className={pc.target.status === "uygun" ? "text-primary" : "text-text-2"}>
@@ -126,19 +130,21 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
           </>
         )}
       </Panel>
+      <LevelEditor levels={effLevels} defaults={defaults} onChange={(l) => setLevels(l)} onReset={() => setLevels(null)} custom={!!levels} />
+      </div>
 
-      <Panel title={view === "site" ? "Vaziyet Planı" : "Seçili kamera"} className="min-w-[380px] flex-[3_1_420px]"
+      <Panel title={view === "site" ? "Vaziyet Planı" : "Seçili kamera"} className="min-w-0"
         right={
-          <div className="flex items-center gap-1">
+          <div className="flex flex-wrap items-center justify-end gap-1">
             {view === "site" && (
               <>
-                <button type="button" title="Taşı / döndür" onClick={() => setTool("move")} className={`rounded p-1 ${tool === "move" ? "bg-bg-6 text-primary" : "text-text-2"}`}><Move size={15} /></button>
-                <button type="button" title="Kontrol noktası koy" onClick={() => { setTool("target"); setPlan({ target: { ...plan.target, active: true } }); }}
-                  className={`rounded p-1 ${tool === "target" ? "bg-bg-6 text-secondary" : "text-text-2"}`}><Crosshair size={15} /></button>
+                <button type="button" title="Taşı / döndür" aria-label="Taşı / döndür" aria-pressed={tool === "move"} onClick={() => setTool("move")} className={`${TOOL_BTN} ${tool === "move" ? "bg-bg-6 text-primary" : "text-text-2"}`}><Move size={15} /></button>
+                <button type="button" title="Kontrol noktası koy" aria-label="Kontrol noktası koy" aria-pressed={tool === "target"} onClick={() => { setTool("target"); setPlan({ target: { ...plan.target, active: true } }); }}
+                  className={`${TOOL_BTN} ${tool === "target" ? "bg-bg-6 text-secondary" : "text-text-2"}`}><Crosshair size={15} /></button>
               </>
             )}
             {([["site", "Plan"], ["single", "Tek kamera"]] as const).map(([id, l]) => (
-              <button key={id} type="button" onClick={() => setView(id)}
+              <button key={id} type="button" aria-pressed={view === id} onClick={() => setView(id)}
                 className={`h-7 rounded-full px-3 text-[11px] font-semibold ${view === id ? "bg-secondary text-on-secondary" : "bg-bg-5 text-text-2"}`}>{l}</button>
             ))}
           </div>
@@ -155,15 +161,15 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
             )}
           </div>
         ) : r ? <PlanView r={r} /> : <Empty state={state} error={res.error} />}
-        <div className="mt-2 grid grid-cols-4 gap-1.5">
+        <div className="mt-2 grid grid-cols-2 gap-1.5 xl:grid-cols-4">
           {DORI.map((d) => (
             <div key={d.key} className="rounded bg-bg-1 p-2">
-              <div className="flex items-center gap-1.5 font-mono text-[10px] text-text-3">
+              <div className="flex items-center gap-1.5 font-mono text-[11px] text-text-3">
                 <span className="h-2.5 w-2.5 rounded-sm" style={{ background: `var(--color-${d.tone})` }} />
                 {d.label} ≥{fmt(d.ppm, d.ppm % 1 ? 1 : 0)}
               </div>
               <div className="font-mono text-[16px] font-bold">{r ? fmt(r.ground_distances[d.key]) : "—"} m</div>
-              {r && atGeomLimit(r, d.key) && <div className="font-mono text-[10px] text-warn">▲ geometrik sınır</div>}
+              {r && atGeomLimit(r, d.key) && <div className="font-mono text-[11px] text-warn">▲ geometrik sınır</div>}
             </div>
           ))}
         </div>
@@ -174,9 +180,7 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
         )}
       </Panel>
 
-      <LevelEditor levels={effLevels} defaults={defaults} onChange={(l) => setLevels(l)} onReset={() => setLevels(null)} custom={!!levels} />
-
-      <Panel title="İnceleme" className="flex-[2_1_300px]">
+      <Panel title="İnceleme" className="min-w-0">
         <label className="mb-3 block">
           <span className="label">Kamera adı</span>
           <input className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={c.name}

@@ -23,7 +23,7 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
 - **API v1** (`cctv_simulator/service/__init__.py: API_VERSION`). Yöntem
   eklemek / isteğe bağlı alan eklemek küçük sürüm; yeniden adlandırma ya da
   silme büyük sürüm. `system.describe` güncel listeyi verir.
-- Yöntemler (76; modül başına):
+- Yöntemler (78; modül başına):
   - `methods.py`: `system.info|ping|describe`, `catalog.get`,
     `library.list|get|camera`, `optics.calculate`, `project.load|save`
   - `library_methods.py`: `library.fields|record|auth|save|delete|set_password`
@@ -31,7 +31,8 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
   - `terrain_methods.py`: `terrain.catalog|procedural|geotiff|download|image|settings`
     (settings: arazi oturumunda hedef boyu),
     `regions.list|open|save|delete`, `surface.osm|raster`, `viewshed.single`,
-    `perimeter.plan|coverage|minimize_poles|optimize|ptz_patrol` (bant: `band_m` dış,
+    `perimeter.plan|coverage|minimize_poles|plan_assisted|optimize|ptz_patrol` (`plan_assisted`: PTZ destekli en az direk +
+    PTZ — sabitler sürekli algılar, PTZ `level`'i `max_s` sn içinde tutar; yalnız tutarsa planı değiştirir; bant: `band_m` dış,
     `band_in_m` iç; kapsama `layer=target|dori|overlap`, `level=plan|…`, PTZ
     aralıklı pay, çit çizgisi payı, `ptz_reach` ile talep üzerine erişim; `ptz_patrol`: PTZ
     başına devriye odak / eğim araması, tarama motoruyla doğrulanır), `area.plan` (alan hedefi: poligonda en az
@@ -48,6 +49,7 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
     `approach.analyse` (gizli yaklaşma + uyarı süresi),
     `perimeter.compare_models|compare_use`
   - `delivery_methods.py`: `export.site` (KML / KMZ / DXF), `export.share_html`,
+    `export.write_file` (webview'in yazamadığı dosyalar: `.csv` / `.txt` metin ya da `.png` data URL, 50 MB sınırı),
     `export.plan_statement` (planın EN 62676-4 uygunluk beyanı: bölge × seviye × sonuç),
     `export.package` (teklif ZIP), `night.condition|timeline|coverage`,
     `scenario.snapshot|compare`
