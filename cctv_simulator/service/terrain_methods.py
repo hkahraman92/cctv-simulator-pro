@@ -431,7 +431,7 @@ def viewshed_single(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
                     "visible": res.profile_is_visible[::step].astype(bool).tolist()},
         "overlay": _image(overlay, max_px=max_px),
         "legend": map_render.legend("dori_thermal" if is_thermal_camera(cam)
-                                    else "dori_monitor" if monitor else "dori")[1],
+                                    else "dori_monitor" if monitor else "dori", keys=True)[1],
         "thermal": is_thermal_camera(cam), "monitor_floor": monitor,
         "warnings": warnings,
         "weather_range_m": weather_range, "notes": notes,
@@ -743,7 +743,7 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
             grid, size, mode="dori_monitor" if layer == "dori" and monitor_run else layer), roi)
     # the Monitoring row only where this layer can hold it (a monitor-floor run)
     legend = map_render.legend("dori_thermal" if layer == "dori" and is_thermal_camera(cam)
-                               else "dori_monitor" if layer == "dori" and monitor_run else layer)[1]
+                               else "dori_monitor" if layer == "dori" and monitor_run else layer, keys=True)[1]
     if layer == "target":
         legend = [(f"{txt} — {label}" if i == 0 else txt, rgba) for i, (txt, rgba) in enumerate(legend)]
         if not n_ptz:
@@ -914,7 +914,8 @@ def perimeter_optimize(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
 def perimeter_ptz_patrol(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """Search each planned PTZ's patrol focal / tilt (instead of the planner's fixed wide end)
     for the area the patrols add at ``level`` beyond what the fixed cameras hold; both sets
-    of patrols are scored by the sweep engine and the plan changes only if it gained."""
+    of patrols are scored by the sweep engine and the plan changes only if it gained.
+    ``reset_speeds`` instead clears the searched per-PTZ speeds (back to the global speed)."""
     from ..focal_optimizer import band_area
     from ..perimeter_ptz import optimize_patrols
     from ..viewshed_3d import THERMAL_NO_MONITOR, ZONE_MONITOR, is_thermal_camera
@@ -926,6 +927,12 @@ def perimeter_ptz_patrol(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]
     ptz_cam = kw.get("ptz_camera")
     if ptz_cam is None or not plan.ptz_cameras:
         raise RpcError(APP_ERROR, "Planda PTZ yok: PTZ modeli ve 'her N direkte bir' seçip planı yeniden kurun.")
+    if params.get("reset_speeds"):
+        # drop the searched per-PTZ speeds (None = the caller's global speed); nothing else about the plan changes
+        cleared = dataclasses.replace(plan, ptz_cameras=[dataclasses.replace(c, speed_deg_s=None)
+                                                         for c in plan.ptz_cameras])
+        entry.set_plan((cleared, cam, kw, fence))
+        return {"reset": True, "ptz_count": len(cleared.ptz_cameras), "plan": _plan_json(cleared)}
     level = _level_of(params, ptz_cam, monitor_ok=True)
     monitor = level == ZONE_MONITOR
     if monitor and is_thermal_camera(cam):          # the fixed cameras' hold is scored at the same level
@@ -1065,7 +1072,7 @@ def city_osm(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         "residential_area_m2": float(layer.residential.sum() * cell), "attribution": layer.attribution,
         "overlay": _image(map_render.zone_overlay(layer.street_class, _overlay_size(t, max_px), mode="streets"),
                           max_px=max_px),
-        "legend": map_render.legend("streets")[1],
+        "legend": map_render.legend("streets", keys=True)[1],
     }
 
 
@@ -1122,7 +1129,7 @@ def city_analyse(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
                      "flagged": c.flagged} for c in res.privacy],
         "private_seen_m2": res.private_seen_m2, "notes": res.notes,
         "overlay": _image(map_render.zone_overlay(res.layer, _overlay_size(t, max_px), mode="city"), max_px=max_px),
-        "legend": map_render.legend("city")[1], "measured": bool(t.is_measured), "monitor_floor": monitor,
+        "legend": map_render.legend("city", keys=True)[1], "measured": bool(t.is_measured), "monitor_floor": monitor,
     }
 
 
@@ -1201,6 +1208,55 @@ def focal_sweep(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
             "worth_applying": worth, "note": note}
 
 
+def focal_envelope(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """Single-camera reach envelope: per cell the best DORI over all focals / tilts (and all pans for a PTZ)."""
+    from .. import map_render
+    from ..atmosphere import WEATHER_PRESETS
+    from ..database import is_ptz_camera
+    from ..focal_optimizer import _mount_range, envelope
+    from ..viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_MONITOR, ZONE_OBSERVE, ZONE_RECOG, is_thermal_camera
+
+    entry, t = _terrain_of(params)
+    cam = _camera_from(params.get("camera", {}))
+    # "level": "monitor" turns the Monitoring floor on (visible cameras); the one place levels are validated
+    monitor = params.get("level") is not None and _level_of(params, cam, monitor_ok=True) == ZONE_MONITOR
+    thermal = is_thermal_camera(cam)
+    ptz = is_ptz_camera({"camera_type": cam.camera_type, "model_name": cam.model_name,
+                         "focal_min_mm": cam.focal_min_mm, "focal_max_mm": cam.focal_max_mm})
+    all_pans = params.get("all_pans", ptz)
+    if not isinstance(all_pans, bool):
+        raise RpcError(INVALID_PARAMS, "'all_pans' true ya da false olmalı.")
+    if not all_pans and params.get("pan_deg") is None:
+        raise RpcError(INVALID_PARAMS, "Sabit kamerada zarf için 'pan_deg' gerekir (tüm yönler yalnız PTZ için varsayılandır).")
+    pan = None if all_pans else _num(params, "pan_deg") % 360.0
+    x = _num(params, "x_m"); y = _num(params, "y_m")
+    mast = _num(params, "mast_m", 6.0, lo=0.5, hi=200)
+    rng = None if params.get("range_m") is None else _num(params, "range_m", lo=20, hi=20000)
+    weather = str(params.get("weather", "")) if params.get("weather") in WEATHER_PRESETS else ""
+    vis = WEATHER_PRESETS.get(weather, 40.0)
+    level = ZONE_MONITOR if monitor else ZONE_RECOG
+    info: Dict[str, Any] = {}
+    grid = envelope(t, x, y, mast, cam, pan_deg=pan, level=level,
+                    n_focals=int(_num(params, "n_focals", 12, lo=2, hi=40)),
+                    max_range_m=rng, visibility_km=vis, weather=weather, info=info)
+    cell_area = t.cell_size_m ** 2
+    areas = {name: float((grid == z).sum() * cell_area) for name, z in (
+        ("identify", ZONE_IDENT), ("recognize", ZONE_RECOG), ("observe", ZONE_OBSERVE), ("detect", ZONE_DETECT))}
+    if monitor:
+        areas["monitor"] = float((grid == ZONE_MONITOR).sum() * cell_area)
+    max_px = int(_num(params, "max_px", _DISPLAY_PX, lo=200, hi=4096))
+    mode = "envelope_thermal" if thermal else "envelope_monitor" if monitor else "envelope"
+    overlay = map_render.zone_overlay(grid, _overlay_size(t, max_px), mode=mode)
+    return {"areas_m2": areas, "overlay": _image(overlay, max_px=max_px),
+            "legend": map_render.legend(mode, keys=True)[1], "truncated": bool(info.get("truncated")),
+            "is_ptz": bool(ptz), "all_pans": all_pans, "thermal": thermal, "monitor_floor": monitor,
+            "reach_m": float(_mount_range(cam, rng, level)), "measured": bool(t.is_measured),
+            "note": ("Erişim zarfı: her hücrede herhangi bir odak / eğim"
+                     + (" / yön" if all_pans else "")
+                     + " ayarında ulaşılabilen en iyi seviye. Talep üzerine erişimdir, eşzamanlı kapsama değildir; "
+                       "kamera bu seviyelerin hepsini aynı anda sağlamaz.")}
+
+
 METHODS = {
     "terrain.settings": terrain_settings,
     "terrain.catalog": terrain_catalog,
@@ -1224,5 +1280,6 @@ METHODS = {
     "city.osm": city_osm,
     "city.analyse": city_analyse,
     "focal.sweep": focal_sweep,
+    "focal.envelope": focal_envelope,
     "perimeter.ptz_patrol": perimeter_ptz_patrol,
 }

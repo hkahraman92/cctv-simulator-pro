@@ -218,24 +218,29 @@ def sweep_focals(terrain: TerrainData, x_m: float, y_m: float, mast_m: float, ca
 def envelope(terrain: TerrainData, x_m: float, y_m: float, mast_m: float, camera: CameraConfig, *,
              pan_deg: Optional[float] = None, level: int = ZONE_RECOG, n_focals: int = 12,
              max_range_m: Optional[float] = None, visibility_km: float = 40.0, weather: str = "",
-             mv: Optional[MountVisibility] = None) -> np.ndarray:
+             mv: Optional[MountVisibility] = None, info: Optional[dict] = None) -> np.ndarray:
     """Full-grid ZONE_* (int8): the best DORI each cell gets at ANY focal and
     tilt candidate -- and any pan when ``pan_deg`` is None (PTZ). Cells no
     setting sees are 0. Not simultaneous for a fixed lens (see module doc).
-    ``level=ZONE_MONITOR`` lowers the floor to Monitoring (visible cameras)."""
+    ``level=ZONE_MONITOR`` lowers the floor to Monitoring (visible cameras).
+    ``info`` (optional dict) receives ``truncated``: some view reaches past ``max_range_m``."""
     rng = _mount_range(camera, max_range_m, level)
     monitor = level == ZONE_MONITOR
     mv = mv or mount_visibility(terrain, x_m, y_m, mast_m, max_range_m=rng)
     best = np.zeros(mv.written.shape, np.int8)
+    truncated = False
     for f in focal_steps(camera, n_focals):
         for lv in (ZONE_DETECT, level, ZONE_IDENT):
             for t in auto_tilts(camera, f, mast_m, lv, rng):
                 lay = view_layers(mv, camera, tilt_deg=t, focal_mm=f, max_range_m=rng,
                                   visibility_km=visibility_km, weather=weather, monitor_floor=monitor)
+                truncated = truncated or bool(lay.truncated)
                 z = np.where(lay.visible, lay.zone, 0)
                 if pan_deg is not None:
                     z = np.where(_cone(lay.center_az_rad, pan_deg, lay.hfov_deg), z, 0)
                 np.maximum(best, z.astype(np.int8), out=best)
+    if info is not None:
+        info["truncated"] = truncated
     full = np.zeros(mv.grid_shape, np.int8)
     full[mv.window] = best
     return full

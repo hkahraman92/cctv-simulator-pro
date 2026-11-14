@@ -8,7 +8,7 @@ import { DEFAULT_CAMERA, type CameraConfig, type ModelSummary } from "../core/ap
 import { useCoalesced, useCore } from "../core/CoreProvider";
 import { usePageActive } from "../core/pageActive";
 import type {
-  AreaPlanResult, CityInfo, CoverageLayer, CoverageResult, DoriLevel, FocalSweep, TerrainLevel, OptimizeResult, PlaybackPtz, LegendRow, NightCoverage, PlanResult, PoleSearch, RegionInfo, Scenario,
+  AreaPlanResult, CityInfo, CoverageLayer, CoverageResult, FocalEnvelope, FocalSweep, TerrainLevel, OptimizeResult, PlaybackPtz, LegendRow, NightCoverage, PlanResult, PoleSearch, RegionInfo, Scenario,
   SingleViewshed, TerrainCatalog, TerrainInfo,
 } from "../core/terrainApi";
 import { useJob } from "../core/useJob";
@@ -28,36 +28,22 @@ import { CityPanel } from "../components/CityPanel";
 import { Button, Panel, Slider, Tile, fmt } from "../components/ui";
 import { DISPLAY_TILT_MAX, DISPLAY_TILT_MIN, fromDisplayTilt, toDisplayTilt } from "./terrainTilt";
 import {
-  LEVEL_PPM, buildTerrainExtra, changedKeys, readPlacement, readTerrainExtra, terrainToProjectCamera, type LineMode,
+  LEVEL_PPM, buildTerrainExtra, changedKeys, projectCameraToTerrain, readPlacement, readTerrainExtra, terrainToProjectCamera, type LineMode,
 } from "./terrainPersist";
 import { LegendSwatch } from "../components/LegendSwatch";
+import { LEVELS, THERMAL_LEVELS, levelName, levelsFor } from "../core/terrainLevels";
 
 const ha = (m2: number) => `${fmt(m2 / 1e4, 2)} ha`;
 const pct = (f: number) => `%${fmt(f * 100, 1)}`;
-const LEVELS = [
-  ["monitor", "İzleme ≥12,5"],
-  ["detect", "Algılama ≥25"],
-  ["observe", "Gözlem ≥62,5"],
-  ["recognize", "Tanıma ≥125"],
-  ["identify", "Teşhis ≥250"],
-] as const;
-
-// thermal views: the same zone codes on Johnson thresholds (viewshed_3d.zone_codes)
-const THERMAL_LEVELS = [
-  ["detect", "Johnson algılama ≥1,3"],
-  ["observe", "Johnson tanıma ≥6,7"],
-  ["recognize", "Johnson teşhis ≥13,3"],
-] as const;
-// one list for every level selector: a thermal has three levels and none of them is a face
-// Monitoring (12.5 px/m) exists for visible cameras only: Johnson has no such level
-const levelsFor = (thermal: boolean): readonly (readonly [TerrainLevel, string])[] => (thermal ? THERMAL_LEVELS : LEVELS);
-// the area planner and city analysis take the four levels (the core rejects "monitor" there)
-const fourLevels = (thermal: boolean) => levelsFor(thermal).filter(([k]) => k !== "monitor") as readonly (readonly [DoriLevel, string])[];
-const levelName = (k: string, thermal: boolean) => { const l = levelsFor(thermal).find(([x]) => x === k)?.[1] ?? ""; return l.slice(0, l.lastIndexOf(" ")); };
 const clampLevel = <L extends string>(l: L, thermal: boolean) => (thermal && l === "identify" ? "recognize" as L : thermal && l === "monitor" ? "detect" as L : l);
 // fence targets a designer actually picks (a 25–250 slider in steps of 5 could not land on 62,5)
 const TARGETS: readonly (readonly [number, string])[] = [[12.5, "İzleme · 12,5"], [25, "Algılama · 25"], [40, "Güçlendirilmiş çit · 40"], [62.5, "Gözlem · 62,5"], [125, "Tanıma · 125"], [250, "Teşhis · 250"]];
 const THERMAL_TARGETS: readonly (readonly [number, string])[] = [[1.3, "Johnson algılama · 1,3"], [6.67, "Johnson tanıma · 6,67"], [13.33, "Johnson teşhis · 13,33"]];
+// each PTZ runs its own patrol speed (searched) or the global one: one value, or the span of them
+const speedRange = (v: number[]) => {
+  const lo = Math.min(...v), hi = Math.max(...v);
+  return Math.abs(hi - lo) < 0.05 ? `${fmt(lo, lo % 1 ? 1 : 0)}°/sn` : `${fmt(lo, lo % 1 ? 1 : 0)}–${fmt(hi, hi % 1 ? 1 : 0)}°/sn (PTZ'ye göre)`;
+};
 // "%100,0" beside "3 m uncovered" read as a contradiction: 100 is shown only when nothing is left out
 const pctCapped = (f: number, uncoveredM: number) => (uncoveredM >= 0.5 && f * 100 >= 99.95 ? "%99,9" : pct(f));
 
@@ -95,6 +81,8 @@ export default function Terrain() {
   const [sweepLevel, setSweepLevel] = useState<TerrainLevel>("recognize");
   const [isPtz, setIsPtz] = useState(false);
   const [isThermal, setIsThermal] = useState(false);
+  // a PTZ's single-camera layer: its reach envelope (default) or the one current view
+  const [envView, setEnvView] = useState<"envelope" | "single">("envelope");
   const [patrol, setPatrol] = useState<Patrol>({ speed: 20, dwell: 2 });
   const [customTarget, setCustomTarget] = useState(false);
   const [ptzReach, setPtzReach] = useState(false);     // coverage: also what a PTZ can be turned to on demand
@@ -124,9 +112,7 @@ export default function Terrain() {
   const [areaRes, setAreaRes] = useState<AreaPlanResult | null>(null);
   const isArea = plan.line_mode === "area";
   const reqLevelOf = levelOf(plan.target_ppm, isThermal);
-  // the area planner has no Monitoring floor: an area target is at least Detection
-  const areaLevel: DoriLevel = reqLevelOf === "monitor" ? "detect" : reqLevelOf;
-  const reqLevel: TerrainLevel = isArea ? areaLevel : reqLevelOf;
+  const reqLevel: TerrainLevel = reqLevelOf;
   // an area plan is built for the level (its threshold); a fence plan for the px/m itself
   const reqPpm = isArea ? levelPpm(reqLevel, isThermal) : plan.target_ppm;
   const [planRes, setPlanRes] = useState<PlanResult | null>(null);
@@ -198,6 +184,25 @@ export default function Terrain() {
   const vs = useCoalesced(vsInput, (i) => T.viewshed(i!), !!vsInput && state === "ready" && active);
   const single: SingleViewshed | undefined = vs.value;
 
+  // PTZ reach envelope (focal.envelope): best DORI over every focal / tilt / pan. It does not depend on pan, tilt or
+  // zoom, so those sliders never re-run it. Everything it does depend on drops the result at once, and the call waits
+  // until the inputs have been still for a moment (it is far heavier than the live viewshed), then is coalesced.
+  const envInput = useMemo(() => (info && tab === "single" && isPtz && single
+    ? { terrain_id: info.terrain_id, use_obstacles: useObstacles, camera, x_m: mount.x, y_m: mount.y, mast_m: mount.mast,
+        range_m: mount.range, weather, target_height_m: targetH, all_pans: true, max_px: 1200 }
+    : null), [info, tab, isPtz, !!single, useObstacles, camera, mount.x, mount.y, mount.mast, mount.range, weather, targetH]);
+  const envKey = useMemo(() => (envInput ? JSON.stringify(envInput) : ""), [envInput]);
+  const [envSettled, setEnvSettled] = useState("");
+  useEffect(() => {
+    if (!envKey) { setEnvSettled(""); return; }
+    const t = setTimeout(() => setEnvSettled(envKey), 700);
+    return () => clearTimeout(t);
+  }, [envKey]);
+  const envRun = envInput && envSettled === envKey ? envInput : null;
+  const envOut = useCoalesced(envRun, (i) => T.focalEnvelope(i!).then((v) => ({ key: JSON.stringify(i), v })), !!envRun && state === "ready" && active);
+  const envelope: FocalEnvelope | undefined = envOut.value && envOut.value.key === envKey ? envOut.value.v : undefined;
+  const envPending = !!envInput && !envelope && !envOut.error;
+
   const applyModel = async (name: string, opts?: { keepMount?: boolean }) => {
     const { camera: c, is_ptz, thermal } = await api.cameraFor(name, camera);
     setCamera(c);
@@ -215,6 +220,7 @@ export default function Terrain() {
     });
     setSweep(null);
     setPtzLayer(null);
+    setEnvView("envelope");
   };
 
   const pick = (x: number, y: number) => {
@@ -241,7 +247,7 @@ export default function Terrain() {
   const runArea = async () => {
     if (!info || fence.length < 3) return;
     const r = await job.run("Alan kapsama planı", (o) => T.areaPlan({ terrain_id: info.terrain_id, use_obstacles: useObstacles, camera,
-      fence, level: areaLevel, goal_frac: goal / 100, mast_m: plan.mast_m, interior: area.interior, max_per_pole: area.perPole, weather,
+      fence, level: reqLevel, goal_frac: goal / 100, mast_m: plan.mast_m, interior: area.interior, max_per_pole: area.perPole, weather,
       streets_only: area.streetsOnly && !!city, ...(area.maxHole > 0 ? { max_hole_m2: area.maxHole } : {}),
       min_cameras: area.minCams, max_cameras: area.maxCams, ...ptzArgs() }, o));
     if (r) { replacePlan(r.plan); setAreaRes(r); warn(r.warnings); }
@@ -305,7 +311,9 @@ export default function Terrain() {
     // flags come from the library when the model is in it; a custom camera is a fixed, visible one
     const flags = await api.cameraFor(s.camera.model_name, s.camera).catch(() => ({ is_ptz: false, thermal: false }));
     setCamera(s.camera); setIsPtz(flags.is_ptz); setIsThermal(flags.thermal);
-    setMount((m) => ({ ...m, mast: s.camera.pole_height_m || m.mast, focal: s.focal, tilt: -5 }));
+    // the exact inverse of "Proje kamerasına yaz": mast, tilt (core sign) and focal through the one tested mapping
+    const t = projectCameraToTerrain(s.camera, s.focal);
+    setMount((m) => ({ ...m, mast: t.mast || m.mast, focal: t.focal, tilt: t.tilt }));
     setPlan((p) => ({ ...p, mast_m: s.camera.pole_height_m || p.mast_m }));
     setSweep(null); setPtzLayer(null);
   };
@@ -397,7 +405,9 @@ export default function Terrain() {
   const stepDone: Record<Step, boolean> = { define: fence.length >= (isArea ? 3 : 2), plan: !!planRes, verify: !!coverage,
     improve: !!optRes?.applied || !!poleRes?.met, deliver: !!network };
   // a PTZ / mixed result, when one was run, is shown instead of the plain layer
-  const extra = tab === "single" ? ptzLayer : mixedLayer;
+  const envLayer: Layer | null = tab === "single" && isPtz && envView === "envelope" && envelope
+    ? { overlay: envelope.overlay.data, legend: envelope.legend, title: "Erişim zarfı · eşzamanlı değil" } : null;
+  const extra = tab === "single" ? (ptzLayer ?? envLayer) : mixedLayer;
   const overlay = extra ? extra.overlay : tab === "single" ? single?.overlay.data : coverage?.overlay.data;
   const legend: LegendRow[] | undefined = extra ? extra.legend : tab === "single" ? single?.legend : coverage?.legend;
 
@@ -467,7 +477,7 @@ export default function Terrain() {
             <span className="font-mono text-[11px] text-text-3">
               {play.ptz.length === 1
                 ? `${fmt(play.ptz[0].focal_mm, 1)} mm · FOV ${fmt(play.ptz[0].hfov_deg, 1)}° · ${fmt(play.ptz[0].speed_deg_s, 0)}°/sn · tur ${fmt(play.ptz[0].period_s, 1)} sn`
-                : `${fmt(Math.min(...play.ptz.map((p) => p.focal_mm)), 1)} mm · FOV ${fmt(play.ptz[0].hfov_deg, 1)}° · tur ${fmt(Math.max(...play.ptz.map((p) => p.period_s)), 1)} sn`}
+                : `${fmt(Math.min(...play.ptz.map((p) => p.focal_mm)), 1)} mm · FOV ${fmt(play.ptz[0].hfov_deg, 1)}° · ${speedRange(play.ptz.map((p) => p.speed_deg_s))} · tur ${fmt(Math.max(...play.ptz.map((p) => p.period_s)), 1)} sn`}
             </span>
             <div className="flex-1" />
             {[1, 4, 10].map((k) => (
@@ -484,7 +494,7 @@ export default function Terrain() {
               camera={tab === "single" && single ? { x: mount.x, y: mount.y, pan: mount.pan, hfov: single.hfov_deg,
                 // the wedge ends where the frame does: a steep tilt holds only the mast's foot
                 range: Math.max(Math.min(mount.range, single.framed_reach_m > 0 ? single.framed_reach_m : mount.range), 15) } : null}
-              fence={tab === "perimeter" ? fence : []} fenceClosed={plan.closed || isArea}
+              fence={tab === "perimeter" ? fence : []} fenceClosed={plan.closed || isArea} patrolSpeed={patrol.speed}
               // an edited fence no longer has the plan that was built on the old one
               onFenceChange={tab === "perimeter" ? (f) => { setFence(f); if (planRes) replacePlan(null); } : undefined}
               poles={tab === "perimeter" ? planRes?.poles : []} ptz={tab === "perimeter" ? planRes?.ptz : []}
@@ -601,9 +611,36 @@ export default function Terrain() {
             )}
             {isPtz && (
               <>
+                <Panel title="Görüş katmanı">
+                  <div className="grid grid-cols-2 gap-1" role="group" aria-label="Görüş katmanı">
+                    {([["single", "Tekil görüş"], ["envelope", "Erişim zarfı"]] as const).map(([id, label]) => (
+                      <button key={id} type="button" aria-pressed={envView === id} onClick={() => { setEnvView(id); setPtzLayer(null); }}
+                        className={`h-7 rounded text-[11px] font-semibold ${envView === id ? "bg-bg-6 text-ptz" : "bg-bg-5 text-text-2"}`}>{label}</button>
+                    ))}
+                  </div>
+                  {envView === "envelope" && (
+                    <div className="mt-2 text-[11px]">
+                      {envelope ? (
+                        <>
+                          <div className="text-text-3">◆ {envelope.note}</div>
+                          <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono">
+                            {levelsFor(envelope.thermal).filter(([k]) => k !== "monitor" || envelope.areas_m2.monitor !== undefined)
+                              .map(([k, l]) => (<div key={k} className="flex justify-between"><span className="text-text-3">{l}</span><span>{ha(envelope.areas_m2[k] ?? 0)}</span></div>))}
+                          </div>
+                          {envelope.truncated && <div className="mt-1 text-warn">▲ Bazı görüşler analiz menzilini ({fmt(envelope.reach_m, 0)} m) aşıyor; alanlar alt sınırdır.</div>}
+                        </>
+                      ) : envOut.error ? (
+                        <div className="text-danger">■ {envOut.error}</div>
+                      ) : (
+                        <div className="text-text-3" role="status">{envPending ? "● Erişim zarfı hesaplanıyor…" : "Önce görüş alanı hesaplanmalı."}</div>
+                      )}
+                    </div>
+                  )}
+                  {ptzLayer && envView === "envelope" && <p className="mt-1 text-[11px] text-text-3">◆ Aşağıdaki PTZ sonucu haritada; zarfı görmek için "Tekil görüş alanına dön".</p>}
+                </Panel>
                 <PtzPanel T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} camera={camera}
                   thermal={isThermal} mount={mount} weather={weather} onLayer={setPtzLayer} onPlay={startPlayback} />
-                {ptzLayer && <Button className="w-full" onClick={() => setPtzLayer(null)}>Tekil görüş alanına dön</Button>}
+                {ptzLayer && <Button className="w-full" onClick={() => { setPtzLayer(null); setEnvView("single"); }}>Tekil görüş alanına dön</Button>}
               </>
             )}
             {camera.focal_max_mm > camera.focal_min_mm && (
@@ -684,8 +721,8 @@ export default function Terrain() {
                   {isArea ? (
                     <label><span className="label">Hedef seviye</span>
                       <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={reqLevel} aria-label="İster seviyesi"
-                        onChange={(e) => { setCustomTarget(false); setPlan((p) => ({ ...p, target_ppm: levelPpm(e.target.value as DoriLevel, isThermal) })); }}>
-                        {fourLevels(isThermal).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                        onChange={(e) => { setCustomTarget(false); setPlan((p) => ({ ...p, target_ppm: levelPpm(e.target.value as TerrainLevel, isThermal) })); }}>
+                        {levelsFor(isThermal).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                       </select></label>
                   ) : (
                     <label><span className="label">Hedef (px/m)</span>
@@ -835,7 +872,7 @@ export default function Terrain() {
                 </Panel>
               )}
               <MixedPanel T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} models={models}
-                value={mixedPtz} onChange={setMixedPtz} hasPlanWithPtz={!!planRes?.ptz.length} onLayer={setMixedLayer} onPlay={startPlayback}
+                value={mixedPtz} onChange={setMixedPtz} hasPlanWithPtz={!!planRes?.ptz.length} ptz={planRes?.ptz ?? []} onLayer={setMixedLayer} onPlay={startPlayback}
                 resetKey={planVer} patrol={patrol} onPatrol={setPatrol}
                 level={reqLevel} levelLabel={levelName(reqLevel, isThermal)} band={bandArgs()} onPlan={replacePlan}
                 ptzModelFor={async (n) => (await api.cameraFor(n, undefined, true)).camera} />
@@ -877,7 +914,7 @@ export default function Terrain() {
                   onLayer={setMixedLayer} onMarks={setApproachMarks} />
               )}
               <CityPanel resetKey={planVer} T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles}
-                hasLatLon={info.lat_center !== null} hasPlan={!!planRes} city={city} onCity={setCity} onLayer={setMixedLayer} />
+                hasLatLon={info.lat_center !== null} hasPlan={!!planRes} thermal={isThermal} city={city} onCity={setCity} onLayer={setMixedLayer} />
             </div>
 
             {/* ── 4. İyileştir: the same requirement with fewer / better-aimed cameras ── */}

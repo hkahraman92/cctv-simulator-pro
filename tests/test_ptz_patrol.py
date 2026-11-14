@@ -266,3 +266,22 @@ def test_service_patrol_speed_search_round_trips_through_the_plan_json(hills):
         assert e["error"]["code"] == INVALID_PARAMS
     e = call("perimeter.ptz_patrol", terrain_id=hills, max_revisit_s=0)
     assert e["error"]["code"] == INVALID_PARAMS
+
+
+def test_service_reset_speeds_clears_only_the_searched_speeds(hills):
+    cam, ptz = dataclasses.asdict(FIX), dataclasses.asdict(PTZ)
+    ok("perimeter.plan", terrain_id=hills, camera=cam, fence=SQUARE, target_ppm=40, mast_m=8,
+       ptz_camera=ptz, ptz_every_n=3, ptz_patrol_span_deg=360)
+    r = ok("perimeter.ptz_patrol", terrain_id=hills, level="recognize", band_m=100, n_focals=5, speeds_deg_s=SPEEDS)
+    assert any(q["speed_deg_s"] is not None for q in r["plan"]["ptz"])
+    ok("perimeter.coverage", terrain_id=hills, level="recognize", band_m=100, max_px=200)
+    out = ok("perimeter.ptz_patrol", terrain_id=hills, reset_speeds=True)
+    assert out["reset"] is True and out["ptz_count"] == len(r["plan"]["ptz"])
+    assert all(q["speed_deg_s"] is None for q in out["plan"]["ptz"])
+    # focal / tilt / poles of the searched plan stay; only the speed is gone
+    strip = lambda q: {k: v for k, v in q.items() if k != "speed_deg_s"}
+    assert [strip(q) for q in out["plan"]["ptz"]] == [strip(q) for q in r["plan"]["ptz"]]
+    assert out["plan"]["poles"] == r["plan"]["poles"]
+    # playback now runs the global speed for every PTZ
+    play = ok("ptz.playback", terrain_id=hills, speed_deg_s=33.0, max_px=200)
+    assert {x["speed_deg_s"] for x in play["ptz"]} == {33.0}

@@ -186,7 +186,7 @@ def approach_analyse(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         "sectors": [{"x0": s.x0, "y0": s.y0, "x1": s.x1, "y1": s.y1, "warning_m": _finite(s.warning_m)}
                     for s in res.sectors],
         "covert_area_m2": res.covert_area_m2, "depth_m": res.depth_m, "notes": res.notes,
-        "overlay": _image(overlay, max_px=max_px), "legend": map_render.legend("approach")[1],
+        "overlay": _image(overlay, max_px=max_px), "legend": map_render.legend("approach", keys=True)[1],
         "measured": bool(t.is_measured),
     }
 

@@ -177,7 +177,7 @@ def night_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
                                                    "verified": mode.verified},
            "band_m": band, "band_area_m2": roi_area, "roi_kind": "area" if is_area else "band",
            "day_band_share": day, "night_band_share": night,
-           "legend": map_render.legend("dori")[1], "measured": bool(t.is_measured)}
+           "legend": map_render.legend("dori", keys=True)[1], "measured": bool(t.is_measured)}
     if night_mv is not None:
         out["overlay"] = _image(map_render.zone_overlay(night_mv.dori_grid, _overlay_size(t, max_px)), max_px=max_px)
     return out

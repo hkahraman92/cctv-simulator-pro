@@ -60,8 +60,8 @@ export interface RegionInfo {
 
 /** `monitor` is present only in a monitor-floor run (visible cameras): a default run has no such cells */
 export type ZoneAreas = Record<"identify" | "recognize" | "observe" | "detect" | "occluded", number> & { monitor?: number };
-/** [label, rgba, key?]. The core does not send the key yet (rows are [text, rgba]); once it sends the level key (e.g.
- *  "monitor") the legend can mark that row without matching the Turkish label. */
+/** [label, rgba, key?]. A DORI level row carries its level key (monitor / detect / observe / recognize / identify) as the
+ *  third element, so the legend marks a row (Monitoring is hatched) without matching the Turkish label; other rows have two. */
 export type LegendRow = [string, [number, number, number, number]] | [string, [number, number, number, number], string];
 
 export interface SingleViewshed {
@@ -109,6 +109,8 @@ export interface PlacedCamera {
   dead_zone_m: number;
   camera_model: string;
   patrol_span_deg: number;
+  /** PTZ rows: this PTZ's own searched patrol speed (deg/s); null/absent = the page's global patrol speed */
+  speed_deg_s?: number | null;
 }
 
 export interface FenceGap {
@@ -182,13 +184,16 @@ export interface CoverageResult {
 
 /** The four levels every planner understands. */
 export type DoriLevel = "detect" | "observe" | "recognize" | "identify";
-/** + EN 62676-4 Monitoring (12.5 px/m, visible cameras only). Accepted by coverage, optimize, focal sweep,
- *  minimize poles, compare and the single viewshed; the area planner, PTZ patrol and city analysis reject it. */
+/** + EN 62676-4 Monitoring (12.5 px/m, visible cameras only). Accepted by coverage, optimize, focal sweep / envelope,
+ *  minimize poles, compare, the single viewshed, the area planner, PTZ patrol and city analysis. Only
+ *  `perimeter.plan_assisted` still rejects it: its level list stays "above Detection". */
 export type TerrainLevel = "monitor" | DoriLevel;
 
 export interface AreaPlanResult {
   met: boolean;
-  level: DoriLevel;
+  level: TerrainLevel;
+  /** the engine ran with the Monitoring floor (12.5 px/m) */
+  monitor_floor?: boolean;
   goal_frac: number;
   area_m2: number;
   /** authoritative multi-camera engine share of the polygon at >= level */
@@ -227,7 +232,7 @@ export interface ApproachResult {
 
 export interface AreaParams {
   fence: [number, number][];
-  level: DoriLevel;
+  level: TerrainLevel;
   goal_frac: number;
   mast_m: number;
   interior: boolean;
@@ -260,12 +265,15 @@ export interface CityInfo {
 }
 
 export interface CityAnalysis {
-  level: DoriLevel;
+  level: TerrainLevel;
+  /** the engine ran with the Monitoring floor: share_by_level.monitor exists */
+  monitor_floor?: boolean;
   street_area_m2: number;
-  share_by_level: Record<DoriLevel, number>;
+  /** `monitor` only in a monitor-floor run */
+  share_by_level: Record<DoriLevel, number> & { monitor?: number };
   by_class: { label: string; area_m2: number; share: number }[];
   face_share: number;
-  pois: (CityPlace & { best: DoriLevel | null; face: boolean })[];
+  pois: (CityPlace & { best: TerrainLevel | null; face: boolean })[];
   privacy: { label: string; seen_m2: number; private_m2: number; share: number; flagged: boolean }[];
   private_seen_m2: number;
   notes: string[];
@@ -367,8 +375,42 @@ export interface PatrolResult {
   ptz_count: number;
   applied: boolean;
   notes: string[];
-  choices: { pole_id: number; focal_mm: number; tilt_deg: number; hfov_deg: number; changed: boolean }[];
+  choices: {
+    pole_id: number; focal_mm: number; tilt_deg: number; hfov_deg: number; changed: boolean;
+    /** the patrol speed this PTZ runs after the search (the global one when speeds were not searched) */
+    speed_deg_s: number;
+    /** worst unwatched stretch of its patrol, before and after the search (s) */
+    revisit_before_s: number | null; revisit_after_s: number | null;
+  }[];
+  /** the Monitoring floor was on (visible cameras) */
+  monitor_floor?: boolean;
+  /** the speeds were part of the search */
+  speed_search?: boolean;
+  /** the revisit limit the search was held to, if one was sent */
+  max_revisit_s?: number | null;
+  /** a PTZ's view reaches past the analysis range, so its area is a lower bound */
+  truncated?: boolean;
   plan: PlanResult;
+}
+
+/** perimeter.ptz_patrol with reset_speeds: the searched per-PTZ speeds are cleared, nothing else changes */
+export interface PatrolReset { reset: true; ptz_count: number; plan: PlanResult }
+
+/** focal.envelope: best DORI per cell over all focals / tilts (and all pans for a PTZ) of ONE camera.
+ *  On-demand reach, not simultaneous coverage. */
+export interface FocalEnvelope {
+  areas_m2: Partial<Record<"identify" | "recognize" | "observe" | "detect" | "monitor", number>>;
+  overlay: Picture;
+  legend: LegendRow[];
+  truncated: boolean;
+  is_ptz: boolean;
+  all_pans: boolean;
+  thermal: boolean;
+  monitor_floor: boolean;
+  reach_m: number;
+  measured: boolean;
+  /** Turkish caption: this is on-demand reach, not simultaneous coverage */
+  note: string;
 }
 
 /** EN 62676-4 conformity of the plan: zone x level x result, from the coverage report already run */
@@ -578,15 +620,17 @@ export function terrainApi(rpc: RpcClient) {
       rpc.call<ApproachResult>("approach.analyse", p, { timeoutMs: 0, ...opts }),
     cityOsm: (terrain_id: string, opts?: CallOptions) =>
       rpc.call<CityInfo>("city.osm", { terrain_id, max_px: 1200 }, { timeoutMs: 0, ...opts }),
-    cityAnalyse: (p: T & { level: DoriLevel; flag_share?: number; max_px?: number }, opts?: CallOptions) =>
+    cityAnalyse: (p: T & { level: TerrainLevel; flag_share?: number; max_px?: number }, opts?: CallOptions) =>
       rpc.call<CityAnalysis>("city.analyse", p, { timeoutMs: 0, ...opts }),
     areaPlan: (p: T & AreaParams & { camera: CameraConfig }, opts?: CallOptions) =>
       rpc.call<AreaPlanResult>("area.plan", p, { timeoutMs: 0, ...opts }),
     optimize: (p: T & { level: string; position_steps: number; pan_search_deg?: number; n_focals?: number; band_m?: number; band_in_m?: number }, opts?: CallOptions) =>
       rpc.call<OptimizeResult>(
         "perimeter.optimize", p, { timeoutMs: 0, ...opts }),
-    ptzPatrol: (p: T & { level: string; speed_deg_s: number; end_dwell_s: number; band_m?: number; band_in_m?: number; n_focals?: number }, opts?: CallOptions) =>
+    ptzPatrol: (p: T & { level: string; speed_deg_s: number; end_dwell_s: number; band_m?: number; band_in_m?: number; n_focals?: number; speeds_deg_s?: number[]; max_revisit_s?: number }, opts?: CallOptions) =>
       rpc.call<PatrolResult>("perimeter.ptz_patrol", p, { timeoutMs: 0, ...opts }),
+    /** drop the searched per-PTZ speeds (each PTZ follows the global patrol speed again) */
+    resetPatrolSpeeds: (p: T) => rpc.call<PatrolReset>("perimeter.ptz_patrol", { ...p, reset_speeds: true }),
     minimizePoles: (p: T & PlanParams & { camera: CameraConfig; goal_frac: number; level: string; position_steps?: number; band_m?: number; band_in_m?: number }, opts?: CallOptions) =>
       rpc.call<PoleSearch>("perimeter.minimize_poles", p, { timeoutMs: 0, ...opts }),
     assistedPlan: (p: T & PlanParams & { camera: CameraConfig; ptz_camera: CameraConfig; goal_frac: number; level: string; max_s: number; position_steps?: number; band_m?: number; band_in_m?: number }, opts?: CallOptions) =>
@@ -595,6 +639,10 @@ export function terrainApi(rpc: RpcClient) {
       p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; pan_deg: number; level: string; pan_search_deg?: number; weather?: string; n_focals?: number; range_m?: number; current_tilt_deg?: number; current_focal_mm?: number },
       opts?: CallOptions,
     ) => rpc.call<FocalSweep>("focal.sweep", p, { timeoutMs: 0, ...opts }),
+    focalEnvelope: (
+      p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; pan_deg?: number; all_pans?: boolean; level?: TerrainLevel; weather?: string; n_focals?: number; range_m?: number; max_px?: number; target_height_m?: number },
+      opts?: CallOptions,
+    ) => rpc.call<FocalEnvelope>("focal.envelope", p, { timeoutMs: 0, ...opts }),
     ptzSweep: (
       p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; mode: "rotation" | "sector"; start_pan_deg?: number; end_pan_deg?: number; speed_deg_s: number; end_dwell_s?: number; tilt_deg: number; focal_mm?: number; range_m: number; weather?: string; layer?: "revisit" | "dori"; max_px?: number },
       opts?: CallOptions,

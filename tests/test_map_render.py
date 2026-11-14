@@ -54,3 +54,43 @@ def test_zone_overlay_paints_only_banded_cells_with_legend_colours():
     assert name.startswith("Teşhis") and err <= 2
     name, err = nearest(img[400 - 300, 300])
     assert name.startswith("Algılama") and err <= 2
+
+
+def test_legend_rows_carry_the_level_key_only_for_level_rows():
+    keyed = map_render.legend("dori", keys=True)[1]
+    assert [r[2] for r in keyed if len(r) == 3] == ["identify", "recognize", "observe", "detect"]
+    assert len(keyed[-1]) == 2                                    # the blind-spot row has no key
+    assert not any(r[2] == "monitor" for r in keyed if len(r) == 3)          # a default layer: no monitor row
+    mon = map_render.legend("dori_monitor", keys=True)[1]
+    row = next(r for r in mon if r[0].startswith("İzleme"))
+    assert row[2] == "monitor"
+    assert map_render.legend("overlap", keys=True)[1] == map_render.legend("overlap")[1]   # not a level layer
+    # the plain form (Tk window, share HTML) is unchanged
+    assert all(len(r) == 2 for r in map_render.legend("dori_monitor")[1])
+
+
+def test_service_legend_marks_the_monitor_row():
+    import dataclasses
+
+    from cctv_simulator.models import CameraConfig
+    from cctv_simulator.service import session
+    from cctv_simulator.service.methods import METHODS
+    from cctv_simulator.service.protocol import Server
+    import io, json
+
+    session.reset()
+
+    def ok(method, **params):
+        out = io.StringIO()
+        server = Server(METHODS, out=out)
+        server.handle_line(json.dumps({"jsonrpc": "2.0", "id": 1, "method": method, "params": params}))
+        server.wait_idle()
+        return next(json.loads(x) for x in out.getvalue().splitlines() if '"id": 1' in x or '"id":1' in x)["result"]
+
+    tid = ok("terrain.procedural", preset="ridge_and_valley", grid=80, width_m=800.0)["terrain_id"]
+    cam = dataclasses.asdict(CameraConfig(focal_min_mm=2.8, focal_max_mm=12.0))
+    args = dict(terrain_id=tid, camera=cam, x_m=400, y_m=400, mast_m=8, pan_deg=0, tilt_deg=-8, range_m=400,
+                lens_mode="max", max_px=200)
+    mon = ok("viewshed.single", **args, level="monitor")["legend"]
+    assert next(r for r in mon if r[0].startswith("İzleme"))[2] == "monitor"
+    assert all(len(r) == 2 or r[2] != "monitor" for r in ok("viewshed.single", **args)["legend"])

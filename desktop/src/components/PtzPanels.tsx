@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Play, Plus, RotateCw, X } from "lucide-react";
 import type { CameraConfig, ModelSummary } from "../core/api";
-import type { CueResult, LegendRow, MixedResult, PatrolResult, PlanResult, SweepResult, TerrainApi, TourResult } from "../core/terrainApi";
+import type { CueResult, LegendRow, MixedResult, PatrolResult, PlacedCamera, PlanResult, SweepResult, TerrainApi, TourResult } from "../core/terrainApi";
 import type { useJob } from "../core/useJob";
 import { Button, Panel, Slider, Tile, fmt } from "./ui";
 import { modelOptionLabel } from "./PlanningPanels";
 import { toDisplayTilt } from "../pages/terrainTilt";
+import { parseMaxRevisit, speedCandidates } from "./patrolSpeeds";
 
 export interface Layer {
   overlay: string;
@@ -153,7 +154,7 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, thermal, mou
 }
 
 /** Perimeter tab: co-mount a PTZ on every Nth pole and evaluate fixed + PTZ together. */
-export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onChange, hasPlanWithPtz, onLayer, ptzModelFor, onPlay, resetKey, patrol, onPatrol, level, levelLabel, band, onPlan }: {
+export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onChange, hasPlanWithPtz, ptz, onLayer, ptzModelFor, onPlay, resetKey, patrol, onPatrol, level, levelLabel, band, onPlan }: {
   T: TerrainApi;
   job: Job;
   terrainId: string;
@@ -162,6 +163,8 @@ export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onC
   value: { camera: CameraConfig | null; everyN: number; span: number };
   onChange: (v: { camera: CameraConfig | null; everyN: number; span: number }) => void;
   hasPlanWithPtz: boolean;
+  /** the plan's PTZs: a PTZ whose `speed_deg_s` is set runs its own searched speed, not the global one */
+  ptz: PlacedCamera[];
   onLayer: (l: Layer | null) => void;
   ptzModelFor: (name: string) => Promise<CameraConfig>;
   /** live sweep of every PTZ in the plan */
@@ -180,9 +183,18 @@ export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onC
   const [search, setSearch] = useState<PatrolResult | null>(null);
   const ownPlan = useRef(false);          // the next plan change is this panel's own search result
   useEffect(() => { setRes(null); if (ownPlan.current) ownPlan.current = false; else setSearch(null); }, [resetKey, terrainId]);
+  const [searchSpeed, setSearchSpeed] = useState(false);   // also search the patrol speed
+  const [revisitText, setRevisitText] = useState("");        // optional limit on the longest unwatched stretch (s)
+  const revisit = parseMaxRevisit(revisitText);
+  const ownSpeeds = ptz.filter((c) => c.speed_deg_s != null).length;
   const runSearch = () => void job.run("PTZ devriye araması", (o) => T.ptzPatrol({ terrain_id: terrainId, use_obstacles: useObstacles,
-    level, speed_deg_s: patrol.speed, end_dwell_s: patrol.dwell, ...band }, o))
+    level, speed_deg_s: patrol.speed, end_dwell_s: patrol.dwell, ...band,
+    ...(searchSpeed ? { speeds_deg_s: speedCandidates(patrol.speed) } : {}),
+    ...(revisit.value !== undefined ? { max_revisit_s: revisit.value } : {}) }, o))
     .then((r) => { if (!r) return; if (r.applied) { ownPlan.current = true; onPlan(r.plan); } setSearch(r); });
+  // clear the searched speeds (every PTZ follows the global speed again); the new plan drops the old search result
+  const resetSpeeds = () => void job.run("Aranan hızlar sıfırlanıyor", () => T.resetPatrolSpeeds({ terrain_id: terrainId }))
+    .then((r) => { if (r) onPlan(r.plan); });
   const [layer, setLayer] = useState<"fused" | "cue">("fused");
   const ptzModels = models.filter((m) => m.is_ptz);
   const run = (l: "fused" | "cue") => {
@@ -202,6 +214,12 @@ export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onC
           <div className="mt-3 flex flex-col gap-3">
             <Slider label="Her N direkte bir PTZ" unit="" value={value.everyN} min={1} max={20} step={1} onChange={(n) => onChange({ ...value, everyN: n })} />
             <Slider label="Devriye hızı" unit="°/sn" value={patrol.speed} min={2} max={120} step={1} onChange={(v) => onPatrol({ ...patrol, speed: v })} />
+            {ownSpeeds > 0 && (
+              <div className="-mt-1 text-[11px] text-text-3">
+                ◆ {ownSpeeds} PTZ kendi aranan hızıyla döner; bu ayar yalnız kalan {Math.max(ptz.length - ownSpeeds, 0)} PTZ için geçerlidir.
+                <Button className="mt-1 w-full" disabled={job.running} onClick={resetSpeeds}>Aranan hızları sıfırla</Button>
+              </div>
+            )}
             {value.span < 360 && <Slider label="Uçta bekleme" unit="sn" value={patrol.dwell} min={0} max={30} step={0.5} onChange={(v) => onPatrol({ ...patrol, dwell: v })} />}
           </div>
           <div className="mt-2 grid grid-cols-3 gap-1">
@@ -215,14 +233,37 @@ export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onC
             <Button className="flex-1" disabled={job.running || !hasPlanWithPtz} onClick={() => run("fused")}>Sabit + PTZ</Button>
             <Button className="flex-1" disabled={job.running || !hasPlanWithPtz} onClick={() => run("cue")}>Tespit→Teşhis</Button>
           </div>
-          <Button className="mt-2 w-full" disabled={job.running || !hasPlanWithPtz} onClick={runSearch} title={`PTZ devriyesinin ${levelLabel} seviyesinde eklediği alan büyütülür (ister)`}>Devriye odak / eğim ara · {levelLabel}</Button>
+          <label className="mt-2 flex items-center gap-2 text-[12px]">
+            <input type="checkbox" checked={searchSpeed} onChange={(e) => setSearchSpeed(e.target.checked)} />
+            Hızı da ara
+            <span className="font-mono text-[11px] text-text-3">{speedCandidates(patrol.speed).map((v) => fmt(v, v % 1 ? 1 : 0)).join(" · ")} °/sn</span>
+          </label>
+          <label className="mt-1 flex items-center justify-between gap-2 text-[12px]">
+            <span>En uzun izlenmeyen süre (sn)</span>
+            <input type="text" inputMode="decimal" value={revisitText} placeholder="sınırsız" aria-label="En uzun izlenmeyen süre (sn)"
+              onChange={(e) => setRevisitText(e.target.value)}
+              className={`h-7 w-20 rounded border bg-bg-0 px-1.5 text-right font-mono text-[12px] ${revisit.error ? "border-danger" : "border-line"}`} />
+          </label>
+          {revisit.error && <div className="mt-0.5 text-[11px] text-danger">▲ {revisit.error}</div>}
+          <Button className="mt-2 w-full" disabled={job.running || !hasPlanWithPtz || !!revisit.error} onClick={runSearch} title={`PTZ devriyesinin ${levelLabel} seviyesinde eklediği alan büyütülür (ister)`}>Devriye odak / eğim{searchSpeed ? " / hız" : ""} ara · {levelLabel}</Button>
           {search && (
             <div className="mt-1.5 text-[11px]">
               <div className={search.applied ? "text-primary" : "text-text-2"}>
                 {search.applied ? "●" : "◆"} Yalnız PTZ'nin eklediği alan: {ha(search.before_m2)} → <b>{ha(search.after_m2)}</b> (tarama motoru)
               </div>
               {search.applied && (
-                <div className="mt-0.5 text-text-3">{search.changed}/{search.ptz_count} PTZ · odak {fmt(Math.min(...search.choices.map((c) => c.focal_mm)), 1)}–{fmt(Math.max(...search.choices.map((c) => c.focal_mm)), 1)} mm · en uzun izlenmeyen {fmt(search.worst_revisit_after_s, 0)} sn</div>
+                <div className="mt-0.5 text-text-3">{search.changed}/{search.ptz_count} PTZ · odak {fmt(Math.min(...search.choices.map((c) => c.focal_mm)), 1)}–{fmt(Math.max(...search.choices.map((c) => c.focal_mm)), 1)} mm · en uzun izlenmeyen {fmt(search.worst_revisit_before_s, 0)} → {fmt(search.worst_revisit_after_s, 0)} sn{search.max_revisit_s != null ? ` (sınır ${fmt(search.max_revisit_s, 0)} sn)` : ""}</div>
+              )}
+              {search.truncated && <div className="mt-0.5 text-warn">▲ Bazı PTZ'lerin görüşü analiz menzilini aşıyor; alanlar alt sınırdır.</div>}
+              {search.choices.length > 0 && (
+                <div className="mt-1 max-h-[132px] overflow-y-auto font-mono" aria-label="PTZ başına seçilen devriye hızı">
+                  {search.choices.map((c) => (
+                    <div key={c.pole_id} className="flex justify-between gap-2">
+                      <span className="font-sans text-text-3">Direk {c.pole_id}</span>
+                      <span>{fmt(c.speed_deg_s, c.speed_deg_s % 1 ? 1 : 0)} °/sn · {sec(c.revisit_before_s)} → {sec(c.revisit_after_s)}</span>
+                    </div>
+                  ))}
+                </div>
               )}
               {search.notes.map((n) => <div key={n} className="mt-0.5 text-text-3">◆ {n}</div>)}
             </div>

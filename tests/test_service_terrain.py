@@ -391,3 +391,94 @@ def test_target_height_is_kept_with_the_terrain_and_rescores(hills):
     assert ok("terrain.settings", terrain_id=tid, target_height_m=1.8)["changed"] is False
     # a single call can carry it too, and 0 is the ground point again
     assert ok("viewshed.single", **args, target_height_m=0)["visible_area_m2"] == ground["visible_area_m2"]
+
+
+# ── focal.envelope ───────────────────────────────────────────────────────
+PTZ = dict(CAM, camera_type="PTZ", model_name="Test PTZ", focal_min_mm=4.8, focal_max_mm=153.0)
+THERMAL = dict(CAM, sensor_name="LWIR 640x512 (12µm)", resolution_name="LWIR (640x512)", model_name="Termal")
+
+
+def _env_args(hills, **kw):
+    return dict(terrain_id=hills["terrain_id"], camera=CAM, x_m=600, y_m=600, mast_m=10, range_m=700,
+                n_focals=4, max_px=300, **kw)
+
+
+def test_focal_envelope_equals_the_engine_fixed_and_ptz(hills):
+    from cctv_simulator.focal_optimizer import envelope
+    from cctv_simulator.viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_OBSERVE, ZONE_RECOG
+
+    t = session.SESSION.get(hills["terrain_id"]).bare
+    cell = t.cell_size_m ** 2
+    for cam, pan, expect_ptz in ((CAM, 30.0, False), (PTZ, None, True)):
+        args = _env_args(hills, **({} if pan is None else {"pan_deg": pan}))
+        args["camera"] = cam
+        r = ok("focal.envelope", **args)
+        want = envelope(t, 600, 600, 10, CameraConfig(**cam), pan_deg=pan, n_focals=4, max_range_m=700)
+        assert r["is_ptz"] is expect_ptz and r["all_pans"] is (pan is None) and r["monitor_floor"] is False
+        for name, z in (("identify", ZONE_IDENT), ("recognize", ZONE_RECOG), ("observe", ZONE_OBSERVE),
+                        ("detect", ZONE_DETECT)):
+            assert r["areas_m2"][name] == pytest.approx(float((want == z).sum() * cell))
+        assert "monitor" not in r["areas_m2"] and sum(r["areas_m2"].values()) > 0
+        assert "eşzamanlı kapsama değildir" in r["note"]
+        assert [row[2] for row in r["legend"]] == ["identify", "recognize", "observe", "detect"]
+        assert _decode(r["overlay"])[0].size[0] <= 300
+
+
+def test_focal_envelope_contains_every_single_view(hills):
+    from cctv_simulator.focal_optimizer import _cone, auto_tilts, envelope, focal_steps
+    from cctv_simulator.mount_visibility import mount_visibility, view_layers
+    from cctv_simulator.viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_RECOG
+
+    t = session.SESSION.get(hills["terrain_id"]).bare
+    cam = CameraConfig(**CAM)
+    pan = 40.0
+    grid = envelope(t, 600, 600, 10, cam, pan_deg=pan, n_focals=4, max_range_m=700)
+    mv = mount_visibility(t, 600, 600, 10, max_range_m=700)
+    steps = focal_steps(cam, 4)
+    seen = 0
+    for focal in (steps[0], steps[-1]):                      # two focals of the sweep
+        for lv in (ZONE_DETECT, ZONE_RECOG, ZONE_IDENT):
+            for tilt in auto_tilts(cam, focal, 10, lv, 700.0):
+                lay = view_layers(mv, cam, tilt_deg=tilt, focal_mm=focal, max_range_m=700.0)
+                single = np.where(lay.visible & _cone(lay.center_az_rad, pan, lay.hfov_deg), lay.zone, 0)
+                assert (grid[mv.window] >= single).all()     # envelope >= every single view, cell by cell
+                seen += int((single > 0).sum())
+    assert seen > 0
+    # the service reports exactly that grid's areas
+    r = ok("focal.envelope", **_env_args(hills, pan_deg=pan))
+    assert sum(r["areas_m2"].values()) == pytest.approx(float((grid > 1).sum() * t.cell_size_m ** 2))
+
+
+def test_focal_envelope_ptz_all_pans_contains_each_pan(hills):
+    args = dict(_env_args(hills), camera=PTZ)
+    all_pans = ok("focal.envelope", **args)
+    one = ok("focal.envelope", **args, all_pans=False, pan_deg=0)
+    other = ok("focal.envelope", **args, all_pans=False, pan_deg=170)
+    # areas are exclusive per level: compare the cumulative "at least this level" area
+    order = ["identify", "recognize", "observe", "detect"]
+
+    def cum(r, k):
+        return sum(r["areas_m2"][n] for n in order[:k + 1])
+
+    for k in range(4):
+        assert cum(all_pans, k) >= cum(one, k) - 1e-6 and cum(all_pans, k) >= cum(other, k) - 1e-6
+
+
+def test_focal_envelope_fixed_camera_needs_pan(hills):
+    reply, _ = call("focal.envelope", **_env_args(hills))
+    assert reply["error"]["code"] == INVALID_PARAMS and "pan_deg" in reply["error"]["message"]
+    reply, _ = call("focal.envelope", **_env_args(hills), all_pans="evet")
+    assert reply["error"]["code"] == INVALID_PARAMS
+
+
+def test_focal_envelope_monitor_floor_and_thermal(hills):
+    base = ok("focal.envelope", **_env_args(hills, pan_deg=0))
+    mon = ok("focal.envelope", **_env_args(hills, pan_deg=0), level="monitor")
+    assert mon["monitor_floor"] is True and mon["areas_m2"]["monitor"] > 0
+    assert mon["legend"][-1][2] == "monitor" and all(row[2] != "monitor" for row in base["legend"])
+    # Monitoring only adds ground: nothing the default run saw is lost
+    assert sum(mon["areas_m2"].values()) >= sum(base["areas_m2"].values()) - 1e-6
+    reply, _ = call("focal.envelope", **dict(_env_args(hills, pan_deg=0), camera=THERMAL), level="monitor")
+    assert "error" in reply and "Termal" in reply["error"]["message"]
+    thermal = ok("focal.envelope", **dict(_env_args(hills, pan_deg=0), camera=THERMAL))
+    assert thermal["thermal"] is True and "Johnson" in thermal["legend"][0][0]

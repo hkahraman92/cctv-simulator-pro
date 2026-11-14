@@ -23,7 +23,7 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
 - **API v1** (`cctv_simulator/service/__init__.py: API_VERSION`). Yöntem
   eklemek / isteğe bağlı alan eklemek küçük sürüm; yeniden adlandırma ya da
   silme büyük sürüm. `system.describe` güncel listeyi verir.
-- Yöntemler (78; modül başına):
+- Yöntemler (79; modül başına):
   - `methods.py`: `system.info|ping|describe`, `catalog.get`,
     `library.list|get|camera`, `optics.calculate`, `project.load|save`
   - `library_methods.py`: `library.fields|record|auth|save|delete|set_password`
@@ -39,11 +39,14 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
     isteğe bağlı `speeds_deg_s` (1–12 sayı, 0,5–400 °/sn: hız da aranır) ve `max_revisit_s`
     (en uzun izlenmeyen süre sınırı); yanıtta `choices[].speed_deg_s|revisit_before_s|revisit_after_s`,
     `monitor_floor`, `speed_search`, `max_revisit_s`, `truncated`; seçilen hız plan JSON'unda
-    `ptz[].speed_deg_s`), `area.plan` (alan hedefi: poligonda en az
+    `ptz[].speed_deg_s`; `reset_speeds: true` aramadan gelen PTZ başına hızları temizler, plana başka dokunmaz), `area.plan` (alan hedefi: poligonda en az
     kamera, motorla doğrulanır; `streets_only`, `max_hole_m2`, PTZ; `level` `monitor` olabilir,
     yanıtta `monitor_floor`), `city.osm|analyse`
     (sokak / konut / öncelikli yer; sokak kapsaması, yüz, KVKK; `level` `monitor` olabilir,
-    yanıtta `monitor_floor`, `share_by_level.monitor`), `focal.sweep`
+    yanıtta `monitor_floor`, `share_by_level.monitor`), `focal.sweep`, `focal.envelope`
+    (tekil kameranın erişim zarfı: hücre başına tüm odak / eğimde — PTZ'de tüm yönlerde — en iyi DORI; `all_pans`
+    varsayılan PTZ'de true, sabitte `pan_deg` gerekir; `level` `monitor` olabilir; yanıtta `areas_m2`, `overlay`,
+    `legend`, `truncated`, `is_ptz`, `note`: talep üzerine erişim, eşzamanlı kapsama değil)
   - `ptz_methods.py`: `ptz.sweep|cue|tour|playback` (canlı tarama: PTZ başına
     pan'dan bağımsız resimler, koniyi kabuk döndürür), `perimeter.mixed`
   - `bench_methods.py`: `optics.project|bench`, `plan.image`, `iq.measure`, `scene.render`,
@@ -64,7 +67,9 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
   senaryo, KMZ ya da teklif paketi B planını A'nın kapsaması / maliyetiyle
   eşleştiremez. Arayüz aynı kuralı izler (`replacePlan`).
 - Izgaralar çekirdek oturumunda (`session.py`, en fazla 4 arazi) kalır; kabuğa
-  özet + base64 resim gider. Resimler kuzey-yukarı, tam `width_m × height_m`.
+  özet + base64 resim gider. Resimler kuzey-yukarı, tam `width_m × height_m`. Lejant satırı `[metin, rgba]`; DORI seviye
+  satırında üçüncü eleman seviye anahtarıdır (`monitor|detect|observe|recognize|identify`, `map_render.legend(keys=True)`) —
+  kabuk satırı Türkçe etiketinden değil anahtardan tanır.
 - Motor modülleri tkinter almaz (`test_every_engine_module_imports_without_tk`):
   `cctv-core.exe` Tk'siz paketlenir, üst düzey bir `import tkinter` paketli
   çekirdeği o yöntemde düşürür.

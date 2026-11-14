@@ -4,6 +4,7 @@ import type { FenceGap, PlacedCamera } from "../core/terrainApi";
 import type { ApproachMarks } from "./ApproachPanel";
 import { fmt } from "./ui";
 import { toDisplayTilt } from "../pages/terrainTilt";
+import { ptzSpeed } from "./patrolSpeeds";
 
 export interface CameraMark {
   x: number;
@@ -29,6 +30,8 @@ interface Props {
   approach?: ApproachMarks | null;
   /** draw each planned camera's FOV wedge / PTZ patrol (else dot + heading tick only) */
   showFov?: boolean;
+  /** the page's global patrol speed (deg/s): a PTZ with no speed of its own runs this */
+  patrolSpeed?: number;
   /** what a plain click does */
   tool: "camera" | "fence" | "none";
   onPick?: (x: number, y: number) => void;
@@ -229,7 +232,7 @@ export default function MapView(p: Props) {
         ))}
         {(p.ptz ?? []).map((c) => (
           <circle key={`ptz${c.pole_id}`} cx={c.x_m} cy={H - c.y_m} r={7 * px} fill="none" stroke="var(--color-ptz)" strokeWidth={2 * px}>
-            <title>{camTitle(c)}</title>
+            <title>{camTitle(c, p.patrolSpeed)}</title>
           </circle>
         ))}
         {cam && (
@@ -273,11 +276,14 @@ function ScaleBar({ metresPerPx }: { metresPerPx: number }) {
 }
 
 /** Hover text for a planned camera: the numbers the plan placed it with. */
-function camTitle(c: PlacedCamera) {
+function camTitle(c: PlacedCamera, patrolSpeed?: number) {
   const ptz = c.patrol_span_deg > 0;
+  // a PTZ shows its own searched speed when it has one, else the page's global patrol speed
+  const sp = ptz ? ptzSpeed(c.speed_deg_s, patrolSpeed ?? NaN) : null;
+  const speed = sp && Number.isFinite(sp.speed) ? ` · hız ${fmt(sp.speed, sp.speed % 1 ? 1 : 0)}°/sn${sp.own ? " (aranan)" : ""}` : "";
   return [
     `Direk ${c.pole_id}${ptz ? " · PTZ" : ""} — ${c.camera_model}`,
-    ptz ? `devriye ${fmt(c.patrol_span_deg, 0)}° · merkez ${fmt(c.pan_deg, 0)}° · teşhis erişimi ${fmt(c.effective_range_m, 0)} m`
+    ptz ? `devriye ${fmt(c.patrol_span_deg, 0)}° · merkez ${fmt(c.pan_deg, 0)}° · teşhis erişimi ${fmt(c.effective_range_m, 0)} m${speed}`
       : `odak ${fmt(c.focal_mm, 1)} mm · yatay FOV ${fmt(c.hfov_deg, 1)}° · yön ${fmt(c.pan_deg, 0)}°`,
     ptz ? `geniş uç ${fmt(c.focal_mm, 1)} mm · eğim (aşağı) ${fmt(toDisplayTilt(c.tilt_deg), 1)}°`
       : `menzil ${fmt(c.effective_range_m, 0)} m · eğim (aşağı) ${fmt(toDisplayTilt(c.tilt_deg), 1)}° · kör nokta ${fmt(c.dead_zone_m, 1)} m`,

@@ -1,20 +1,25 @@
 import { useEffect, useState } from "react";
 import { Building, Download, Play } from "lucide-react";
-import type { CityAnalysis, CityInfo, DoriLevel, TerrainApi } from "../core/terrainApi";
+import type { CityAnalysis, CityInfo, TerrainApi, TerrainLevel } from "../core/terrainApi";
+import { levelName, levelsFor } from "../core/terrainLevels";
 import type { useJob } from "../core/useJob";
 import type { Layer } from "./PtzPanels";
 import { Button, Panel, fmt } from "./ui";
 
 type Job = ReturnType<typeof useJob>;
 const pct = (f: number) => `%${fmt(f * 100, f < 0.1 ? 1 : 0)}`;
-const LEVEL_TEXT: Record<DoriLevel, string> = { detect: "Algılama", observe: "Gözlem", recognize: "Tanıma", identify: "Teşhis" };
 
 /** City surveillance: OSM streets / homes / places, then street coverage, face-capable streets and privacy (KVKK). */
-export function CityPanel({ T, job, terrainId, useObstacles, hasLatLon, hasPlan, city, onCity, onLayer, resetKey }: {
+export function CityPanel({ T, job, terrainId, useObstacles, hasLatLon, hasPlan, thermal, city, onCity, onLayer, resetKey }: {
   T: TerrainApi; job: Job; terrainId: string; useObstacles: boolean; hasLatLon: boolean; hasPlan: boolean; resetKey: number;
+  /** the plan's camera is thermal: Johnson levels, no Monitoring */
+  thermal: boolean;
   city: CityInfo | null; onCity: (c: CityInfo | null) => void; onLayer: (l: Layer | null) => void;
 }) {
-  const [level, setLevel] = useState<DoriLevel>("observe");
+  const [level, setLevel] = useState<TerrainLevel>("observe");
+  // a thermal has no Monitoring / face level: the selection follows the camera's scale
+  const levels = levelsFor(thermal);
+  const levelNow = levels.some(([k]) => k === level) ? level : "observe";
   const [res, setRes] = useState<CityAnalysis | null>(null);
   useEffect(() => { setRes(null); }, [terrainId, resetKey]);
 
@@ -23,7 +28,7 @@ export function CityPanel({ T, job, terrainId, useObstacles, hasLatLon, hasPlan,
     onCity(c);
     onLayer({ overlay: c.overlay.data, legend: c.legend, title: "Sokaklar" });
   });
-  const run = () => void job.run("Şehir analizi", (o) => T.cityAnalyse({ terrain_id: terrainId, use_obstacles: useObstacles, level, max_px: 1200 }, o))
+  const run = () => void job.run("Şehir analizi", (o) => T.cityAnalyse({ terrain_id: terrainId, use_obstacles: useObstacles, level: levelNow, max_px: 1200 }, o))
     .then((r) => {
       if (!r) return;
       setRes(r);
@@ -55,9 +60,9 @@ export function CityPanel({ T, job, terrainId, useObstacles, hasLatLon, hasPlan,
           {hasPlan ? (
             <>
               <label className="mt-3 block"><span className="label">Sokak hedef seviyesi</span>
-                <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={level} aria-label="Sokak hedef seviyesi"
-                  onChange={(e) => setLevel(e.target.value as DoriLevel)}>
-                  {(Object.keys(LEVEL_TEXT) as DoriLevel[]).map((k) => <option key={k} value={k}>{LEVEL_TEXT[k]}</option>)}
+                <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={levelNow} aria-label="Sokak hedef seviyesi"
+                  onChange={(e) => setLevel(e.target.value as TerrainLevel)}>
+                  {levels.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                 </select></label>
               <Button className="mt-2 w-full" disabled={job.running} onClick={run}><Play size={14} /> Planı Şehirde Değerlendir</Button>
             </>
@@ -66,8 +71,14 @@ export function CityPanel({ T, job, terrainId, useObstacles, hasLatLon, hasPlan,
       )}
       {res && (
         <div className="mt-3 text-[12px]">
-          <div className={res.share_by_level[res.level] >= 0.9 ? "text-primary" : "text-warn"}>
-            {res.share_by_level[res.level] >= 0.9 ? "●" : "▲"} Sokaklarda {LEVEL_TEXT[res.level]} payı <b>{pct(res.share_by_level[res.level])}</b> ({fmt(res.street_area_m2 / 1e4, 2)} ha)
+          <div className={(res.share_by_level[res.level] ?? 0) >= 0.9 ? "text-primary" : "text-warn"}>
+            {(res.share_by_level[res.level] ?? 0) >= 0.9 ? "●" : "▲"} Sokaklarda {levelName(res.level, thermal)} payı <b>{pct(res.share_by_level[res.level] ?? 0)}</b> ({fmt(res.street_area_m2 / 1e4, 2)} ha)
+          </div>
+          {/* the İzleme row only when the engine ran with that floor (a default run has no such cells) */}
+          <div className="mt-1 flex flex-col gap-0.5 font-mono text-[11px]" aria-label="Seviyeye göre sokak payı">
+            {levelsFor(thermal).filter(([k]) => k !== "monitor" || res.share_by_level.monitor !== undefined).map(([k, l]) => (
+              <div key={k} className="flex justify-between"><span className="font-sans text-text-3">{l}</span><span>{pct(res.share_by_level[k] ?? 0)}</span></div>
+            ))}
           </div>
           <table className="mt-1 w-full font-mono text-[11px]">
             <tbody>
@@ -84,7 +95,7 @@ export function CityPanel({ T, job, terrainId, useObstacles, hasLatLon, hasPlan,
                 {res.pois.map((p, i) => (
                   <div key={`${p.name}${i}`} className={`flex justify-between gap-2 text-[11px] ${p.best ? "" : "text-danger"}`}>
                     <span className="truncate">{p.name}{p.name !== p.kind ? <span className="text-text-3"> · {p.kind}</span> : null}</span>
-                    <span className="shrink-0 font-mono">{p.best ? LEVEL_TEXT[p.best] : "görülmüyor"}{p.face ? " · yüz" : ""}</span>
+                    <span className="shrink-0 font-mono">{p.best ? levelName(p.best, thermal) : "görülmüyor"}{p.face ? " · yüz" : ""}</span>
                   </div>
                 ))}
               </div>

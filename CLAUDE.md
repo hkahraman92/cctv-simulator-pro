@@ -74,7 +74,7 @@ desktop/                             yeni arayüz: Tauri 2 (Rust) + React/TS/Tai
 
 **Yeni masaüstü kabuğu.** `desktop/` Python çekirdeği (`python -m
 cctv_simulator.service`, yayında `cctv-core.exe`) alt süreç olarak başlatır,
-satır başına bir JSON-RPC nesnesi taşır (API v1, 78 yöntem; liste ve
+satır başına bir JSON-RPC nesnesi taşır (API v1, 79 yöntem; liste ve
 sözleşme `docs/masaustu-mimari.md`). Ekran fizik türetmez; her sayı bir API
 yönteminden gelir. Yeni özellik için: önce `service/*_methods.py`'ye yöntem +
 `tests/test_service_*.py`'ye motorla birebir eşlik testi, sonra

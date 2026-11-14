@@ -68,6 +68,16 @@ LAYER_BANDS = {
         (ZONE_RECOG, ZONE_RECOG + 1, _rgba("dori-recognize", 175), "Tanıma ≥ 125 px/m"),
         (ZONE_OBSERVE, ZONE_OBSERVE + 1, _rgba("dori-observe", 165), "Gözlem ≥ 62,5 px/m"),
         (ZONE_DETECT, ZONE_DETECT + 1, _rgba("dori-detect", 160), "Algılama ≥ 25 px/m"))),
+    "envelope_monitor": ("ZARF — tüm odaklarda en iyi DORI, İzleme dahil (eşzamanlı değil)", (
+        (ZONE_IDENT, ZONE_IDENT + 1, _rgba("dori-identify", 185), "Teşhis ≥ 250 px/m"),
+        (ZONE_RECOG, ZONE_RECOG + 1, _rgba("dori-recognize", 175), "Tanıma ≥ 125 px/m"),
+        (ZONE_OBSERVE, ZONE_OBSERVE + 1, _rgba("dori-observe", 165), "Gözlem ≥ 62,5 px/m"),
+        (ZONE_DETECT, ZONE_DETECT + 1, _rgba("dori-detect", 160), "Algılama ≥ 25 px/m"),
+        (ZONE_MONITOR, ZONE_MONITOR + 1, _rgba("dori-monitor", 170), "İzleme ≥ 12,5 px/m"))),
+    "envelope_thermal": ("ZARF — termal, tüm odaklarda en iyi Johnson (eşzamanlı değil)", (
+        (ZONE_RECOG, ZONE_RECOG + 1, _rgba("dori-recognize", 175), "Johnson teşhis ≥ 13,3 px/m"),
+        (ZONE_OBSERVE, ZONE_OBSERVE + 1, _rgba("dori-observe", 165), "Johnson tanıma ≥ 6,7 px/m"),
+        (ZONE_DETECT, ZONE_DETECT + 1, _rgba("dori-detect", 160), "Johnson algılama ≥ 1,3 px/m"))),
     "approach": ("YAKLAŞMA — sabit kameralara göre", (
         (3, 4, _rgba("danger", 110), "Görünmeden ilerlenebilir"),
         (2, 3, _rgba("dori-detect", 120), "Algılanır (≥ 25 px/m)"))),
@@ -100,10 +110,31 @@ def paint_bands(ov, grid, bands, mask=None):
         ov[ok & (grid >= lo) & (grid < hi)] = rgba
 
 
-def legend(mode: str):
-    """(title, [(text, (r, g, b, a)), ...]) for a layer."""
+# Zone code -> level key, for the modes whose bands are DORI levels. Thermal rows keep the
+# label's own level (ZONE_RECOG is "Johnson teşhis"). The Tk UI reads LAYER_BANDS directly
+# (4-tuples) and never sees these keys.
+_LEVEL_KEY = {ZONE_MONITOR: "monitor", ZONE_DETECT: "detect", ZONE_OBSERVE: "observe",
+              ZONE_RECOG: "recognize", ZONE_IDENT: "identify"}
+_THERMAL_LEVEL_KEY = {ZONE_DETECT: "detect", ZONE_OBSERVE: "recognize", ZONE_RECOG: "identify"}
+_LEVEL_MODES = ("dori", "dori_monitor", "dori_thermal", "envelope", "envelope_monitor", "envelope_thermal")
+
+
+def legend(mode: str, keys: bool = False):
+    """(title, rows) for a layer; a row is ``(text, (r, g, b, a))``. With ``keys=True`` a DORI
+    level row is ``(text, (r, g, b, a), level_key)``, the key one of monitor / detect / observe /
+    recognize / identify (the service sends these so a client never matches the Turkish label);
+    rows of other layers and the blind-spot row carry no key. ``keys=False`` is the 2-tuple form
+    the Tk window and the share HTML read."""
     title, bands = LAYER_BANDS[mode]
-    return title, [(text, tuple(int(c) for c in rgba)) for _lo, _hi, rgba, text in bands]
+    keys_on = keys
+    keys = _THERMAL_LEVEL_KEY if mode.endswith("_thermal") else _LEVEL_KEY
+    rows = []
+    for lo, _hi, rgba, text in bands:
+        row = (text, tuple(int(c) for c in rgba))
+        if keys_on and mode in _LEVEL_MODES and lo in keys:
+            row += (keys[lo],)
+        rows.append(row)
+    return title, rows
 
 
 def _console_relief(terrain: TerrainData, shaded: np.ndarray, norm_z: np.ndarray) -> Image.Image:
@@ -255,7 +286,7 @@ def zone_overlay(dori_grid: np.ndarray, size: Tuple[int, int], *, mode: str = "d
     """A ZONE_* (or any banded) grid as a smoothed RGBA image of ``size``."""
     g = np.flipud(dori_grid)
     ov = np.zeros(g.shape + (4,), dtype=np.uint8)
-    paint_bands(ov, g, LAYER_BANDS[mode][1], mask=True if mode in ("dori", "dori_monitor", "dori_thermal", "envelope", "fused", "overlap", "approach", "city", "streets") else None)
+    paint_bands(ov, g, LAYER_BANDS[mode][1], mask=True if mode in ("dori", "dori_monitor", "dori_thermal", "envelope", "envelope_monitor", "envelope_thermal", "fused", "overlap", "approach", "city", "streets") else None)
     return smooth_overlay(ov, size)
 
 

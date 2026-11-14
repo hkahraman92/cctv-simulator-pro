@@ -76,7 +76,7 @@ def ptz_sweep(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         "mean_revisit_s": _fin(res.mean_revisit_s), "worst_revisit_s": _fin(res.worst_revisit_s),
         "truncated": bool(res.truncated), "zone_areas_m2": _zone_areas(np.where(res.seen_mask, res.dori_grid, 0),
                                                                         t.cell_size_m ** 2),
-        "overlay": _image(overlay, max_px=max_px), "legend": map_render.legend(layer)[1],
+        "overlay": _image(overlay, max_px=max_px), "legend": map_render.legend(layer, keys=True)[1],
     }
 
 
@@ -112,7 +112,7 @@ def ptz_cue(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         "p90_response_s": _fin(res.p90_response_s),
         "worst_response_s": _fin(res.worst_response_s), "unreachable": reasons,
         "thermal": is_thermal_camera(cam),
-        "overlay": _image(overlay, max_px=max_px), "legend": map_render.legend("cue")[1],
+        "overlay": _image(overlay, max_px=max_px), "legend": map_render.legend("cue", keys=True)[1],
     }
 
 
@@ -163,7 +163,7 @@ def ptz_tour(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         "mean_revisit_s": _fin(res.mean_revisit_s), "worst_revisit_s": _fin(res.worst_revisit_s),
         "covered_area_m2": float(seen.sum() * cell), "preset_labels": res.preset_labels,
         "zone_areas_m2": _zone_areas(res.combined.dori_grid, cell),
-        "overlay": _image(overlay, max_px=max_px), "legend": map_render.legend(layer)[1],
+        "overlay": _image(overlay, max_px=max_px), "legend": map_render.legend(layer, keys=True)[1],
     }
 
 
@@ -210,7 +210,7 @@ def perimeter_mixed(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         "p90_d2i_s": _fin(res.p90_d2i_s), "worst_d2i_s": _fin(res.worst_d2i_s),
         "cue_target_ppm": res.cue_target_ppm, "ptz_detect_floor_ppm": res.ptz_detect_floor_ppm,
         "ptz_camera_name": res.ptz_camera_name, "ptz_thermal": is_thermal_camera(ptz_cam),
-        "overlay": _image(overlay, max_px=max_px), "legend": map_render.legend(layer)[1],
+        "overlay": _image(overlay, max_px=max_px), "legend": map_render.legend(layer, keys=True)[1],
     }
 
 
