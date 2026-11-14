@@ -352,24 +352,31 @@ def optimize_patrols(terrain: TerrainData, plan: PerimeterPlanResult, ptz_camera
                 swept, revisit, look, _period = sweep_timing(az, lay.hfov_deg, sweep)
                 seen = lay.visible & swept & (look >= min_dwell_s) & (lay.zone >= level)
                 n = int((seen & free).sum())
-                worst = 0.0
+                worst, tie = 0.0, 0.0
                 if search_revisit:
                     on_target = seen & target_w
-                    worst = float(revisit[on_target].max()) if on_target.any() else 0.0
-                cand = (f, tilt, sp, n, worst, seen, lay.hfov_deg)
+                    blind = not on_target.any()     # sees no target cell: vacuously within any revisit limit
+                    worst = 0.0 if blind else float(revisit[on_target].max())
+                    tie = math.inf if blind else worst
+                cand = (f, tilt, sp, n, worst, seen, lay.hfov_deg, tie)
                 if ci == 0 and si == 0:
                     current = cand
+                elif search_revisit and tie == math.inf and not (
+                        max_revisit_s is not None and current[4] > float(max_revisit_s) + 1e-9):
+                    continue                        # a blind patrol never displaces one that is within the limit
                 if max_revisit_s is not None and worst > float(max_revisit_s) + 1e-9:
                     continue
-                # strict: the current patrol (first) wins ties -- except on revisit when it is searched
-                if best is None or n > best[3] or (search_revisit and n == best[3] and worst < best[4] - 1e-9):
+                # strict: the current patrol (first) wins ties -- except on revisit when it is searched.
+                # A blind patrol (tie = inf) loses every revisit tie, so a patrol that sees target cells
+                # and meets the limit is preferred over one that merely sees nothing.
+                if best is None or n > best[3] or (search_revisit and n == best[3] and tie < best[7] - 1e-9):
                     best = cand
-        if best is None or best[3] <= 0:    # nothing fits the revisit limit / nothing to gain: keep the patrol
+        if best is None:                    # nothing fits the revisit limit: keep the patrol
             best = current
         if best is current and max_revisit_s is not None and current[4] > float(max_revisit_s) + 1e-9:
             notes.append(f"PTZ {p.pole_id}: hiçbir devriye {float(max_revisit_s):g} sn en uzun izlenmeyen süre "
                          f"sınırını tutmadı; mevcut devriye bırakıldı.")
-        f, tilt, sp, _n, _worst, best_seen, best_hfov = best
+        f, tilt, sp, _n, _worst, best_seen, best_hfov, _tie = best
         moved = abs(f - start_f) > 1e-6 or abs(tilt - p.tilt_deg) > 1e-6
         faster = abs(sp - start_speed) > 1e-9
         changed = moved or faster
@@ -406,6 +413,13 @@ def optimize_patrols(terrain: TerrainData, plan: PerimeterPlanResult, ptz_camera
                                 revisit_before_s=a, revisit_after_s=a)
                    for p, a in zip(plan.ptz_cameras, per0)]
     truncated = trunc1 if applied else trunc0
+    if max_revisit_s is not None:
+        lim = float(max_revisit_s)
+        if not applied:
+            notes.insert(0, f"En uzun izlenmeyen süre sınırı {lim:g} sn ile plan değiştirilmedi: sınırı tutan ve "
+                            f"alan kazandıran devriye bulunamadı (şimdiki en kötü {rev0:.0f} sn).")
+        elif rev1 > lim + 1e-9:
+            notes.insert(0, f"En uzun izlenmeyen süre sınırı {lim:g} sn tutmadı: en kötü {rev1:.0f} sn kaldı.")
     if truncated and monitor:           # the monitor reach is the one a default-sized raster silently clipped
         notes.append(f"Bir devriyenin görüşü analiz menzilini ({max_range_cap_m:g} m) aşıyor: "
                      "ötesindeki alan sayılmadı.")

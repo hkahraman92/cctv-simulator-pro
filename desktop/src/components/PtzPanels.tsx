@@ -204,7 +204,7 @@ export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onC
   };
   return (
     <Panel title="Karma dizilim: sabit + PTZ" icon={<RotateCw size={16} className="text-ptz" />}>
-      <select className="h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" aria-label="PTZ modeli"
+      <select className="h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" aria-label="PTZ modeli" title={value.camera?.model_name}
         value={value.camera?.model_name ?? ""} onChange={async (e) => onChange({ ...value, camera: e.target.value ? await ptzModelFor(e.target.value) : null })}>
         <option value="">— PTZ yok —</option>
         {ptzModels.map((m) => <option key={m.name} value={m.name} title={m.name}>{modelOptionLabel(m)}</option>)}
@@ -253,6 +253,11 @@ export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onC
               </div>
               {search.applied && (
                 <div className="mt-0.5 text-text-3">{search.changed}/{search.ptz_count} PTZ · odak {fmt(Math.min(...search.choices.map((c) => c.focal_mm)), 1)}–{fmt(Math.max(...search.choices.map((c) => c.focal_mm)), 1)} mm · en uzun izlenmeyen {fmt(search.worst_revisit_before_s, 0)} → {fmt(search.worst_revisit_after_s, 0)} sn{search.max_revisit_s != null ? ` (sınır ${fmt(search.max_revisit_s, 0)} sn)` : ""}</div>
+              )}
+              {search.max_revisit_s != null && (!search.applied || search.worst_revisit_after_s > search.max_revisit_s + 1e-9) && (
+                <div className="mt-0.5 text-warn">▲ {search.applied
+                  ? `En uzun izlenmeyen süre sınırı ${fmt(search.max_revisit_s, 0)} sn tutmadı (en kötü ${fmt(search.worst_revisit_after_s, 0)} sn).`
+                  : `Sınır ${fmt(search.max_revisit_s, 0)} sn ile plan değiştirilmedi: sınırı tutan ve alan kazandıran devriye yok.`}</div>
               )}
               {search.truncated && <div className="mt-0.5 text-warn">▲ Bazı PTZ'lerin görüşü analiz menzilini aşıyor; alanlar alt sınırdır.</div>}
               {search.choices.length > 0 && (

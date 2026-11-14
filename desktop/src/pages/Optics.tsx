@@ -8,6 +8,7 @@ import { usePageActive } from "../core/pageActive";
 import { useProject } from "../core/project";
 import { useWeather } from "../core/weather";
 import { levelLabel } from "../core/levelLabel";
+import { clampTask, seedTask } from "./opticsSeed";
 import type { BenchResult, EdgeMeasure } from "../core/benchApi";
 import PlanView from "../components/PlanView";
 import AnprBench from "../components/AnprBench";
@@ -19,14 +20,12 @@ const EN_TASKS: [string, number][] = [
   ["Gözlem (Observation)", 62.5],
   ["Algılama (Detection)", 25],
 ];
-/** The core reports a ground reach for these four EN levels only. */
-const REACH_KEY: Record<number, "identify" | "recognize" | "observe" | "detect"> = { 250: "identify", 125: "recognize", 62.5: "observe", 25: "detect" };
 
 /** EN 62676-4 optics bench: one camera, one task at one distance, a verdict with reasons. */
 export default function Optics() {
   const active = usePageActive();
   const { api, bench, terrain, state } = useCore();
-  const { site, update, levels } = useProject();
+  const { site, update, levels, openNonce } = useProject();
   const c = site.camera;
   // The project's own levels (strongest first); EN defaults when the project has none.
   const TASKS = useMemo<[string, number][]>(() => {
@@ -37,7 +36,7 @@ export default function Optics() {
   const [weathers, setWeathers] = useState<{ label: string; visibility_km: number }[]>([]);
   const [mode, setMode] = useState<"min" | "max">("min");
   const [taskRaw, setTask] = useState(0);
-  const task = Math.min(taskRaw, TASKS.length - 1);
+  const task = clampTask(taskRaw, TASKS.length);
   const touched = useRef(false);
   const seeded = useRef(false);
   const [dist, setDist] = useState(20);
@@ -59,9 +58,11 @@ export default function Optics() {
       api.optics(i.c, { mode: i.mode }),
       bench.bench({ camera: i.c, mode: i.mode, req_ppm: i.taskPpm, distance_m: i.dist, weather: i.weather }),
     ]);
-    return { plan, verdict } as { plan: OpticResult; verdict: BenchResult };
+    return { plan, verdict, input: i } as { plan: OpticResult; verdict: BenchResult; input: typeof input };
   }, state === "ready" && active && view === "dori");
   const v = res.value?.verdict;
+  // the verdict the seeding may read must belong to the camera / task on screen now (not a previous project's)
+  const fresh = res.value?.input === input ? v : undefined;
   const mp = (() => {
     const r = catalog?.resolutions.find((x) => x.name === c.resolution_name);
     return r ? (r.width_px * r.height_px) / 1e6 : 0;
@@ -72,17 +73,18 @@ export default function Optics() {
   // camera reaches at the default distance (else the weakest, at 80 % of its reach). Never after
   // the user has touched an input.
   useEffect(() => {
-    if (seeded.current || touched.current || !v) return;
+    if (seeded.current || touched.current || !fresh) return;
     seeded.current = true;
-    if (v.pass) return;
-    const reach = (ppm: number) => (REACH_KEY[ppm] ? v.dori_reach_m[REACH_KEY[ppm]] : undefined);
-    const ok = TASKS.findIndex(([, ppm]) => (reach(ppm) ?? 0) >= dist);
-    if (ok >= 0) { setTask(ok); return; }
-    let weakest = -1;
-    TASKS.forEach(([, ppm], i) => { if (reach(ppm) != null && (weakest < 0 || ppm < TASKS[weakest][1])) weakest = i; });
-    const r = weakest >= 0 ? reach(TASKS[weakest][1]) ?? 0 : 0;
-    if (weakest >= 0 && r >= 2) { setTask(weakest); setDist(Math.max(1, Math.floor(r * 0.8))); }
-  }, [v, TASKS, dist]);
+    const s = seedTask(fresh, TASKS, dist);
+    if (!s) return;
+    setTask(s.task);
+    if (s.dist !== undefined) setDist(s.dist);
+  }, [fresh, TASKS, dist]);
+  // another project (opened / new) is a first open again: seed afresh, forget what was touched
+  useEffect(() => {
+    seeded.current = false; touched.current = false;
+    setTask(0); setDist(20);
+  }, [openNonce]);
 
   const measure = async () => {
     setEdgeErr("");

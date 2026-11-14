@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_CAMERA } from "../core/api";
 import { isHatched } from "../components/LegendSwatch";
 import {
-  buildTerrainExtra, changedKeys, projectCameraToTerrain, readPlacement, readTerrainExtra, terrainToProjectCamera, type ExtraState,
+  buildTerrainExtra, changedKeys, projectCameraToTerrain, readPlacement, readTerrainExtra, restoreMixedPtz, terrainToProjectCamera, type ExtraState,
 } from "./terrainPersist";
 
 const cam = { ...DEFAULT_CAMERA, name: "KAM-01", model_name: "Model X", focal_min_mm: 2.8, focal_max_mm: 12 };
@@ -113,5 +113,40 @@ describe("legend swatch", () => {
     expect(isHatched("monitor")).toBe(true);
     expect(isHatched("detect")).toBe(false);
     expect(isHatched(undefined)).toBe(false);
+  });
+});
+
+describe("mixed PTZ restore", () => {
+  const cur = { camera: null, everyN: 4, span: 360 };
+  const ptz = { ...cam, model_name: "PTZ Y" };
+
+  it("a saved model + every-N + span come back (the model re-resolved from the library by name)", () => {
+    const r = readTerrainExtra(JSON.parse(JSON.stringify(buildTerrainExtra(state))));
+    expect(r.mixedPtz).toEqual({ model: "PTZ Y", everyN: 5, span: 180 });
+    expect(restoreMixedPtz(r.mixedPtz, ptz, cur)).toEqual({ value: { camera: ptz, everyN: 5, span: 180 } });
+  });
+
+  it("an old file without the key leaves the page as it is", () => {
+    const r = readTerrainExtra({ camera_name: "K", line_mode: "facility" });
+    expect(r.mixedPtz).toBeUndefined();
+    expect(restoreMixedPtz(r.mixedPtz, null, cur)).toEqual({});
+  });
+
+  it("a saved 'PTZ yok' keeps no model but restores the density", () => {
+    const r = readTerrainExtra({ mixed_ptz: { camera: "", every_n: 7, patrol_span_deg: 90 } });
+    expect(restoreMixedPtz(r.mixedPtz, null, cur)).toEqual({ value: { camera: null, everyN: 7, span: 90 } });
+  });
+
+  it("an unknown model name keeps 'PTZ yok' and the notice names the model", () => {
+    const r = readTerrainExtra({ mixed_ptz: { camera: "Silinmiş PTZ", every_n: 3, patrol_span_deg: 180 } });
+    const out = restoreMixedPtz(r.mixedPtz, null, cur);
+    expect(out.value).toEqual({ camera: null, everyN: 3, span: 180 });
+    expect(out.notice).toContain("Silinmiş PTZ");
+  });
+
+  it("wrong-typed values are ignored and clamped", () => {
+    const r = readTerrainExtra({ mixed_ptz: { camera: 5, every_n: "x", patrol_span_deg: 900 } });
+    expect(r.mixedPtz).toEqual({ model: undefined, everyN: undefined, span: 900 });
+    expect(restoreMixedPtz(r.mixedPtz, null, cur).value).toEqual({ camera: null, everyN: 4, span: 360 });
   });
 });

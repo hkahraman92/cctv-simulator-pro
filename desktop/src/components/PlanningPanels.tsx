@@ -155,7 +155,7 @@ export function AssistPanel({ T, job, terrainId, useObstacles, models, camera, p
   return (
     <Panel title="PTZ destekli hedef" icon={<RotateCw size={16} className="text-ptz" />}>
       <p className="text-[11px] text-text-3">Sabit kameralar bandın %{fmt(goal, goal % 1 ? 1 : 0)}'inde sürekli algılar; alarmda bir PTZ seçilen seviyeyi en çok {fmt(maxS, 0)} sn içinde tutar.</p>
-      <select className="mt-2 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" aria-label="PTZ modeli (destekli hedef)"
+      <select className="mt-2 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" aria-label="PTZ modeli (destekli hedef)" title={ptz?.model_name}
         value={ptz?.model_name ?? ""} onChange={async (e) => setPtz(e.target.value ? await ptzModelFor(e.target.value) : null)}>
         <option value="">— PTZ modeli seçin —</option>
         {ptzModels.map((m) => <option key={m.name} value={m.name} title={m.name}>{modelOptionLabel(m)}</option>)}

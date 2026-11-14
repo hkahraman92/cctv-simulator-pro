@@ -49,6 +49,8 @@ interface ProjectCtx {
   /** a blank project; resetNonce changes so pages holding their own state (terrain) start over */
   reset: () => void;
   resetNonce: number;
+  /** changes whenever a project is opened or a new one started: pages holding first-open state start over */
+  openNonce: number;
   /** undo / redo of the project's cameras, plan settings and levels */
   undo: () => void;
   redo: () => void;
@@ -98,6 +100,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [loadedTerrain, setLoadedTerrain] = useState<{ block: TerrainBlock; nonce: number } | null>(null);
   const sel = Math.min(selected, sites.length - 1);
   const [resetNonce, setResetNonce] = useState(0);
+  const [openNonce, setOpenNonce] = useState(0);
 
   // History: snapshots of what the project file holds. Changes closer than 500 ms are one
   // step, so a drag on the plan or a slider sweep undoes as a whole.
@@ -159,6 +162,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       setSites(next.length ? next : [newSite(1)]); setSelected(0); setPath(p); setName(n);
       setPlanState({ ...DEFAULT_PLAN, ...pl }); setDirty(false);
       if (terrain) setLoadedTerrain((t) => ({ block: terrain, nonce: (t?.nonce ?? 0) + 1 }));
+      setOpenNonce((n) => n + 1);
     },
     markSaved: (p, n) => { setPath(p); setName(n); setDirty(false); },
     rename: (n) => { if (n.trim() && n.trim() !== name) { setName(n.trim()); setDirty(true); } },
@@ -167,13 +171,15 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       setSites([newSite(1)]); setSelected(0); setPlanState(DEFAULT_PLAN); setLevelsState(null);
       setPath(""); setName("Yeni proje"); setTerrainBlockState(null); setLoadedTerrain(null); setDirty(false);
       setResetNonce((n) => n + 1);
+      setOpenNonce((n) => n + 1);
     },
     resetNonce,
+    openNonce,
     undo: () => { const h = hist.current, s = h.past.pop(); if (!s) return; h.future.push(snap.current); restore(s); },
     redo: () => { const h = hist.current, s = h.future.pop(); if (!s) return; h.past.push(snap.current); restore(s); },
     canUndo: hist.current.past.length > 0, canRedo: hist.current.future.length > 0,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [sites, sel, plan, path, name, dirty, touch, setTerrainBlock, terrainBlock, loadedTerrain, levels, resetNonce, record, restore,
+  }), [sites, sel, plan, path, name, dirty, touch, setTerrainBlock, terrainBlock, loadedTerrain, levels, resetNonce, openNonce, record, restore,
     hist.current.past.length, hist.current.future.length]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

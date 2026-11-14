@@ -28,7 +28,7 @@ import { CityPanel } from "../components/CityPanel";
 import { Button, Panel, Slider, Tile, fmt } from "../components/ui";
 import { DISPLAY_TILT_MAX, DISPLAY_TILT_MIN, fromDisplayTilt, toDisplayTilt } from "./terrainTilt";
 import {
-  LEVEL_PPM, buildTerrainExtra, changedKeys, projectCameraToTerrain, readPlacement, readTerrainExtra, terrainToProjectCamera, type LineMode,
+  LEVEL_PPM, buildTerrainExtra, changedKeys, projectCameraToTerrain, readPlacement, readTerrainExtra, restoreMixedPtz, terrainToProjectCamera, type LineMode,
 } from "./terrainPersist";
 import { LegendSwatch } from "../components/LegendSwatch";
 import { LEVELS, THERMAL_LEVELS, levelName, levelsFor } from "../core/terrainLevels";
@@ -388,6 +388,17 @@ export default function Terrain() {
       const restoreFocal = () => { if (e.focal !== undefined) setMount((m) => ({ ...m, focal: e.focal })); };
       if (e.cameraModel) void applyModel(e.cameraModel, { keepMount: true }).then(restoreFocal).catch(restoreFocal);
       else restoreFocal();
+      // the mixed fixed + PTZ model is saved by name: look it up in the library the way a camera is loaded
+      if (e.mixedPtz) {
+        const mp = e.mixedPtz;
+        const apply = (c: CameraConfig | null) => {
+          const r = restoreMixedPtz(mp, c, { camera: null, everyN: 4, span: 360 });
+          if (r.value) setMixedPtz(r.value);
+          if (r.notice) setNotice(r.notice);
+        };
+        if (mp.model) void api.cameraFor(mp.model, undefined, true).then((x) => apply(x.camera)).catch(() => apply(null));
+        else apply(null);
+      }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadedTerrain?.nonce, state]);
@@ -525,7 +536,7 @@ export default function Terrain() {
       </div>
 
       {/* analysis */}
-      <div className="flex w-[340px] shrink-0 flex-col gap-3 overflow-y-auto pr-1">
+      <div className="flex w-[340px] shrink-0 flex-col gap-3 overflow-y-auto pr-1 [&>*]:shrink-0">
         <div className="flex gap-1 rounded-md bg-bg-4 p-1">
           {([["single", "Tek Kamera"], ["perimeter", "Çevre Çiti"]] as const).map(([id, label]) => (
             <button key={id} type="button" onClick={() => setTab(id)}

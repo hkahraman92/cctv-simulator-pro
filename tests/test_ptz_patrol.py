@@ -202,7 +202,7 @@ def test_a_revisit_limit_nothing_can_meet_leaves_the_plan_and_says_so():
     res = optimize_patrols(terr, plan, PTZ, roi=roi, level=ZONE_RECOG, n_focals=4, speeds_deg_s=SPEEDS,
                            max_revisit_s=1.0)
     assert not res.applied and res.plan is plan and not any(c.changed for c in res.choices)
-    assert any("sınırını tutmadı" in n for n in res.notes)
+    assert any("sınırı" in n and "1 sn" in n for n in res.notes)
     with pytest.raises(ValueError, match="hız"):
         optimize_patrols(terr, plan, PTZ, roi=roi, level=ZONE_RECOG, speeds_deg_s=[0.0])
     with pytest.raises(ValueError, match="sınır"):
@@ -285,3 +285,29 @@ def test_service_reset_speeds_clears_only_the_searched_speeds(hills):
     # playback now runs the global speed for every PTZ
     play = ok("ptz.playback", terrain_id=hills, speed_deg_s=33.0, max_px=200)
     assert {x["speed_deg_s"] for x in play["ptz"]} == {33.0}
+
+
+def test_revisit_limit_is_met_from_a_slow_global_speed_when_a_faster_candidate_exists():
+    # Reproduces the field report: global 5 deg/s, candidates x0.25..x4 (20 deg/s among them), limit 30 s.
+    # A PTZ whose view is already taken by earlier PTZs has 0 cells to gain at every candidate; the old
+    # "nothing to gain -> keep the current patrol" rule then kept its 5 deg/s patrol (worst revisit 59.9 s,
+    # limit broken) although 20 deg/s was eligible. Compliance must win over "no gain".
+    terr = generate_procedural_terrain(preset="ridge_and_valley", grid_size=100, cell_size_m=10.0)
+    fence = [tuple(p) for p in SQUARE]
+    plan = generate_perimeter_plan(terr, fence, FIX, **dict(KW, ptz_every_n=2))
+    roi = fence_roi(terr, fence, True, 100.0)
+    out = {}
+    for g in (5.0, 20.0):
+        out[g] = optimize_patrols(terr, plan, PTZ, roi=roi, level=ZONE_DETECT, n_focals=5, speed_deg_s=g,
+                                  speeds_deg_s=[g * .25, g * .5, g, g * 2, g * 4], max_revisit_s=30.0)
+        assert out[g].applied
+        assert out[g].worst_revisit_after_s <= 30.0 + 1e-9                  # was 59.9 s for g = 5
+        assert max(c.revisit_after_s for c in out[g].choices) <= 30.0 + 1e-9
+        assert not any("tutmadı" in n for n in out[g].notes)
+    assert out[5.0].after_m2 == out[20.0].after_m2                          # the same area either way
+    # no limit -> no limit sentence; an unmeetable one -> one top-level sentence naming it
+    none = optimize_patrols(terr, plan, PTZ, roi=roi, level=ZONE_DETECT, n_focals=4, speeds_deg_s=SPEEDS)
+    assert not any("sınırı" in n for n in none.notes)
+    hard = optimize_patrols(terr, plan, PTZ, roi=roi, level=ZONE_DETECT, n_focals=4, speeds_deg_s=SPEEDS,
+                            max_revisit_s=1.0)
+    assert not hard.applied and "1 sn" in hard.notes[0] and "sınırı" in hard.notes[0]

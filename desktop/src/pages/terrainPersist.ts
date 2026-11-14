@@ -98,6 +98,8 @@ export interface ExtraRead {
   covLayer?: CoverageLayer;
   covLevel?: "plan" | TerrainLevel;
   sweepLevel?: TerrainLevel;
+  /** the saved mixed fixed + PTZ choice: the model is only a NAME here (see `restoreMixedPtz`) */
+  mixedPtz?: { model?: string; everyN?: number; span?: number };
 }
 
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
@@ -113,6 +115,10 @@ export function readTerrainExtra(raw: unknown): ExtraRead {
     ? LEVEL_PPM[ag.level as DoriLevel] : undefined;
   const goal = num(rq.goal_pct) ?? (x.line_mode === "area" ? num(ag.goal_pct) : undefined);
   const speed = num(pt.speed_deg_s), dwell = num(pt.end_dwell_s);
+  const mp = rec(x.mixed_ptz);
+  const mixedPtz = typeof x.mixed_ptz === "object" && x.mixed_ptz !== null
+    ? { model: typeof mp.camera === "string" && mp.camera ? mp.camera : undefined, everyN: num(mp.every_n), span: num(mp.patrol_span_deg) }
+    : undefined;
   return {
     fence: Array.isArray(x.fence_points) ? (x.fence_points as Pt[]) : undefined,
     closed: bool(x.fence_closed),
@@ -143,7 +149,25 @@ export function readTerrainExtra(raw: unknown): ExtraRead {
     covLayer: COV_LAYERS.includes(String(cv.layer)) ? (cv.layer as CoverageLayer) : undefined,
     covLevel: cv.level === "plan" || (typeof cv.level === "string" && LEVELS.includes(cv.level)) ? (cv.level as "plan" | TerrainLevel) : undefined,
     sweepLevel: typeof x.sweep_level === "string" && LEVELS.includes(x.sweep_level) ? (x.sweep_level as TerrainLevel) : undefined,
+    mixedPtz,
   };
+}
+
+export type MixedPtzState = { camera: CameraConfig | null; everyN: number; span: number };
+
+/**
+ * The saved mixed fixed + PTZ choice as page state. `resolved` is the library model found by the saved name
+ * (null when the library no longer has it: the page then keeps "PTZ yok" and the notice names the model).
+ * Absent (an old file) -> `value` undefined, the page keeps its defaults.
+ */
+export function restoreMixedPtz(read: ExtraRead["mixedPtz"], resolved: CameraConfig | null, current: MixedPtzState):
+  { value?: MixedPtzState; notice?: string } {
+  if (!read) return {};
+  const everyN = read.everyN !== undefined ? Math.min(20, Math.max(1, Math.round(read.everyN))) : current.everyN;
+  const span = read.span !== undefined ? Math.min(360, Math.max(10, read.span)) : current.span;
+  if (!read.model) return { value: { camera: null, everyN, span } };
+  if (!resolved) return { value: { camera: null, everyN, span }, notice: `Projedeki PTZ modeli "${read.model}" kütüphanede yok; "PTZ yok" bırakıldı.` };
+  return { value: { camera: resolved, everyN, span } };
 }
 
 /** The saved single-camera placement (block-level `placements[0]`). */

@@ -119,7 +119,7 @@ export default function Library() {
         <section className="overflow-hidden rounded-md bg-bg-4">
           <div ref={tableRef} className="max-h-[440px] overflow-auto" tabIndex={0} role="grid" aria-label="Kamera modelleri"
             aria-activedescendant={selIndex >= 0 ? `lib-row-${selIndex}` : undefined} onKeyDown={onTableKey}>
-            <table className="w-full min-w-[820px] border-collapse [&_td:not(:first-child)]:whitespace-nowrap">
+            <table className="w-full min-w-[600px] border-collapse">
               <thead>
                 <tr>
                   {["Model", "Tip", "Sensör", "Çözünürlük", "Odak", "IR"].map((h, i) => (
@@ -136,12 +136,13 @@ export default function Library() {
                 {shown.map((m, i) => (
                   <tr key={m.name} id={`lib-row-${i}`} role="row" onClick={() => setSel(m.name)} aria-selected={m.name === sel}
                     className={`cursor-pointer scroll-mt-9 border-b border-line-soft text-[12px] ${m.name === sel ? "bg-bg-5 shadow-[inset_3px_0_0_var(--color-primary)]" : "hover:bg-bg-3"}`}>
-                    <td className="min-w-[240px] px-2 py-2 font-semibold">{m.name}</td>
-                    <td className="px-2"><Kind m={m} /></td>
-                    <td className="px-2 font-mono text-text-2">{m.sensor_name}</td>
-                    <td className="px-2 font-mono">{m.resolution_name}</td>
-                    <td className="min-w-[110px] px-2 font-mono">{fmt(m.focal_min_mm)}{m.focal_max_mm !== m.focal_min_mm && `–${fmt(m.focal_max_mm)}`} mm</td>
-                    <td className="px-2 font-mono">{m.ir_range_m ? `${fmt(m.ir_range_m, 0)} m` : "—"}</td>
+                    {/* max-w-0 + w-full: the Model column takes what the other five leave and truncates; the full name is the title */}
+                    <td className="w-full max-w-0 min-w-[90px] truncate px-2 py-2 font-semibold" title={m.name}>{m.name}</td>
+                    <td className="px-2 whitespace-nowrap"><Kind m={m} /></td>
+                    <td className="px-2 font-mono text-text-2" title={m.sensor_name}>{m.sensor_name}</td>
+                    <td className="px-2 font-mono" title={m.resolution_name}>{m.resolution_name}</td>
+                    <td className="min-w-[110px] px-2 font-mono whitespace-nowrap">{fmt(m.focal_min_mm)}{m.focal_max_mm !== m.focal_min_mm && `–${fmt(m.focal_max_mm)}`} mm</td>
+                    <td className="px-2 font-mono whitespace-nowrap">{m.ir_range_m ? `${fmt(m.ir_range_m, 0)} m` : "—"}</td>
                   </tr>
                 ))}
               </tbody>
