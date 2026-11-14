@@ -939,13 +939,19 @@ def export_compliance_excel(path: str, last_compliance_result: Dict[str, Any]):
 # ---------------------------------------------------------------------------
 # GÖRÜŞ ALANI / KAPSAMA MÜHENDİSLİK RAPORU (ASELSAN formatı)
 # ---------------------------------------------------------------------------
-_ZONE_LABELS = {
-    1: "Kör nokta (tepe arkası)",
-    2: "Algılama (Detection ≥ 25 px/m)",
-    3: "Gözlem (Observation ≥ 62,5 px/m)",
-    4: "Tanıma (Recognition ≥ 125 px/m)",
-    5: "Teşhis (Identification ≥ 250 px/m)",
-}
+def _zone_labels() -> dict:
+    # keyed by the engine's named zone codes (their integers have moved once); the
+    # Monitoring row prints only when a monitor-floor run produced such cells
+    from .viewshed_3d import (ZONE_DETECT, ZONE_IDENT, ZONE_MONITOR, ZONE_OBSERVE, ZONE_OCCLUDED,
+                              ZONE_RECOG)
+    return {
+        ZONE_OCCLUDED: "Kör nokta (tepe arkası)",
+        ZONE_MONITOR: "İzleme (Monitoring ≥ 12,5 px/m)",
+        ZONE_DETECT: "Algılama (Detection ≥ 25 px/m)",
+        ZONE_OBSERVE: "Gözlem (Observation ≥ 62,5 px/m)",
+        ZONE_RECOG: "Tanıma (Recognition ≥ 125 px/m)",
+        ZONE_IDENT: "Teşhis (Identification ≥ 250 px/m)",
+    }
 
 
 def _fmt_area(m2: float) -> str:
@@ -973,7 +979,7 @@ def _viewshed_rows(viewshed, cell_size_m: float) -> List[List[str]]:
         import numpy as _np
         cell_a = cell_size_m * cell_size_m
         dg = viewshed.dori_grid
-        for code, label in _ZONE_LABELS.items():
+        for code, label in _zone_labels().items():
             n = int(_np.count_nonzero(dg == code))
             if n:
                 rows.append([f"  → {label}", _fmt_area(n * cell_a)])

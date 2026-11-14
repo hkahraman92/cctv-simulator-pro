@@ -987,6 +987,30 @@ ve `modern_window` aynı beş değeri kullanır — birini değiştirirsen hepsi
 (`map_3d_window.PERIMETER_PPM_OPTIONS`): EN Detection 25 + "güçlendirilmiş çit" 40
 + üst seviyeler; etiket→ppm sözlükle çözülür (eski `"40" in metin` kırılgandı).
 
+**Arazi bölge kodları (beş seviye).** `viewshed_3d`: `ZONE_OUT_OF_FOV 0 · OCCLUDED 1 ·
+MONITOR 2 · DETECT 3 · OBSERVE 4 · RECOG 5 · IDENT 6` — sıra tekdüze, `zone >= seviye`
+"en az o seviye". Tamsayıyı değil adı kullan (kodlar bir kez kaydı;
+`test_no_module_compares_a_zone_grid_to_a_bare_integer` çıplak sayı karşılaştırmasını
+yakalar). Hiçbir kalıcı dosya bölge kodu saklamaz (proje JSON'u px/m + seviye adı yazar).
+**İzleme isteğe bağlıdır:** varsayılan taban Algılama (25); `monitor_floor=True`
+(`calculate_3d_viewshed`, `calculate_multi_camera_viewshed`, `view_limits`,
+`view_layers`/`view_mask`, `band_area(level=ZONE_MONITOR)`) tabanı 12,5'a indirir,
+12,5–25 arası hücre `ZONE_MONITOR` olur, menzil iki katına çıkar. Tek mekanizma bu
+bayrak; seviye adı `"monitor"` hizmette onu açar. Tekil motorda bayrak varsayılan
+koşunun **uzantısıdır** (önce varsayılan geçiş, sonra izleme geçişi, yalnız sıfır
+kodlu hücrelere eklenir): `>= ZONE_DETECT` kümesi varsayılan koşuyla birebir aynıdır
+(tek geçiş olsa son ışın örneği 25 px/m sınırındaki hücreleri çevirirdi). Direk
+rasteri tabandan bağımsızdır (önbellek anahtarı değişmez), ama direğin
+`max_range_m`'i izleme mesafesine yetmeli (`truncated`). **Termalde İzleme yok**
+(Johnson: 1,3 / 6,67 / 13,33): `zone_ppm(ZONE_MONITOR, thermal=True)` ve hizmette
+`_level_of` Türkçe hata verir; motor bayrağı termal için etkisizdir. Plan beyanı
+`İzleme`yi yalnız izleme tabanlı koşudan beyan eder (`levels_for(camera, monitor=)`,
+`coverage_masks["monitor"]`). Aranan istek 25 px/m altındaysa
+`perimeter.coverage` motoru izleme tabanıyla koşar ve `band_share.monitor` yazar.
+`"monitor"` kabul eden hizmet yöntemleri: coverage, optimize, minimize_poles, compare,
+focal.sweep, viewshed.single; reddedenler: area.plan, ptz_patrol, city.analyse
+(`_level_of(monitor_ok=)`, `reject_monitor_level`).
+
 ## Çevre çiti boşluk analizi
 
 `generate_perimeter_plan` artık: (1) her kameraya menzilin ~%55'ine nişan alan
@@ -1201,8 +1225,8 @@ Modu" satırı.
 
 ## Açık işler
 
-- Monitoring 12,5 px/m arazi seviyesi yok (motorun bölge kodlarına yeni seviye;
-  kapsama sayılarını ve golden'ı etkiler).
+- İzleme (12,5 px/m) alan planlayıcı, PTZ devriye araması ve şehir analizinde yok:
+  üçü de Türkçe hatayla reddeder (aşağıdaki DORI bölümüne bak).
 - Kütüphanede adı yalnız kod olan (AB-0000-4413, AB-0000-3224) ve adı broşür
   başlığından gelen (AB-0000-3951 … "FULL HD ÇÖZÜNÜRLÜK …") kayıtlar —
   kullanıcı verisi, kodla düzeltilmez.

@@ -13,7 +13,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -32,13 +32,22 @@ PPM_DETECT = 25.0       # Detection / Algılama
 PPM_MONITOR = 12.5      # Monitoring and control / İzleme (DORI'nin en düşük seviyesi)
 PPM_OVERVIEW = PPM_MONITOR  # geriye dönük ad
 
-# Zone Codes
+# Zone Codes -- monotonic: a higher code is a finer level, so ``zone >= level``
+# means "at least that level". Always use the names; the integers have moved
+# once already (ZONE_MONITOR was inserted below Detection).
+# ZONE_MONITOR exists only in a run that asks for the monitor floor
+# (``monitor_floor=True``); the default floor is Detection and no cell is ever
+# coded ZONE_MONITOR then.
 ZONE_OUT_OF_FOV = 0
 ZONE_OCCLUDED = 1       # Kör Nokta / Tepe Arkası Gölge
-ZONE_DETECT = 2         # Algılama (>= 25 px/m)
-ZONE_OBSERVE = 3        # Gözlem (>= 62.5 px/m)
-ZONE_RECOG = 4          # Tanıma (>= 125 px/m)
-ZONE_IDENT = 5          # Teşhis (>= 250 px/m)
+ZONE_MONITOR = 2        # İzleme (>= 12.5 px/m) -- opt-in, visible cameras only
+ZONE_DETECT = 3         # Algılama (>= 25 px/m)
+ZONE_OBSERVE = 4        # Gözlem (>= 62.5 px/m)
+ZONE_RECOG = 5          # Tanıma (>= 125 px/m)
+ZONE_IDENT = 6          # Teşhis (>= 250 px/m)
+
+THERMAL_NO_MONITOR = ("Termal kamerada İzleme (12,5 px/m) seviyesi yoktur; Johnson algılama, tanıma ya da "
+                      "teşhis seviyesini seçin.")
 
 
 @dataclass
@@ -352,11 +361,25 @@ def is_thermal_camera(camera: CameraConfig) -> bool:
 
 def zone_ppm(zone: int, thermal: bool = False) -> float:
     """px/m a cell needs to be classed ``zone`` -- zone_codes' thresholds read
-    the other way. Thermal: Johnson; ZONE_IDENT is never reached (inf)."""
+    the other way. Thermal: Johnson; ZONE_IDENT is never reached (inf) and
+    ZONE_MONITOR does not exist (ValueError: a thermal has no monitoring level)."""
     if thermal:
+        if zone == ZONE_MONITOR:
+            raise ValueError(THERMAL_NO_MONITOR)
         return {ZONE_DETECT: THERMAL_DETECT_PPM, ZONE_OBSERVE: THERMAL_RECOG_PPM,
                 ZONE_RECOG: THERMAL_IDENT_PPM}.get(zone, math.inf)
-    return {ZONE_DETECT: PPM_DETECT, ZONE_OBSERVE: PPM_OBSERVE, ZONE_RECOG: PPM_RECOG, ZONE_IDENT: PPM_IDENT}[zone]
+    return {ZONE_MONITOR: PPM_MONITOR, ZONE_DETECT: PPM_DETECT, ZONE_OBSERVE: PPM_OBSERVE,
+            ZONE_RECOG: PPM_RECOG, ZONE_IDENT: PPM_IDENT}[zone]
+
+
+def reject_monitor_level(level: int, what: str) -> None:
+    """Raise a Turkish ValueError when ``level`` is ZONE_MONITOR and the feature
+    ``what`` does not carry the monitor floor through. Without this a monitor
+    target would be scored with the Detection floor and silently report
+    Detection numbers as Monitoring."""
+    if level == ZONE_MONITOR:
+        raise ValueError(f"İzleme (12,5 px/m) seviyesi {what} için henüz desteklenmiyor; Algılama ya da "
+                         f"üst bir seviye seçin.")
 
 
 def identify_ppm(camera: CameraConfig) -> float:
@@ -375,35 +398,50 @@ class ViewLimits:
     atmospheric_limit_m: float      # range where path transmission hits tau_min
     effective_max_range_m: float    # what the view actually reaches
     thermal: bool = False           # zones on Johnson thresholds (zone_codes)
+    monitor: bool = False           # floor is Monitoring: cells 12.5..25 px/m are ZONE_MONITOR (zone_codes)
 
 
 def view_limits(camera: CameraConfig, focal_mm: float, max_range_m: float,
-                visibility_km: float = 40.0, weather: str = "") -> ViewLimits:
+                visibility_km: float = 40.0, weather: str = "",
+                monitor_floor: bool = False) -> ViewLimits:
     """Pixel-density floor and range caps of one camera view -- shared by
     calculate_3d_viewshed and the per-mount view masks (mount_visibility) so
-    the two can never apply different rules."""
+    the two can never apply different rules.
+
+    ``monitor_floor`` (opt-in, default = today's behaviour): lower the floor
+    from Detection to EN 62676-4 Monitoring (12.5 px/m), which doubles the
+    optical reach. A thermal camera has no monitoring level and its floor is
+    already Johnson detection, so the flag changes nothing for it."""
     optics = camera_optics(camera, focal_mm)
     is_thermal = is_thermal_camera(camera)
+    monitor = bool(monitor_floor) and not is_thermal
     # Floor PPM below which a cell is not worth showing. Non-thermal: the
     # EN 62676-4 Detection threshold (25 px/m) — the viewshed then covers exactly
     # the DORI-meaningful band (Detection and above), no arbitrary cut-off.
-    min_detect_ppm = THERMAL_DETECT_PPM if is_thermal else PPM_DETECT
+    # With the monitor floor: Monitoring (12.5 px/m).
+    min_detect_ppm = THERMAL_DETECT_PPM if is_thermal else (PPM_MONITOR if monitor else PPM_DETECT)
     optical_limit_m = optics.distance_for_ppm(min_detect_ppm)
     # Fog / rain / haze cap the range where target contrast survives the path.
     atm_band = band_for_camera(camera.sensor_name, camera.model_name)
     atmospheric_limit_m = usable_range_m(optical_limit_m, visibility_km, atm_band, weather)
     # Effective raymarching range cannot exceed optical or atmospheric limits
     effective = min(max_range_m, optical_limit_m * 1.15, atmospheric_limit_m)
-    return ViewLimits(optics, min_detect_ppm, optical_limit_m, atmospheric_limit_m, effective, is_thermal)
+    return ViewLimits(optics, min_detect_ppm, optical_limit_m, atmospheric_limit_m, effective, is_thermal, monitor)
 
 
-def zone_codes(visible, framed, ppm, thermal: bool = False):
+def zone_codes(visible, framed, ppm, thermal: bool = False, monitor: bool = False):
     """ZONE_* per sample/cell from visibility, framing and px/m -- the one
     DORI classification both the engine and the mount view masks use.
-    ``thermal``: Johnson thresholds, never ZONE_IDENT (see THERMAL_*)."""
+    ``thermal``: Johnson thresholds, never ZONE_IDENT (see THERMAL_*).
+    ``monitor`` (visible cameras, set by a monitor-floor run): a visible cell
+    under Detection is ZONE_MONITOR; from Detection up nothing changes."""
     zone = np.zeros(np.shape(ppm), dtype=np.int32)                # ZONE_OUT_OF_FOV
     zone = np.where(framed & ~visible, ZONE_OCCLUDED, zone)       # framed but ridge-blocked
-    zone = np.where(visible, ZONE_DETECT, zone)
+    if monitor and not thermal:
+        zone = np.where(visible, ZONE_MONITOR, zone)
+        zone = np.where(visible & (ppm >= PPM_DETECT), ZONE_DETECT, zone)
+    else:
+        zone = np.where(visible, ZONE_DETECT, zone)
     if thermal:
         zone = np.where(visible & (ppm >= THERMAL_RECOG_PPM), ZONE_OBSERVE, zone)
         return np.where(visible & (ppm >= THERMAL_IDENT_PPM), ZONE_RECOG, zone)
@@ -427,13 +465,77 @@ def calculate_3d_viewshed(terrain: TerrainData,
                           visibility_km: float = 40.0,
                           weather: str = "",
                           focal_mm_override: Optional[float] = None,
-                          with_profile: bool = True) -> ViewshedResult:
+                          with_profile: bool = True,
+                          monitor_floor: bool = False) -> ViewshedResult:
     """Computes comprehensive 3D viewshed, terrain occlusion, and DORI mapping.
 
     ``focal_mm_override`` sets an explicit focal length (mm) — for a PTZ preset
     at an intermediate zoom, instead of the min/max lens_mode ends.
     ``with_profile=False`` skips the (unused-in-batch) elevation cross-section.
+    ``monitor_floor=True`` (opt-in, default False) adds EN 62676-4 Monitoring
+    (12.5 px/m) below Detection for a visible camera: cells between 12.5 and
+    25 px/m become ZONE_MONITOR and the analysed range grows to match. It is
+    the default run EXTENDED, never a different classification: every cell the
+    default run codes (Detection and up, or blocked at >= 25 px/m) keeps that
+    code, so the ``>= ZONE_DETECT`` set is identical to a default run's. (One
+    scatter pass could not promise that: the last ray sample to land in a cell
+    decides its class, and a longer range appends samples past the 25 px/m
+    distance that flip the cells sitting on it.) A thermal camera has no
+    monitoring level and ignores the flag.
     """
+    kw = dict(terrain=terrain, cam_x_m=cam_x_m, cam_y_m=cam_y_m, mast_height_m=mast_height_m, camera=camera,
+              lens_mode=lens_mode, pan_deg=pan_deg, tilt_deg=tilt_deg, max_range_m=max_range_m,
+              earth_curvature=earth_curvature, ray_step_m=ray_step_m, visibility_km=visibility_km,
+              weather=weather, focal_mm_override=focal_mm_override)
+    extend = bool(monitor_floor) and not is_thermal_camera(camera)
+    base = _viewshed_core(**kw, with_profile=with_profile and not extend, monitor_floor=False)
+    if not extend:
+        return base
+    ext = _viewshed_core(**kw, with_profile=with_profile, monitor_floor=True)
+    return _merge_monitor_extension(terrain, base, ext)
+
+
+def _merge_monitor_extension(terrain: TerrainData, base: ViewshedResult, ext: ViewshedResult) -> ViewshedResult:
+    """``base`` (Detection floor) with the Monitoring band of ``ext`` (monitor
+    floor) added where ``base`` has no opinion (zone 0). A cell ``base`` codes
+    (blocked or Detection+) keeps its code; ``ext`` may only add ZONE_MONITOR /
+    ZONE_OCCLUDED, so the >= Detection set stays the default run's."""
+    take = (base.dori_grid == ZONE_OUT_OF_FOV) & (ext.dori_grid != ZONE_OUT_OF_FOV) & (ext.dori_grid < ZONE_DETECT)
+    dori = np.where(take, ext.dori_grid, base.dori_grid).astype(np.int32)
+    vis = base.visibility_mask | (take & ext.visibility_mask)
+    ppm = np.where(take, ext.ppm_grid, base.ppm_grid)
+    slant = np.where(take, ext.slant_dist_grid, base.slant_dist_grid)
+    cell_a = terrain.cell_size_m ** 2
+    vis_cells = int(np.count_nonzero(vis))
+    rr, cc = np.nonzero(vis)
+    reach = float(np.max(np.hypot(terrain.origin_x + cc * terrain.cell_size_m - ext.cam_x_m,
+                                  terrain.origin_y + rr * terrain.cell_size_m - ext.cam_y_m))) if rr.size else 0.0
+    fov_area = ext.fov_area_m2
+    return replace(
+        ext, visibility_mask=vis, dori_grid=dori, ppm_grid=ppm, slant_dist_grid=slant,
+        visible_area_m2=vis_cells * cell_a,
+        occluded_area_m2=int(np.count_nonzero(dori == ZONE_OCCLUDED)) * cell_a,
+        coverage_pct=(vis_cells * cell_a / max(fov_area, 1.0)) * 100.0,
+        max_los_reach_m=reach)
+
+
+def _viewshed_core(terrain: TerrainData,
+                   cam_x_m: float,
+                   cam_y_m: float,
+                   mast_height_m: float,
+                   camera: CameraConfig,
+                   lens_mode: str = "min",
+                   pan_deg: float = 0.0,
+                   tilt_deg: float = -5.0,
+                   max_range_m: float = 2000.0,
+                   earth_curvature: bool = True,
+                   ray_step_m: float = 3.0,
+                   visibility_km: float = 40.0,
+                   weather: str = "",
+                   focal_mm_override: Optional[float] = None,
+                   with_profile: bool = True,
+                   monitor_floor: bool = False) -> ViewshedResult:
+    """One scatter pass at one floor (see calculate_3d_viewshed)."""
     rows, cols = terrain.rows, terrain.cols
     cell_size = terrain.cell_size_m
     target_h = current_target_height()
@@ -444,7 +546,7 @@ def calculate_3d_viewshed(terrain: TerrainData,
 
     # 2. Camera Optics & FOV
     focal_mm = view_focal_mm(camera, lens_mode, focal_mm_override)
-    lim = view_limits(camera, focal_mm, max_range_m, visibility_km, weather)
+    lim = view_limits(camera, focal_mm, max_range_m, visibility_km, weather, monitor_floor)
     optics = lim.optics
     min_detect_ppm = lim.min_detect_ppm
     optical_limit_m = lim.optical_limit_m
@@ -530,7 +632,7 @@ def calculate_3d_viewshed(terrain: TerrainData,
         framed = valid & ppm_ok & in_vfov
         visible = framed & march.los_clear
 
-        zone = zone_codes(visible, framed, ppm, lim.thermal)
+        zone = zone_codes(visible, framed, ppm, lim.thermal, lim.monitor)
 
         m = valid
         vr, vc = rr[m], cc[m]
@@ -692,10 +794,16 @@ def calculate_multi_camera_viewshed(terrain: TerrainData,
                                     *,
                                     earth_curvature: bool = True,
                                     visibility_km: float = 40.0,
-                                    weather: str = "") -> Optional[MultiViewshedResult]:
+                                    weather: str = "",
+                                    monitor_floor: bool = False) -> Optional[MultiViewshedResult]:
     """Runs the authoritative single-camera engine for each placement and merges
     the grids: the combined map shows the best DORI level reachable at every
-    ground cell, plus how many cameras overlap there."""
+    ground cell, plus how many cameras overlap there.
+
+    ``monitor_floor`` (default False = bit-identical to before): every visible
+    camera is run with the Monitoring floor, so cells between 12.5 and 25 px/m
+    become ZONE_MONITOR and ``pct_by_zone`` gains a ``"monitor"`` entry; a
+    thermal placement is unaffected."""
     if not placements:
         return None
 
@@ -708,12 +816,14 @@ def calculate_multi_camera_viewshed(terrain: TerrainData,
             max_range_m=p.max_range_m, earth_curvature=earth_curvature,
             visibility_km=visibility_km, weather=weather,
             focal_mm_override=p.focal_mm_override, with_profile=False,
+            monitor_floor=monitor_floor,
         ))
 
     ppm = np.zeros((rows, cols), np.float32)
     best_cam = np.zeros((rows, cols), np.int32)
     vis = np.zeros((rows, cols), bool)
     union_cone = np.zeros((rows, cols), bool)
+    monitor_cells = np.zeros((rows, cols), bool)     # some visible camera sees it in the monitor band
     # BUGFIX: redundancy used to count VIEWS, so a PTZ whose 4 presets all
     # frame a cell read as "4 cameras" there -- inflating overlap and hiding
     # that the cell is unwatched whenever the PTZ looks elsewhere. Views of
@@ -732,6 +842,8 @@ def calculate_multi_camera_viewshed(terrain: TerrainData,
         else:
             cam_vis_by_id[key] = cam_vis.copy()
         union_cone |= (r.dori_grid != ZONE_OUT_OF_FOV)
+        if monitor_floor:
+            monitor_cells |= (r.dori_grid == ZONE_MONITOR)
 
     seen = np.zeros((rows, cols), np.int32)
     for cam_vis in cam_vis_by_id.values():
@@ -741,6 +853,8 @@ def calculate_multi_camera_viewshed(terrain: TerrainData,
     dori = np.zeros((rows, cols), np.int32)
     dori = np.where(occ, ZONE_OCCLUDED, dori)
     dori = np.where(vis, ZONE_DETECT, dori)
+    if monitor_floor:       # best px/m of the cell under Detection and a visible camera put it there
+        dori = np.where(vis & monitor_cells & (ppm < PPM_DETECT), ZONE_MONITOR, dori)
     dori = np.where(vis & (ppm >= PPM_OBSERVE), ZONE_OBSERVE, dori)
     dori = np.where(vis & (ppm >= PPM_RECOG), ZONE_RECOG, dori)
     dori = np.where(vis & (ppm >= PPM_IDENT), ZONE_IDENT, dori)
@@ -755,6 +869,8 @@ def calculate_multi_camera_viewshed(terrain: TerrainData,
         "observe": 100.0 * np.count_nonzero(dori >= ZONE_OBSERVE) / denom,
         "detect": 100.0 * np.count_nonzero(dori >= ZONE_DETECT) / denom,
     }
+    if monitor_floor:
+        pct["monitor"] = 100.0 * np.count_nonzero(dori >= ZONE_MONITOR) / denom
 
     return MultiViewshedResult(
         dori_grid=dori, ppm_grid=ppm, visibility_mask=vis, best_cam_grid=best_cam,

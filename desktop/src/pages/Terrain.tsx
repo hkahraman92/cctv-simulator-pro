@@ -8,7 +8,7 @@ import { DEFAULT_CAMERA, type CameraConfig, type ModelSummary } from "../core/ap
 import { useCoalesced, useCore } from "../core/CoreProvider";
 import { usePageActive } from "../core/pageActive";
 import type {
-  AreaPlanResult, CityInfo, CoverageLayer, CoverageResult, DoriLevel, FocalSweep, OptimizeResult, PlaybackPtz, LegendRow, NightCoverage, PlanResult, PoleSearch, RegionInfo, Scenario,
+  AreaPlanResult, CityInfo, CoverageLayer, CoverageResult, DoriLevel, FocalSweep, TerrainLevel, OptimizeResult, PlaybackPtz, LegendRow, NightCoverage, PlanResult, PoleSearch, RegionInfo, Scenario,
   SingleViewshed, TerrainCatalog, TerrainInfo,
 } from "../core/terrainApi";
 import { useJob } from "../core/useJob";
@@ -29,6 +29,7 @@ import { Button, Panel, Slider, Tile, fmt } from "../components/ui";
 const ha = (m2: number) => `${fmt(m2 / 1e4, 2)} ha`;
 const pct = (f: number) => `%${fmt(f * 100, 1)}`;
 const LEVELS = [
+  ["monitor", "İzleme ≥12,5"],
   ["detect", "Algılama ≥25"],
   ["observe", "Gözlem ≥62,5"],
   ["recognize", "Tanıma ≥125"],
@@ -42,11 +43,14 @@ const THERMAL_LEVELS = [
   ["recognize", "Johnson teşhis ≥13,3"],
 ] as const;
 // one list for every level selector: a thermal has three levels and none of them is a face
-const levelsFor = (thermal: boolean): readonly (readonly [DoriLevel, string])[] => (thermal ? THERMAL_LEVELS : LEVELS);
+// Monitoring (12.5 px/m) exists for visible cameras only: Johnson has no such level
+const levelsFor = (thermal: boolean): readonly (readonly [TerrainLevel, string])[] => (thermal ? THERMAL_LEVELS : LEVELS);
+// the area planner and city analysis take the four levels (the core rejects "monitor" there)
+const fourLevels = (thermal: boolean) => levelsFor(thermal).filter(([k]) => k !== "monitor") as readonly (readonly [DoriLevel, string])[];
 const levelName = (k: string, thermal: boolean) => { const l = levelsFor(thermal).find(([x]) => x === k)?.[1] ?? ""; return l.slice(0, l.lastIndexOf(" ")); };
-const clampLevel = <L extends string>(l: L, thermal: boolean) => (thermal && l === "identify" ? "recognize" as L : l);
+const clampLevel = <L extends string>(l: L, thermal: boolean) => (thermal && l === "identify" ? "recognize" as L : thermal && l === "monitor" ? "detect" as L : l);
 // fence targets a designer actually picks (a 25–250 slider in steps of 5 could not land on 62,5)
-const TARGETS: readonly (readonly [number, string])[] = [[25, "Algılama · 25"], [40, "Güçlendirilmiş çit · 40"], [62.5, "Gözlem · 62,5"], [125, "Tanıma · 125"], [250, "Teşhis · 250"]];
+const TARGETS: readonly (readonly [number, string])[] = [[12.5, "İzleme · 12,5"], [25, "Algılama · 25"], [40, "Güçlendirilmiş çit · 40"], [62.5, "Gözlem · 62,5"], [125, "Tanıma · 125"], [250, "Teşhis · 250"]];
 const THERMAL_TARGETS: readonly (readonly [number, string])[] = [[1.3, "Johnson algılama · 1,3"], [6.67, "Johnson tanıma · 6,67"], [13.33, "Johnson teşhis · 13,33"]];
 // "%100,0" beside "3 m uncovered" read as a contradiction: 100 is shown only when nothing is left out
 const pctCapped = (f: number, uncoveredM: number) => (uncoveredM >= 0.5 && f * 100 >= 99.95 ? "%99,9" : pct(f));
@@ -56,11 +60,11 @@ type Step = "define" | "plan" | "verify" | "improve" | "deliver";
 const STEPS: readonly (readonly [Step, string])[] = [["define", "Tanımla"], ["plan", "Planla"], ["verify", "Doğrula"], ["improve", "İyileştir"], ["deliver", "Teslim"]];
 // The requirement is ONE target px/m; its level is the highest one that target reaches
 // (plan_statement.declared_level says the same on the core side: 40 px/m -> Detection).
-const LEVEL_PPM: Record<DoriLevel, number> = { detect: 25, observe: 62.5, recognize: 125, identify: 250 };
-const LEVEL_PPM_THERMAL: Record<DoriLevel, number> = { detect: 1.3, observe: 6.67, recognize: 13.33, identify: 13.33 };
-const levelPpm = (k: DoriLevel, thermal: boolean) => (thermal ? LEVEL_PPM_THERMAL : LEVEL_PPM)[k];
-const levelOf = (ppm: number, thermal: boolean): DoriLevel =>
-  levelsFor(thermal).reduce<DoriLevel>((best, [k]) => (ppm >= levelPpm(k, thermal) - 1e-9 ? k : best), "detect");
+const LEVEL_PPM: Record<TerrainLevel, number> = { monitor: 12.5, detect: 25, observe: 62.5, recognize: 125, identify: 250 };
+const LEVEL_PPM_THERMAL: Record<TerrainLevel, number> = { monitor: Number.POSITIVE_INFINITY, detect: 1.3, observe: 6.67, recognize: 13.33, identify: 13.33 };
+const levelPpm = (k: TerrainLevel, thermal: boolean) => (thermal ? LEVEL_PPM_THERMAL : LEVEL_PPM)[k];
+const levelOf = (ppm: number, thermal: boolean): TerrainLevel =>
+  levelsFor(thermal).reduce<TerrainLevel>((best, [k]) => (ppm >= levelPpm(k, thermal) - 1e-9 ? k : best), "detect");
 type LineMode = "facility" | "border" | "highway" | "area";
 
 export default function Terrain() {
@@ -84,7 +88,7 @@ export default function Terrain() {
   // DORI target: a person this tall on each cell (sight line + framing to the head)
   const [targetH, setTargetH] = useState(1.8);
   const [sweep, setSweep] = useState<FocalSweep | null>(null);
-  const [sweepLevel, setSweepLevel] = useState<DoriLevel>("recognize");
+  const [sweepLevel, setSweepLevel] = useState<TerrainLevel>("recognize");
   const [isPtz, setIsPtz] = useState(false);
   const [isThermal, setIsThermal] = useState(false);
   const [patrol, setPatrol] = useState<Patrol>({ speed: 20, dwell: 2 });
@@ -102,7 +106,7 @@ export default function Terrain() {
   // the band a fence plan protects: outside / inside widths (inside only for a closed fence)
   const [band, setBand] = useState({ out: 40, in: 40 });
   const [covLayer, setCovLayer] = useState<CoverageLayer>("target");
-  const [covLevel, setCovLevel] = useState<"plan" | DoriLevel>("plan");
+  const [covLevel, setCovLevel] = useState<"plan" | TerrainLevel>("plan");
   const [showFov, setShowFov] = useState(true);
   // live PTZ sweep: pictures from the core once, the map turns the cones
   const [play, setPlay] = useState<{ ptz: PlaybackPtz[]; tab: Tab; camera: string } | null>(null);
@@ -115,7 +119,10 @@ export default function Terrain() {
   const [city, setCity] = useState<CityInfo | null>(null);   // OSM streets / homes / places of this terrain
   const [areaRes, setAreaRes] = useState<AreaPlanResult | null>(null);
   const isArea = plan.line_mode === "area";
-  const reqLevel = levelOf(plan.target_ppm, isThermal);
+  const reqLevelOf = levelOf(plan.target_ppm, isThermal);
+  // the area planner has no Monitoring floor: an area target is at least Detection
+  const areaLevel: DoriLevel = reqLevelOf === "monitor" ? "detect" : reqLevelOf;
+  const reqLevel: TerrainLevel = isArea ? areaLevel : reqLevelOf;
   // an area plan is built for the level (its threshold); a fence plan for the px/m itself
   const reqPpm = isArea ? levelPpm(reqLevel, isThermal) : plan.target_ppm;
   const [planRes, setPlanRes] = useState<PlanResult | null>(null);
@@ -226,12 +233,12 @@ export default function Terrain() {
   const runArea = async () => {
     if (!info || fence.length < 3) return;
     const r = await job.run("Alan kapsama planı", (o) => T.areaPlan({ terrain_id: info.terrain_id, use_obstacles: useObstacles, camera,
-      fence, level: reqLevel, goal_frac: goal / 100, mast_m: plan.mast_m, interior: area.interior, max_per_pole: area.perPole, weather,
+      fence, level: areaLevel, goal_frac: goal / 100, mast_m: plan.mast_m, interior: area.interior, max_per_pole: area.perPole, weather,
       streets_only: area.streetsOnly && !!city, ...(area.maxHole > 0 ? { max_hole_m2: area.maxHole } : {}),
       min_cameras: area.minCams, max_cameras: area.maxCams, ...ptzArgs() }, o));
     if (r) { replacePlan(r.plan); setAreaRes(r); setPoleRes(null); warn(r.warnings); }
   };
-  const runCoverage = async (layer: CoverageLayer = covLayer, level: "plan" | DoriLevel = covLevel) => {
+  const runCoverage = async (layer: CoverageLayer = covLayer, level: "plan" | TerrainLevel = covLevel) => {
     if (!info) return;
     setCovLayer(layer); setCovLevel(level);
     const r = await job.run("Birleşik görüş alanı", (o) => T.coverage({ terrain_id: info.terrain_id, use_obstacles: useObstacles, max_px: 1200,
@@ -563,7 +570,8 @@ export default function Terrain() {
                 </div>
                 <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono text-[11px]">
                   {/* a thermal is classed on Johnson thresholds and never reaches EN identification */}
-                  {(single.thermal ? THERMAL_LEVELS : LEVELS).map(([k, l]) => (<div key={k} className="flex justify-between"><span className="text-text-3">{l}</span><span>{ha(single.zone_areas_m2[k])}</span></div>))}
+                  {(single.thermal ? THERMAL_LEVELS : LEVELS).filter(([k]) => k !== "monitor" || single.zone_areas_m2.monitor !== undefined)
+                    .map(([k, l]) => (<div key={k} className="flex justify-between"><span className="text-text-3">{l}</span><span>{ha(single.zone_areas_m2[k] ?? 0)}</span></div>))}
                 </div>
                 <div className="mt-2 font-mono text-[10px] text-text-3">
                   optik sınır {fmt(single.optical_limit_m, 0)} m{single.atmospheric_limit_m > 0 && single.atmospheric_limit_m < single.optical_limit_m ? ` · atmosfer ${fmt(single.atmospheric_limit_m, 0)} m` : ""}
@@ -582,7 +590,7 @@ export default function Terrain() {
             {camera.focal_max_mm > camera.focal_min_mm && (
               <Panel title="Varifokal: tüm odaklar">
                 <select className="h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={sweepLevel} aria-label="Varifokal hedef seviyesi"
-                  onChange={(e) => { setSweepLevel(e.target.value as DoriLevel); setSweep(null); }}>
+                  onChange={(e) => { setSweepLevel(e.target.value as TerrainLevel); setSweep(null); }}>
                   {levelsFor(isThermal).map(([k, l]) => <option key={k} value={k}>En geniş {l} alanı</option>)}
                 </select>
                 <p className="mt-1 text-[10px] text-text-3">Optimum, seçilen seviyede EN GENİŞ alanı verir; daha düşük seviyelerin alanı küçülebilir.</p>
@@ -658,7 +666,7 @@ export default function Terrain() {
                     <label><span className="label">Hedef seviye</span>
                       <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={reqLevel} aria-label="İster seviyesi"
                         onChange={(e) => { setCustomTarget(false); setPlan((p) => ({ ...p, target_ppm: levelPpm(e.target.value as DoriLevel, isThermal) })); }}>
-                        {levelsFor(isThermal).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+                        {fourLevels(isThermal).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                       </select></label>
                   ) : (
                     <label><span className="label">Hedef (px/m)</span>
@@ -828,7 +836,7 @@ export default function Terrain() {
                     </select></label>
                   <label><span className="label">İncelenen seviye</span>
                     <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-1 text-[12px]" value={covLevel} aria-label="İncelenen seviye"
-                      onChange={(e) => { const l = e.target.value as "plan" | DoriLevel; if (coverage) void runCoverage(covLayer, l); else setCovLevel(l); }}>
+                      onChange={(e) => { const l = e.target.value as "plan" | TerrainLevel; if (coverage) void runCoverage(covLayer, l); else setCovLevel(l); }}>
                       <option value="plan">{planRes.line_mode === "area" && areaRes ? `İster (${levelName(areaRes.level, isThermal)})` : `İster (${fmt(planRes.target_ppm, planRes.target_ppm % 1 ? 2 : 0)} px/m)`}</option>
                       {levelsFor(isThermal).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                     </select></label>
@@ -961,8 +969,9 @@ function CoverageSummary({ c, thermal }: { c: CoverageResult; thermal: boolean }
       {row("görülüyor, hedef altı", pct(t.below), "text-warn")}
       {row("hiç görülmüyor", pct(t.unseen), "text-danger")}
       <div className="mt-1 text-text-2">DORI · {c.ptz_count > 0 ? (c.band_share_reach ? "sürekli + devriye + talep üzerine" : "sürekli + devriye (yalnız PTZ)") : "sabit kameralar"}</div>
-      {levelsFor(thermal).map(([k, l]) => row(l, c.ptz_count > 0
-        ? `${pct(c.band_share[k])} + ${pct(c.band_share_ptz[k])}${c.band_share_reach ? ` + ${pct(c.band_share_reach[k])}` : ""}` : pct(c.band_share[k])))}
+      {/* Monitoring only when the engine ran with that floor; PTZ patrols are judged from Detection up */}
+      {levelsFor(thermal).filter(([k]) => k !== "monitor" || c.band_share.monitor !== undefined).map(([k, l]) => row(l, c.ptz_count > 0 && k !== "monitor"
+        ? `${pct(c.band_share[k] ?? 0)} + ${pct(c.band_share_ptz[k] ?? 0)}${c.band_share_reach ? ` + ${pct(c.band_share_reach[k] ?? 0)}` : ""}` : pct(c.band_share[k] ?? 0)))}
       {c.band_share_reach && <div className="mt-1 text-text-3">◆ Talep üzerine: PTZ çevrilirse ulaşır; kendiliğinden izlenmez.</div>}
       {c.ptz_count > 0 && <div className="mt-1 text-text-3">◆ {c.ptz_count} PTZ devriyesi; en uzun izlenmeyen süre {fmt(c.ptz_worst_revisit_s, 0)} sn</div>}
       {!c.measured && <div className="mt-1 text-warn">▲ prosedürel arazi — ölçüm değil</div>}

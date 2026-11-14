@@ -58,12 +58,15 @@ export interface RegionInfo {
   obstacle_note: string;
 }
 
-export type ZoneAreas = Record<"identify" | "recognize" | "observe" | "detect" | "occluded", number>;
+/** `monitor` is present only in a monitor-floor run (visible cameras): a default run has no such cells */
+export type ZoneAreas = Record<"identify" | "recognize" | "observe" | "detect" | "occluded", number> & { monitor?: number };
 export type LegendRow = [string, [number, number, number, number]];
 
 export interface SingleViewshed {
   /** zones on Johnson thresholds (thermal camera): detect / observe / recognize = Johnson det / rec / id */
   thermal?: boolean;
+  /** the view ran with the Monitoring floor (12.5 px/m) */
+  monitor_floor?: boolean;
   hfov_deg: number;
   vfov_deg: number;
   cam_ground_z_m: number;
@@ -135,7 +138,8 @@ export interface PlanResult {
 }
 
 export type CoverageLayer = "target" | "dori" | "overlap";
-type Shares = Record<"identify" | "recognize" | "observe" | "detect", number>;
+/** `monitor` only when the report judged a requirement under 25 px/m (the engine then ran with the monitor floor) */
+type Shares = Record<"identify" | "recognize" | "observe" | "detect", number> & { monitor?: number };
 
 export interface CoverageResult {
   camera_count: number;
@@ -163,16 +167,22 @@ export interface CoverageResult {
   target: { label: string; ppm: number; held: number; ptz_only: number; below: number; unseen: number; held_2: number };
   /** the fence line itself (null for an area plan) */
   /** uncovered_m: metres of fence below the SELECTED target */
-  fence_line: { held: number; with_ptz: number; detect: number; uncovered_m: number } | null;
+  fence_line: { held: number; with_ptz: number; detect: number; monitor?: number; uncovered_m: number } | null;
   /** "area": the drawn polygon, "band": the ±band_m fence band, "side": a border's watched side, band_m deep */
   roi_kind: "area" | "band" | "side";
   watch_side?: "left" | "right";
   overlay: Picture;
   legend: LegendRow[];
   measured: boolean;
+  /** the engine ran with the Monitoring floor (12.5 px/m): band_share.monitor and the İzleme band exist */
+  monitor_floor?: boolean;
 }
 
+/** The four levels every planner understands. */
 export type DoriLevel = "detect" | "observe" | "recognize" | "identify";
+/** + EN 62676-4 Monitoring (12.5 px/m, visible cameras only). Accepted by coverage, optimize, focal sweep,
+ *  minimize poles, compare and the single viewshed; the area planner, PTZ patrol and city analysis reject it. */
+export type TerrainLevel = "monitor" | DoriLevel;
 
 export interface AreaPlanResult {
   met: boolean;
@@ -288,7 +298,7 @@ export interface FocalChoice {
   pan_deg: number | null;
   hfov_deg: number;
   score: number;
-  areas_m2: Partial<Record<"identify" | "recognize" | "observe" | "detect", number>>;
+  areas_m2: Partial<Record<"identify" | "recognize" | "observe" | "detect" | "monitor", number>>;
 }
 
 export interface FocalSweep {
@@ -338,7 +348,7 @@ export interface PlanStatement {
   verdict: "Uygun" | "Kısmi" | "Uygun değil";
   goal_frac: number;
   thermal: boolean;
-  declared_level: DoriLevel;
+  declared_level: TerrainLevel;
   declared_label: string;
   declared_ppm: number;
   clause: string;
@@ -349,7 +359,7 @@ export interface PlanStatement {
   markdown: string;
   path: string | null;
   zones: { name: string; kind: "area" | "line"; size: number;
-    rows: { level: DoriLevel; label: string; required_ppm: number; continuous: number; patrol: number; verdict: string; declared: boolean }[] }[];
+    rows: { level: TerrainLevel; label: string; required_ppm: number; continuous: number; patrol: number; verdict: string; declared: boolean }[] }[];
 }
 
 export interface OptimizeResult {
@@ -527,14 +537,14 @@ export function terrainApi(rpc: RpcClient) {
     surfaceRaster: (terrain_id: string, path: string, mode: "auto" | "ndsm" | "dsm") =>
       rpc.call<TerrainInfo>("surface.raster", { terrain_id, path, mode }, { timeoutMs: 0 }),
     viewshed: (
-      p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; pan_deg: number; tilt_deg: number; range_m: number; lens_mode: "min" | "max"; focal_mm?: number; weather?: string; max_px?: number; target_height_m?: number },
+      p: T & { camera: CameraConfig; x_m: number; y_m: number; mast_m: number; pan_deg: number; tilt_deg: number; range_m: number; lens_mode: "min" | "max"; focal_mm?: number; weather?: string; max_px?: number; target_height_m?: number; level?: TerrainLevel },
       opts?: CallOptions,
     ) => rpc.call<SingleViewshed>("viewshed.single", p, opts),
     plan: (p: T & PlanParams & { camera: CameraConfig }) => rpc.call<PlanResult>("perimeter.plan", p),
     /** analysis settings kept with the terrain (target height: a person on each cell) */
     settings: (terrain_id: string, s: { target_height_m?: number }) =>
       rpc.call<{ target_height_m: number; changed: boolean }>("terrain.settings", { terrain_id, ...s }),
-    coverage: (p: T & { layer?: CoverageLayer; level?: "plan" | DoriLevel; band_m?: number; band_in_m?: number; max_px?: number; ptz_speed_deg_s?: number; ptz_end_dwell_s?: number; ptz_reach?: boolean }, opts?: CallOptions) =>
+    coverage: (p: T & { layer?: CoverageLayer; level?: "plan" | TerrainLevel; band_m?: number; band_in_m?: number; max_px?: number; ptz_speed_deg_s?: number; ptz_end_dwell_s?: number; ptz_reach?: boolean }, opts?: CallOptions) =>
       rpc.call<CoverageResult>("perimeter.coverage", p, { timeoutMs: 0, ...opts }),
     approach: (p: T & { depth_m: number; response_s?: number; speeds?: Record<string, number>; max_px?: number }, opts?: CallOptions) =>
       rpc.call<ApproachResult>("approach.analyse", p, { timeoutMs: 0, ...opts }),

@@ -304,7 +304,8 @@ def _plan_statement(entry, t, params: Dict[str, Any]):
                   "max_s": _num(params, "assist_max_s", 10.0, lo=1, hi=600)}
     conf = plan_conformity(plan, cam, mv, zones, cell_size_m=t.cell_size_m, ptz_zone=masks["ptz_zone"],
                            goal_frac=_num(params, "goal_frac", 0.95, lo=0.3, hi=1.0),
-                           area_level=kw.get("level") if mode == "area" else None, assist=assist)
+                           area_level=kw.get("level") if mode == "area" else None, assist=assist,
+                           monitor=bool(masks.get("monitor")))
     weather = kw.get("weather") or "Berrak hava"
     conditions = [
         ("Arazi: ölçülmüş yükseklik modeli" if t.is_measured else "Arazi: TEMSİLİ (ölçüm değil)")

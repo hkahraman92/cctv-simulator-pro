@@ -280,8 +280,9 @@ def analyse_city(terrain: TerrainData, layer: CityLayer, mv, *, level: int, roi:
                  face_height_m: float = 1.6, face_max_deg: float = 15.0, flag_share: float = 0.10,
                  labels: Optional[Sequence[str]] = None) -> CityResult:
     from .focal_optimizer import LEVELS
-    from .viewshed_3d import ZONE_DETECT
+    from .viewshed_3d import ZONE_DETECT, reject_monitor_level
 
+    reject_monitor_level(level, "şehir analizi")
     cs2 = terrain.cell_size_m ** 2
     inside = np.ones(layer.street_class.shape, bool) if roi is None else roi
     street = street_target(layer, terrain) & inside

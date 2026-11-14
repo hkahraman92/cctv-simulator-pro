@@ -50,6 +50,7 @@ from .viewshed_3d import (
     PPM_RECOG,
     ZONE_DETECT,
     ZONE_IDENT,
+    ZONE_MONITOR,
     ZONE_OBSERVE,
     ZONE_RECOG,
     is_thermal_camera,
@@ -64,6 +65,14 @@ LEVEL_NAME = {ZONE_DETECT: "Algılama", ZONE_OBSERVE: "Gözlem",
 MAX_RANGE_CAP_M = 1500.0
 
 
+def levels_for(level: int) -> tuple:
+    """The levels a score / count runs over. Monitoring is opt-in: only a run
+    TARGETING it adds it (below Detection), so every default run scores the
+    same four levels as before -- adding it everywhere would count each
+    Detection cell twice (``zone >= ZONE_MONITOR`` holds for all of them)."""
+    return (ZONE_MONITOR,) + LEVELS if level == ZONE_MONITOR else LEVELS
+
+
 def level_ppm(camera: CameraConfig, level: int) -> float:
     """px/m of ``level`` for THIS camera: EN 62676-4 for a visible camera,
     Johnson for a thermal (the thresholds zone_codes classes its cells on).
@@ -75,9 +84,10 @@ def level_ppm(camera: CameraConfig, level: int) -> float:
 
 
 def level_weights(objective: str, level: int) -> Dict[int, float]:
+    lvls = levels_for(level)
     if objective == "balanced":
-        return {lv: 1.0 for lv in LEVELS}
-    return {lv: (1.0 if lv == level else (1e-3 if lv > level else 0.0)) for lv in LEVELS}
+        return {lv: 1.0 for lv in lvls}
+    return {lv: (1.0 if lv == level else (1e-3 if lv > level else 0.0)) for lv in lvls}
 
 
 def focal_steps(camera: CameraConfig, n: int = 12) -> List[float]:
@@ -129,9 +139,10 @@ def _cone(center_az_rad: np.ndarray, pan_deg: float, hfov_deg: float) -> np.ndar
     return np.abs(d) <= math.radians(hfov_deg / 2.0)
 
 
-def level_areas(zone: np.ndarray, roi: Optional[np.ndarray], cell_area: float) -> Dict[int, float]:
+def level_areas(zone: np.ndarray, roi: Optional[np.ndarray], cell_area: float,
+                levels: Sequence[int] = LEVELS) -> Dict[int, float]:
     inside = np.ones(zone.shape, bool) if roi is None else roi
-    return {lv: float(((zone >= lv) & inside).sum()) * cell_area for lv in LEVELS}
+    return {lv: float(((zone >= lv) & inside).sum()) * cell_area for lv in levels}
 
 
 def _score(zone: np.ndarray, roi: Optional[np.ndarray], weights: Dict[int, float]) -> float:
@@ -161,11 +172,12 @@ class SweepReport:
     elapsed_note: str = ""
 
 
-def _mount_range(camera: CameraConfig, max_range_m: Optional[float]) -> float:
+def _mount_range(camera: CameraConfig, max_range_m: Optional[float], level: int = ZONE_DETECT) -> float:
     if max_range_m:
         return float(min(max_range_m, MAX_RANGE_CAP_M))
     tele = camera_optics(camera, float(max(camera.focal_max_mm, camera.focal_min_mm)))
-    return float(min(tele.distance_for_ppm(level_ppm(camera, ZONE_DETECT)), MAX_RANGE_CAP_M))
+    reach_level = ZONE_MONITOR if level == ZONE_MONITOR else ZONE_DETECT      # the monitor floor reaches further
+    return float(min(tele.distance_for_ppm(level_ppm(camera, reach_level)), MAX_RANGE_CAP_M))
 
 
 def sweep_focals(terrain: TerrainData, x_m: float, y_m: float, mast_m: float, camera: CameraConfig, *,
@@ -175,8 +187,11 @@ def sweep_focals(terrain: TerrainData, x_m: float, y_m: float, mast_m: float, ca
                  max_range_m: Optional[float] = None, visibility_km: float = 40.0,
                  weather: str = "", mv: Optional[MountVisibility] = None) -> SweepReport:
     """Score every focal (x tilt candidates x pans) of one mount.
-    ``pan_deg=None`` scores all pans at once (PTZ: what it can reach)."""
-    rng = _mount_range(camera, max_range_m)
+    ``pan_deg=None`` scores all pans at once (PTZ: what it can reach).
+    ``level=ZONE_MONITOR`` scores with the Monitoring floor (visible cameras)."""
+    rng = _mount_range(camera, max_range_m, level)
+    monitor = level == ZONE_MONITOR
+    lvls = levels_for(level)
     mv = mv or mount_visibility(terrain, x_m, y_m, mast_m, max_range_m=rng)
     roi_w = None if roi is None else roi[mv.window]
     cell_area = terrain.cell_size_m ** 2
@@ -186,14 +201,14 @@ def sweep_focals(terrain: TerrainData, x_m: float, y_m: float, mast_m: float, ca
         best_f: Optional[ViewChoice] = None
         for t in (tilts if tilts is not None else auto_tilts(camera, f, mast_m, level, rng)):
             lay = view_layers(mv, camera, tilt_deg=t, focal_mm=f, max_range_m=rng,
-                              visibility_km=visibility_km, weather=weather)
+                              visibility_km=visibility_km, weather=weather, monitor_floor=monitor)
             zone_vis = np.where(lay.visible, lay.zone, 0)
             pans = [None] if pan_deg is None else _pan_grid(pan_deg, pan_search_deg, pan_step_deg)
             for p in pans:
                 z = zone_vis if p is None else np.where(_cone(lay.center_az_rad, p, lay.hfov_deg), zone_vis, 0)
                 sc = _score(z, roi_w, weights)
                 if best_f is None or sc > best_f.score + 1e-9:
-                    best_f = ViewChoice(f, t, p, lay.hfov_deg, level_areas(z, roi_w, cell_area), sc)
+                    best_f = ViewChoice(f, t, p, lay.hfov_deg, level_areas(z, roi_w, cell_area, lvls), sc)
         curve.append(best_f)
     best = max(curve, key=lambda c: c.score)
     return SweepReport(curve=curve, best=best, wide=curve[0], tele=curve[-1], level=level,
@@ -206,15 +221,17 @@ def envelope(terrain: TerrainData, x_m: float, y_m: float, mast_m: float, camera
              mv: Optional[MountVisibility] = None) -> np.ndarray:
     """Full-grid ZONE_* (int8): the best DORI each cell gets at ANY focal and
     tilt candidate -- and any pan when ``pan_deg`` is None (PTZ). Cells no
-    setting sees are 0. Not simultaneous for a fixed lens (see module doc)."""
-    rng = _mount_range(camera, max_range_m)
+    setting sees are 0. Not simultaneous for a fixed lens (see module doc).
+    ``level=ZONE_MONITOR`` lowers the floor to Monitoring (visible cameras)."""
+    rng = _mount_range(camera, max_range_m, level)
+    monitor = level == ZONE_MONITOR
     mv = mv or mount_visibility(terrain, x_m, y_m, mast_m, max_range_m=rng)
     best = np.zeros(mv.written.shape, np.int8)
     for f in focal_steps(camera, n_focals):
         for lv in (ZONE_DETECT, level, ZONE_IDENT):
             for t in auto_tilts(camera, f, mast_m, lv, rng):
                 lay = view_layers(mv, camera, tilt_deg=t, focal_mm=f, max_range_m=rng,
-                                  visibility_km=visibility_km, weather=weather)
+                                  visibility_km=visibility_km, weather=weather, monitor_floor=monitor)
                 z = np.where(lay.visible, lay.zone, 0)
                 if pan_deg is not None:
                     z = np.where(_cone(lay.center_az_rad, pan_deg, lay.hfov_deg), z, 0)
@@ -304,6 +321,7 @@ def _crop(zone: np.ndarray, window: Tuple[slice, slice]):
 
 def _candidates(terrain, m: Mount, level, n_focals, rng, vis, weather) -> List[_Cand]:
     cands: List[_Cand] = []
+    monitor = level == ZONE_MONITOR
     current = m.focal_mm if m.focal_mm is not None else float(m.camera.focal_min_mm)
     pans = _pan_grid(m.pan_deg, m.pan_search_deg, 10.0)
     for k, (x, y) in enumerate([(m.x_m, m.y_m), *m.alt_positions]):
@@ -311,7 +329,7 @@ def _candidates(terrain, m: Mount, level, n_focals, rng, vis, weather) -> List[_
 
         def add(f, t, ps, mv=mv, x=x, y=y):
             lay = view_layers(mv, m.camera, tilt_deg=t, focal_mm=f, max_range_m=rng,
-                              visibility_km=vis, weather=weather)
+                              visibility_km=vis, weather=weather, monitor_floor=monitor)
             zv = np.where(lay.visible, lay.zone, 0)
             for p in ps:
                 sl, z = _crop(np.where(_cone(lay.center_az_rad, p, lay.hfov_deg), zv, 0), mv.window)
@@ -337,18 +355,19 @@ def optimize_layout(terrain: TerrainData, mounts: Sequence[Mount], *, roi: Optio
     cell_area = terrain.cell_size_m ** 2
     roi_full = np.ones(shape, bool) if roi is None else roi.astype(bool)
     weights = level_weights(objective, level)
+    lvls = levels_for(level)
     fixed = [m for m in mounts if not m.ptz]
     ptzs = [m for m in mounts if m.ptz]
     total = len(fixed) + len(ptzs)
 
     # per-level coverage counts of the CURRENT choices (fixed only)
-    cnt = {lv: np.zeros(shape, np.int32) for lv in LEVELS}
+    cnt = {lv: np.zeros(shape, np.int32) for lv in lvls}
     cands = []
     for i, m in enumerate(fixed):
-        cs = _candidates(terrain, m, level, n_focals, _mount_range(m.camera, None),
+        cs = _candidates(terrain, m, level, n_focals, _mount_range(m.camera, None, level),
                          visibility_km, weather)
         cands.append(cs)
-        for lv in LEVELS:
+        for lv in lvls:
             cnt[lv][cs[0].sl] += cs[0].zone >= lv
         if progress:
             progress(i + 1, total)
@@ -356,7 +375,7 @@ def optimize_layout(terrain: TerrainData, mounts: Sequence[Mount], *, roi: Optio
 
     def union_zone():
         z = np.zeros(shape, np.int8)
-        for lv in LEVELS:
+        for lv in lvls:
             z[cnt[lv] > 0] = lv
         return z
 
@@ -368,7 +387,7 @@ def optimize_layout(terrain: TerrainData, mounts: Sequence[Mount], *, roi: Optio
         for i in range(len(fixed)):
             cs = cands[i]
             cur = cs[choice[i]]
-            for lv in LEVELS:
+            for lv in lvls:
                 cnt[lv][cur.sl] -= cur.zone >= lv
             gains = []
             for c in cs:
@@ -383,7 +402,7 @@ def optimize_layout(terrain: TerrainData, mounts: Sequence[Mount], *, roi: Optio
             if gains[k] > gains[choice[i]] + 1e-9:       # strictly better, else keep
                 choice[i], moved = k, True
             new = cs[choice[i]]
-            for lv in LEVELS:
+            for lv in lvls:
                 cnt[lv][new.sl] += new.zone >= lv
         if not moved:
             break
@@ -417,10 +436,10 @@ def optimize_layout(terrain: TerrainData, mounts: Sequence[Mount], *, roi: Optio
                      "aynı anda değil; sürekli kapsama yalnız sabit kameralardan gelir.")
     return LayoutResult(
         choices=choices,
-        before_m2=level_areas(before_zone, roi_full, cell_area),
-        after_m2=level_areas(after_zone, roi_full, cell_area),
-        ptz_on_demand_m2=level_areas(ptz_zone, roi_full, cell_area),
-        combined_m2=level_areas(combined, roi_full, cell_area),
+        before_m2=level_areas(before_zone, roi_full, cell_area, lvls),
+        after_m2=level_areas(after_zone, roi_full, cell_area, lvls),
+        ptz_on_demand_m2=level_areas(ptz_zone, roi_full, cell_area, lvls),
+        combined_m2=level_areas(combined, roi_full, cell_area, lvls),
         roi_area_m2=float(roi_full.sum()) * cell_area,
         fixed_zone=after_zone, ptz_zone=ptz_zone, level=level, objective=objective,
         passes_run=passes_run, notes=notes,
@@ -611,7 +630,11 @@ def band_area(terrain: TerrainData, plan, camera: CameraConfig, roi: Optional[np
 
     The plan caps each pole at its fence-target range (e.g. 40 px/m); scoring
     a DORI level needs that level's own reach, or the engine and the
-    optimiser answer different questions (8.6 vs 15.4 ha was seen)."""
+    optimiser answer different questions (8.6 vs 15.4 ha was seen).
+
+    ``level=ZONE_MONITOR`` runs the engine with the Monitoring floor (the one
+    opt-in: every other level keeps the Detection floor); a thermal camera
+    has no such level and ``level_ppm`` rejects it with a Turkish error."""
     from dataclasses import replace
 
     from .perimeter_ptz import plan_placements
@@ -625,7 +648,8 @@ def band_area(terrain: TerrainData, plan, camera: CameraConfig, roi: Optional[np
     placements = [full_reach(pl) for pl in plan_placements(plan, camera)]
     if transform is not None:              # e.g. night.capped_placements: a shorter reach, same engine
         placements = transform(placements)
-    mv = calculate_multi_camera_viewshed(terrain, placements, visibility_km=visibility_km, weather=weather)
+    mv = calculate_multi_camera_viewshed(terrain, placements, visibility_km=visibility_km, weather=weather,
+                                         monitor_floor=level == ZONE_MONITOR)
     if mv is None:                          # nothing left to evaluate (a night with no light)
         return None, 0.0
     inside = roi if roi is not None else np.ones(mv.dori_grid.shape, bool)

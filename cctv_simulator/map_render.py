@@ -19,7 +19,7 @@ from . import surface_obstacles as _obs
 from .design_tokens import rgba as _rgba
 from .raster_smooth import clip_to_wedge, smooth_overlay
 from .terrain_loader import TerrainData
-from .viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_OBSERVE, ZONE_OCCLUDED, ZONE_RECOG
+from .viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_MONITOR, ZONE_OBSERVE, ZONE_OCCLUDED, ZONE_RECOG
 
 _INF = float("inf")
 
@@ -33,6 +33,15 @@ LAYER_BANDS = {
         (ZONE_OBSERVE, ZONE_OBSERVE + 1, _rgba("dori-observe", 190), "Gözlem ≥ 62,5 px/m"),
         # alpha: Algılama is the largest band and sat almost invisible on the dark relief
         (ZONE_DETECT, ZONE_DETECT + 1, _rgba("dori-detect", 215), "Algılama ≥ 25 px/m"),
+        (ZONE_OCCLUDED, ZONE_OCCLUDED + 1, _rgba("bg-0", 200), "Kör nokta (arazi engeli)"))),
+    # a run with the monitor floor: the same table plus the Monitoring band, the palest of the
+    # cold ramp -- listed only for a layer that CAN hold it (a default run never does)
+    "dori_monitor": ("BİRLEŞİK DORI · İZLEME DAHİL", (
+        (ZONE_IDENT, ZONE_IDENT + 1, _rgba("dori-identify", 185), "Teşhis ≥ 250 px/m"),
+        (ZONE_RECOG, ZONE_RECOG + 1, _rgba("dori-recognize", 175), "Tanıma ≥ 125 px/m"),
+        (ZONE_OBSERVE, ZONE_OBSERVE + 1, _rgba("dori-observe", 190), "Gözlem ≥ 62,5 px/m"),
+        (ZONE_DETECT, ZONE_DETECT + 1, _rgba("dori-detect", 215), "Algılama ≥ 25 px/m"),
+        (ZONE_MONITOR, ZONE_MONITOR + 1, _rgba("dori-monitor", 200), "İzleme ≥ 12,5 px/m"),
         (ZONE_OCCLUDED, ZONE_OCCLUDED + 1, _rgba("bg-0", 200), "Kör nokta (arazi engeli)"))),
     # thermal camera: the same codes on Johnson thresholds (viewshed_3d.zone_codes)
     "dori_thermal": ("TERMAL · JOHNSON (insan)", (
@@ -246,15 +255,15 @@ def zone_overlay(dori_grid: np.ndarray, size: Tuple[int, int], *, mode: str = "d
     """A ZONE_* (or any banded) grid as a smoothed RGBA image of ``size``."""
     g = np.flipud(dori_grid)
     ov = np.zeros(g.shape + (4,), dtype=np.uint8)
-    paint_bands(ov, g, LAYER_BANDS[mode][1], mask=True if mode in ("dori", "dori_thermal", "envelope", "fused", "overlap", "approach", "city", "streets") else None)
+    paint_bands(ov, g, LAYER_BANDS[mode][1], mask=True if mode in ("dori", "dori_monitor", "dori_thermal", "envelope", "fused", "overlap", "approach", "city", "streets") else None)
     return smooth_overlay(ov, size)
 
 
 def single_view_overlay(terrain: TerrainData, dori_grid: np.ndarray, size: Tuple[int, int], *,
                         cam_x_m: float, cam_y_m: float, pan_deg: float, hfov_deg: float,
-                        max_range_m: float) -> Image.Image:
+                        max_range_m: float, mode: str = "dori") -> Image.Image:
     """One camera's DORI fan, smoothed and cut to its optical cone."""
-    img = zone_overlay(dori_grid, size)
+    img = zone_overlay(dori_grid, size, mode=mode)
     sx = size[0] / terrain.width_m
     sy = size[1] / terrain.height_m
     apex = ((cam_x_m - terrain.origin_x) * sx, (terrain.height_m - (cam_y_m - terrain.origin_y)) * sy)

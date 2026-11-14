@@ -42,6 +42,7 @@ from .terrain_loader import TerrainData
 from .viewshed_3d import (
     _K_REFRACT,
     _R_EARTH,
+    ZONE_DETECT,
     current_target_height,
     march_rays,
     ray_chunk,
@@ -50,6 +51,7 @@ from .viewshed_3d import (
     view_limits,
     zone_codes,
 )
+
 
 _MAX_RAYS = 16384
 
@@ -208,11 +210,17 @@ class ViewLayers:
 def view_layers(mv: MountVisibility, camera: CameraConfig, *, tilt_deg: float,
                 focal_mm: Optional[float] = None, lens_mode: str = "min",
                 max_range_m: Optional[float] = None, visibility_km: float = 40.0,
-                weather: str = "") -> ViewLayers:
-    """Pan-independent part of a view (see view_mask for the full rules)."""
+                weather: str = "", monitor_floor: bool = False) -> ViewLayers:
+    """Pan-independent part of a view (see view_mask for the full rules).
+
+    ``monitor_floor`` (default False): the Monitoring floor of
+    ``viewshed_3d.view_limits`` -- the raster itself does not depend on it
+    (it is the floor of the VIEW, applied here), but the mount's
+    ``max_range_m`` must reach the monitor distance or the view is
+    ``truncated``."""
     focal = view_focal_mm(camera, lens_mode, focal_mm)
     lim = view_limits(camera, focal, mv.max_range_m if max_range_m is None else max_range_m,
-                      visibility_km, weather)
+                      visibility_km, weather, monitor_floor)
     optics = lim.optics
     eff = min(lim.effective_max_range_m, mv.max_range_m)
     v_lo = math.radians(tilt_deg - optics.vfov_deg / 2.0)
@@ -222,11 +230,23 @@ def view_layers(mv: MountVisibility, camera: CameraConfig, *, tilt_deg: float,
     framed = (mv.written & (ppm >= lim.min_detect_ppm)
               & (mv.sample_elev_rad >= v_lo) & (mv.sample_elev_rad <= v_hi))
     visible = framed & mv.los_clear
-    zone = zone_codes(visible, framed, ppm, lim.thermal)
+    zone = zone_codes(visible, framed, ppm, lim.thermal, lim.monitor)
     in_frame = ((mv.center_dist_m <= eff) & (mv.center_dist_m > 1.0)
                 & (mv.center_elev_rad >= v_lo) & (mv.center_elev_rad <= v_hi))
+    visible = visible & in_frame
+    zone = np.where(in_frame, zone, 0)
+    if lim.monitor:
+        # The monitor floor EXTENDS the default view (as calculate_3d_viewshed does): a cell
+        # at Detection or better that the default view's own range does not reach stays
+        # uncoded, so the >= ZONE_DETECT set is the default view's (the longer monitor range
+        # would otherwise admit cells whose centre lies past it).
+        eff_def = min(view_limits(camera, focal, mv.max_range_m if max_range_m is None else max_range_m,
+                                  visibility_km, weather).effective_max_range_m, mv.max_range_m)
+        beyond = (mv.center_dist_m > eff_def) & (zone >= ZONE_DETECT)
+        visible = visible & ~beyond
+        zone = np.where(beyond, 0, zone)
     return ViewLayers(
-        visible=visible & in_frame, zone=np.where(in_frame, zone, 0), ppm=ppm,
+        visible=visible, zone=zone, ppm=ppm,
         in_frame=in_frame, center_az_rad=mv.center_az_rad, focal_mm=focal,
         hfov_deg=optics.hfov_deg, vfov_deg=optics.vfov_deg, effective_max_range_m=eff,
         truncated=lim.effective_max_range_m > mv.max_range_m,
@@ -243,7 +263,7 @@ def embed(mv: MountVisibility, window_array: np.ndarray, dtype) -> np.ndarray:
 def view_mask(mv: MountVisibility, camera: CameraConfig, *, pan_deg: float, tilt_deg: float,
               focal_mm: Optional[float] = None, lens_mode: str = "min",
               max_range_m: Optional[float] = None, visibility_km: float = 40.0,
-              weather: str = "") -> ViewGrids:
+              weather: str = "", monitor_floor: bool = False) -> ViewGrids:
     """Visibility / DORI / px/m of one view, from the cached raster.
 
     Mirrors calculate_3d_viewshed: a cell is visible when its recorded sample
@@ -252,7 +272,8 @@ def view_mask(mv: MountVisibility, camera: CameraConfig, *, pan_deg: float, tilt
     cone, the vertical frame and the (optical / atmospheric) effective range.
     """
     lay = view_layers(mv, camera, tilt_deg=tilt_deg, focal_mm=focal_mm, lens_mode=lens_mode,
-                      max_range_m=max_range_m, visibility_km=visibility_km, weather=weather)
+                      max_range_m=max_range_m, visibility_km=visibility_km, weather=weather,
+                      monitor_floor=monitor_floor)
     pan = math.radians(pan_deg)
     d_az = np.arctan2(np.sin(lay.center_az_rad - pan), np.cos(lay.center_az_rad - pan))
     in_cone = np.abs(d_az) <= math.radians(lay.hfov_deg / 2.0)

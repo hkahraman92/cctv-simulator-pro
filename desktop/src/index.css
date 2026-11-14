@@ -42,6 +42,7 @@
   --color-dori-recognize: #4cd7f6;
   --color-dori-observe: #2b8fb8;
   --color-dori-detect: #1f5f86;
+  --color-dori-monitor: #17435f;
 }
 
 /* "Ofis" (light) theme: the same token names, the classic app's light values (design_tokens.py). */
@@ -74,6 +75,7 @@
   --color-dori-recognize: #2467a6;
   --color-dori-observe: #4f8fc7;
   --color-dori-detect: #8db9e0;
+  --color-dori-monitor: #c4dbef;
 }
 
 /* Markers drawn on satellite / relief pictures keep the dark theme's bright values in both
@@ -135,4 +137,7 @@ input[type="range"] {
   background: var(--color-bg-6);
   border-radius: 5px;
   border: 2px solid var(--color-bg-1);
+}
+::-webkit-scrollbar-corner {
+  background: var(--color-bg-1);
 }

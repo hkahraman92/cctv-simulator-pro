@@ -255,7 +255,9 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
     ``sites_fn(step_m)`` replaces the boundary / grid pole sites (e.g. points
     along the streets, where lamp posts stand)."""
     from . import surface_obstacles as obs
+    from .viewshed_3d import reject_monitor_level
 
+    reject_monitor_level(level, "alan planlayıcısı")
     ring = _ring(polygon)
     if len(ring) < 4:
         raise ValueError("Alan için en az üç köşe gerekir.")

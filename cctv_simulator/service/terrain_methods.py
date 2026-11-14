@@ -350,12 +350,15 @@ def _overlay_size(t, max_px: int) -> Tuple[int, int]:
 
 
 def _zone_areas(dori: np.ndarray, cell_area: float, mask: Optional[np.ndarray] = None) -> Dict[str, float]:
-    from ..viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_OBSERVE, ZONE_OCCLUDED, ZONE_RECOG
+    from ..viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_MONITOR, ZONE_OBSERVE, ZONE_OCCLUDED, ZONE_RECOG
 
     m = np.ones(dori.shape, bool) if mask is None else mask
-    return {name: float(((dori == z) & m).sum() * cell_area) for name, z in (
+    out = {name: float(((dori == z) & m).sum() * cell_area) for name, z in (
         ("identify", ZONE_IDENT), ("recognize", ZONE_RECOG), ("observe", ZONE_OBSERVE),
         ("detect", ZONE_DETECT), ("occluded", ZONE_OCCLUDED))}
+    if (dori == ZONE_MONITOR).any():       # only a monitor-floor run has such cells; default output unchanged
+        out["monitor"] = float(((dori == ZONE_MONITOR) & m).sum() * cell_area)
+    return out
 
 
 # ── analyses ─────────────────────────────────────────────────────────────
@@ -363,10 +366,13 @@ def viewshed_single(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """One camera on the terrain: authoritative viewshed + DORI map + sight profile."""
     from .. import map_render, surface_obstacles as obs
     from ..atmosphere import WEATHER_PRESETS, band_for_camera, usable_range_m
-    from ..viewshed_3d import calculate_3d_viewshed, is_thermal_camera
+    from ..viewshed_3d import ZONE_MONITOR, calculate_3d_viewshed, is_thermal_camera
 
     entry, t = _terrain_of(params)
     cam = _camera_from(params.get("camera", {}))
+    # "level": "monitor" asks for the Monitoring floor (12.5 px/m, visible cameras); any other
+    # named level keeps today's Detection floor; an unknown name or a thermal monitor is an error
+    monitor = params.get("level") is not None and _level_of(params, cam, monitor_ok=True) == ZONE_MONITOR
     x = _num(params, "x_m"); y = _num(params, "y_m")
     mast = _num(params, "mast_m", 6.0, lo=0.5, hi=200)
     pan = _num(params, "pan_deg", 0.0) % 360.0
@@ -382,11 +388,12 @@ def viewshed_single(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         focal = _num(params, "focal_mm", lo=cam.focal_min_mm, hi=cam.focal_max_mm)
     res = calculate_3d_viewshed(t, x, y, mast, cam, lens_mode=lens_mode, pan_deg=pan, tilt_deg=tilt,
                                 max_range_m=rng, visibility_km=vis, weather=weather,
-                                focal_mm_override=focal)
+                                focal_mm_override=focal, monitor_floor=monitor)
     entry.results["single"] = res
     max_px = int(_num(params, "max_px", _DISPLAY_PX, lo=200, hi=4096))
     overlay = map_render.single_view_overlay(t, res.dori_grid, _overlay_size(t, max_px), cam_x_m=x, cam_y_m=y,
-                                             pan_deg=pan, hfov_deg=res.hfov_deg, max_range_m=res.max_range_m)
+                                             pan_deg=pan, hfov_deg=res.hfov_deg, max_range_m=res.max_range_m,
+                                             mode="dori_monitor" if monitor else "dori")
     step = max(1, len(res.profile_dists_m) // 400)
     warnings = []
     blocked = obs.mount_obstruction_m(t, x, y, mast)
@@ -423,8 +430,9 @@ def viewshed_single(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
                     "ray_m": res.profile_ray_elev_m[::step].tolist(),
                     "visible": res.profile_is_visible[::step].astype(bool).tolist()},
         "overlay": _image(overlay, max_px=max_px),
-        "legend": map_render.legend("dori_thermal" if is_thermal_camera(cam) else "dori")[1],
-        "thermal": is_thermal_camera(cam),
+        "legend": map_render.legend("dori_thermal" if is_thermal_camera(cam)
+                                    else "dori_monitor" if monitor else "dori")[1],
+        "thermal": is_thermal_camera(cam), "monitor_floor": monitor,
         "warnings": warnings,
         "weather_range_m": weather_range, "notes": notes,
     }
@@ -517,8 +525,9 @@ def _ptz_main_warning(cam) -> List[str]:
 
 
 def _levels_table() -> Dict[str, int]:
-    from ..viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_OBSERVE, ZONE_RECOG
-    return {"detect": ZONE_DETECT, "observe": ZONE_OBSERVE, "recognize": ZONE_RECOG, "identify": ZONE_IDENT}
+    from ..viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_MONITOR, ZONE_OBSERVE, ZONE_RECOG
+    return {"monitor": ZONE_MONITOR, "detect": ZONE_DETECT, "observe": ZONE_OBSERVE, "recognize": ZONE_RECOG,
+            "identify": ZONE_IDENT}
 
 
 def perimeter_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
@@ -539,22 +548,32 @@ def perimeter_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     return {**_plan_json(plan), "warnings": _ptz_main_warning(cam)}
 
 
-_LEVEL_LABEL = {"detect": "Algılama", "observe": "Gözlem", "recognize": "Tanıma", "identify": "Teşhis"}
+_LEVEL_LABEL = {"monitor": "İzleme", "detect": "Algılama", "observe": "Gözlem", "recognize": "Tanıma",
+                "identify": "Teşhis"}
 # A thermal is classed with Johnson: the same three zone codes mean other things, and there is no fourth.
 _LEVEL_LABEL_THERMAL = {"detect": "Johnson algılama", "observe": "Johnson tanıma", "recognize": "Johnson teşhis"}
+_MONITOR_UNSUPPORTED = ("İzleme (12,5 px/m) seviyesi bu işlem için henüz desteklenmiyor; Algılama ya da üst "
+                        "bir seviye seçin.")
 _THERMAL_NO_IDENT = ("Termal kamerada Teşhis (yüz, 250 px/m) seviyesi yoktur; Johnson algılama, tanıma ya da "
                      "teşhis seviyesini seçin.")
 
 
-def _level_of(params: Dict[str, Any], cam, default: str = "detect") -> int:
-    """DORI zone named by ``params["level"]``; a thermal camera has no fourth level."""
-    from ..viewshed_3d import ZONE_IDENT, is_thermal_camera
+def _level_of(params: Dict[str, Any], cam, default: str = "detect", *, monitor_ok: bool = False) -> int:
+    """DORI zone named by ``params["level"]``; a thermal camera has no fourth level and
+    no monitoring level. ``monitor_ok``: the method carries the monitor floor through
+    (the ones that do not reject "monitor" instead of answering at the Detection floor)."""
+    from ..viewshed_3d import THERMAL_NO_MONITOR, ZONE_IDENT, ZONE_MONITOR, is_thermal_camera
 
     level = _levels_table().get(params.get("level", default))
     if level is None:
-        raise RpcError(INVALID_PARAMS, "'level' detect, observe, recognize ya da identify olmalı.")
+        raise RpcError(INVALID_PARAMS, "'level' monitor, detect, observe, recognize ya da identify olmalı.")
     if level == ZONE_IDENT and is_thermal_camera(cam):
         raise RpcError(APP_ERROR, _THERMAL_NO_IDENT)
+    if level == ZONE_MONITOR:
+        if is_thermal_camera(cam):
+            raise RpcError(APP_ERROR, THERMAL_NO_MONITOR)
+        if not monitor_ok:
+            raise RpcError(APP_ERROR, _MONITOR_UNSUPPORTED)
     return level
 
 
@@ -566,13 +585,13 @@ def _target_level(params: Dict[str, Any], plan, kw: Dict[str, Any], cam=None, pt
     for a visible camera, Johnson for a thermal. A PTZ patrol is judged by DORI
     zone only (no px/m grid), at the lowest level OF ITS OWN SCALE that is at
     least the target -- never in its favour."""
-    from ..viewshed_3d import ZONE_DETECT, ZONE_IDENT, is_thermal_camera, zone_ppm
+    from ..viewshed_3d import THERMAL_NO_MONITOR, ZONE_DETECT, ZONE_IDENT, ZONE_MONITOR, is_thermal_camera, zone_ppm
 
     thermal = cam is not None and is_thermal_camera(cam)
     ptz_thermal = is_thermal_camera(ptz_cam) if ptz_cam is not None else thermal
     labels = _LEVEL_LABEL_THERMAL if thermal else _LEVEL_LABEL
     levels = _levels_table()
-    zones = sorted(levels.values())
+    zones = sorted(z for z in levels.values() if z != ZONE_MONITOR)    # a PTZ patrol has no monitor floor
 
     def ptz_zone(ppm: float) -> int:
         return max(next((z for z in zones if zone_ppm(z, ptz_thermal) >= ppm - 1e-9), ZONE_IDENT), ZONE_DETECT)
@@ -588,7 +607,9 @@ def _target_level(params: Dict[str, Any], plan, kw: Dict[str, Any], cam=None, pt
         ppm = float(plan.target_ppm)
         return f"{ppm:g} px/m".replace(".", ","), ppm, ptz_zone(ppm)
     if want not in levels:
-        raise RpcError(INVALID_PARAMS, "'level' plan, detect, observe, recognize ya da identify olmalı.")
+        raise RpcError(INVALID_PARAMS, "'level' plan, monitor, detect, observe, recognize ya da identify olmalı.")
+    if want == "monitor" and thermal:
+        raise RpcError(APP_ERROR, THERMAL_NO_MONITOR)
     if want not in labels:
         raise RpcError(APP_ERROR, _THERMAL_NO_IDENT)
     ppm = zone_ppm(levels[want], thermal)
@@ -605,7 +626,8 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     patrol reaches it), the target split, and the fence line itself."""
     from .. import map_render
     from ..focal_optimizer import band_area, fence_roi
-    from ..viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_OBSERVE, ZONE_RECOG
+    from ..viewshed_3d import PPM_DETECT, ZONE_DETECT, ZONE_IDENT, ZONE_MONITOR, ZONE_OBSERVE, ZONE_RECOG, \
+        is_thermal_camera
 
     entry, t = _terrain_of(params)
     if "plan" not in entry.results:
@@ -618,16 +640,25 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     roi = _plan_roi(t, fence, kw, band, inside)
     ptz_cam = kw.get("ptz_camera")
     n_ptz = len(plan.ptz_cameras) if ptz_cam is not None else 0
+    # The requirement this report judges (named level, or the plan's own target). Under
+    # Detection (25 px/m) the report needs the Monitoring floor, else those cells are never
+    # in the engine's grids at all; a thermal camera has no such level (its target is Johnson).
+    label, ppm, zone = _target_level(params, plan, kw, cam, ptz_cam)
+    monitor_run = not is_thermal_camera(cam) and ppm < PPM_DETECT - 1e-9
     ctx.progress(0, 1 + n_ptz, f"{len(plan.placed_cameras)} kamera hesaplanıyor")
     # Each pole is evaluated out to its Detection reach: the plan caps it at
     # the fence target (e.g. 40 px/m), which would cut the lower DORI bands.
-    mv, _ = band_area(t, plan, cam, roi, ZONE_DETECT, visibility_km=kw["visibility_km"], weather=kw["weather"])
+    mv, _ = band_area(t, plan, cam, roi, ZONE_MONITOR if monitor_run else ZONE_DETECT,
+                      visibility_km=kw["visibility_km"], weather=kw["weather"])
     entry.results["multi"] = mv
     cell = t.cell_size_m ** 2
     roi_area = float(roi.sum() * cell)
     named = (("identify", ZONE_IDENT), ("recognize", ZONE_RECOG), ("observe", ZONE_OBSERVE), ("detect", ZONE_DETECT))
     band_share = {name: (float(((mv.dori_grid >= z) & roi).sum() * cell) / roi_area if roi_area else 0.0)
                   for name, z in named}
+    if monitor_run:        # only from a monitor-floor run: a default run has no such cells to count
+        band_share["monitor"] = (float(((mv.dori_grid >= ZONE_MONITOR) & roi).sum() * cell) / roi_area
+                                 if roi_area else 0.0)
     entry.results["band_share"] = (band, band_share)
 
     # PTZ patrols: intermittent coverage on top of the fixed (continuous) one
@@ -666,7 +697,6 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         band_share_reach = {name: (float(((reach_zone >= z) & ~(mv.dori_grid >= z) & ~(ptz_zone >= z) & roi).sum()
                                          * cell) / roi_area if roi_area else 0.0) for name, z in named}
 
-    label, ppm, zone = _target_level(params, plan, kw, cam, ptz_cam)
     held = (mv.ppm_grid >= ppm - 1e-6) & mv.visibility_mask
     ptz_only = ~held & (ptz_zone >= zone)
     seen_any = mv.visibility_mask | (ptz_zone >= ZONE_DETECT)
@@ -692,11 +722,13 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
             fence_line = {"held": share,
                           "with_ptz": float(((held | ptz_only) & line).sum()) / n,
                           "detect": float(((mv.dori_grid >= ZONE_DETECT) & line).sum()) / n,
+                          **({"monitor": float(((mv.dori_grid >= ZONE_MONITOR) & line).sum()) / n}
+                             if monitor_run else {}),
                           # metres of fence below THIS target (the plan's own gap list is at the plan target)
                           "uncovered_m": (1.0 - share) * float(plan.total_fence_length_m)}
     # what this report scored, for the plan conformity statement (same masks, no second definition)
     entry.results["coverage_masks"] = {"roi": roi, "line": line, "ptz_zone": ptz_zone if n_ptz else None,
-                                       "band": band, "inside": inside}
+                                       "band": band, "inside": inside, "monitor": monitor_run}
 
     max_px = int(_num(params, "max_px", _DISPLAY_PX, lo=200, hi=4096))
     layer = params.get("layer", "dori")
@@ -707,9 +739,11 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         overlay = map_render.zone_overlay(cls, size, mode="target")
     else:
         grid = mv.dori_grid if layer == "dori" else mv.seen_count_grid
-        overlay = map_render.dim_outside(map_render.zone_overlay(grid, size, mode=layer), roi)
-    from ..viewshed_3d import is_thermal_camera
-    legend = map_render.legend("dori_thermal" if layer == "dori" and is_thermal_camera(cam) else layer)[1]
+        overlay = map_render.dim_outside(map_render.zone_overlay(
+            grid, size, mode="dori_monitor" if layer == "dori" and monitor_run else layer), roi)
+    # the Monitoring row only where this layer can hold it (a monitor-floor run)
+    legend = map_render.legend("dori_thermal" if layer == "dori" and is_thermal_camera(cam)
+                               else "dori_monitor" if layer == "dori" and monitor_run else layer)[1]
     if layer == "target":
         legend = [(f"{txt} — {label}" if i == 0 else txt, rgba) for i, (txt, rgba) in enumerate(legend)]
         if not n_ptz:
@@ -725,7 +759,7 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         "roi_kind": "area" if is_area else "side" if kw.get("line_mode") == "border" else "band",
         "watch_side": kw.get("watch_side"),
         "overlay": _image(overlay, max_px=max_px), "legend": legend,
-        "measured": bool(t.is_measured),
+        "measured": bool(t.is_measured), "monitor_floor": monitor_run,
     }
 
 
@@ -737,7 +771,7 @@ def perimeter_minimize_poles(params: Dict[str, Any], ctx: Context) -> Dict[str, 
     cam = _camera_from(params.get("camera", {}))
     fence = _fence(params)
     kw = _plan_kwargs(params)
-    level = _level_of(params, cam)
+    level = _level_of(params, cam, monitor_ok=True)
     goal = _num(params, "goal_frac", 0.95, lo=0.05, hi=1.0)
     band, inside = _band_params(params)
     try:
@@ -777,7 +811,7 @@ def perimeter_optimize(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     if "plan" not in entry.results:
         raise RpcError(APP_ERROR, "Önce bir çit planı oluşturun.")
     plan, cam, kw, fence = entry.results["plan"]
-    level = _level_of(params, cam)
+    level = _level_of(params, cam, monitor_ok=True)
     is_area = kw.get("line_mode") == "area"
     # A facility / highway pole watches the fence LINE; the band score alone may re-aim it off the
     # line. A border pole looks across the line by design and an area plan has no line to keep.
@@ -972,7 +1006,7 @@ def city_analyse(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     from .. import map_render
     from ..city import CLASS_LABEL, analyse_city
     from ..focal_optimizer import band_area
-    from ..viewshed_3d import ZONE_DETECT
+    from ..viewshed_3d import ZONE_DETECT, ZONE_MONITOR
 
     entry, t = _terrain_of(params)
     if entry.city is None:
@@ -985,7 +1019,9 @@ def city_analyse(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     levels = _levels_table()
     level = levels.get(params.get("level", "observe"))
     if level is None:
-        raise RpcError(INVALID_PARAMS, "'level' detect, observe, recognize ya da identify olmalı.")
+        raise RpcError(INVALID_PARAMS, "'level' monitor, detect, observe, recognize ya da identify olmalı.")
+    if level == ZONE_MONITOR:
+        raise RpcError(APP_ERROR, _MONITOR_UNSUPPORTED)
     ctx.progress(0, 2, f"{len(plan.placed_cameras)} kamera (otoriter motor)")
     mv, _ = band_area(t, plan, cam, None, ZONE_DETECT, visibility_km=kw["visibility_km"], weather=kw["weather"])
     ctx.progress(1, 2, "Sokak, yüz ve gizlilik")
@@ -1032,12 +1068,12 @@ def focal_sweep(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     the estimate found a cell or two at a level the mast cannot really reach."""
     from ..atmosphere import WEATHER_PRESETS
     from ..focal_optimizer import sweep_focals
-    from ..viewshed_3d import (ZONE_DETECT, ZONE_IDENT, ZONE_OBSERVE, ZONE_RECOG, calculate_3d_viewshed,
-                               is_thermal_camera)
+    from ..viewshed_3d import (ZONE_DETECT, ZONE_IDENT, ZONE_MONITOR, ZONE_OBSERVE, ZONE_RECOG,
+                               calculate_3d_viewshed, is_thermal_camera)
 
     entry, t = _terrain_of(params)
     cam = _camera_from(params.get("camera", {}))
-    level = _level_of(params, cam, "recognize")
+    level = _level_of(params, cam, "recognize", monitor_ok=True)
     weather = str(params.get("weather", "")) if params.get("weather") in WEATHER_PRESETS else ""
     vis = WEATHER_PRESETS.get(weather, 40.0)
     x = _num(params, "x_m"); y = _num(params, "y_m")
@@ -1049,7 +1085,8 @@ def focal_sweep(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
                        level=level, objective=params.get("objective", "area"),
                        n_focals=int(_num(params, "n_focals", 12, lo=2, hi=40)),
                        max_range_m=rng, visibility_km=vis, weather=weather)
-    names = {ZONE_IDENT: "identify", ZONE_RECOG: "recognize", ZONE_OBSERVE: "observe", ZONE_DETECT: "detect"}
+    names = {ZONE_IDENT: "identify", ZONE_RECOG: "recognize", ZONE_OBSERVE: "observe", ZONE_DETECT: "detect",
+             ZONE_MONITOR: "monitor"}
     cell_area = t.cell_size_m ** 2
 
     def choice(c):
@@ -1059,7 +1096,7 @@ def focal_sweep(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     def engine(focal: float, tilt: float, pan_deg: float) -> Dict[str, Any]:
         res = calculate_3d_viewshed(t, x, y, mast, cam, pan_deg=pan_deg, tilt_deg=tilt, max_range_m=rep.reach_m,
                                     visibility_km=vis, weather=weather, focal_mm_override=focal,
-                                    with_profile=False)
+                                    with_profile=False, monitor_floor=level == ZONE_MONITOR)
         return {"focal_mm": focal, "tilt_deg": tilt, "pan_deg": pan_deg,
                 "area_m2": float((res.dori_grid >= level).sum()) * cell_area,
                 "visible_area_m2": float(res.visible_area_m2), "max_los_reach_m": float(res.max_los_reach_m)}

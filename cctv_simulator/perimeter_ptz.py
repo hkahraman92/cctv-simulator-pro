@@ -240,6 +240,9 @@ def optimize_patrols(terrain: TerrainData, plan: PerimeterPlanResult, ptz_camera
 
     from .calculations import camera_optics
     from .focal_optimizer import auto_tilts, focal_steps
+    from .viewshed_3d import reject_monitor_level
+
+    reject_monitor_level(level, "PTZ devriye araması")
     from .mount_visibility import mount_visibility, view_layers
     from .perimeter_planner import dead_zone_for
     from .ptz_schedule import sweep_timing

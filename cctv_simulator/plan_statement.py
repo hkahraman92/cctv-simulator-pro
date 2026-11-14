@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from .viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_OBSERVE, ZONE_RECOG, is_thermal_camera, zone_ppm
+from .viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_MONITOR, ZONE_OBSERVE, ZONE_RECOG, is_thermal_camera, zone_ppm
 
 CLAUSE = "EN 62676-4 §6.2 / Tablo B.1"
 CLAUSE_THERMAL = "Johnson ölçütü (EN 62676-4 DORI termal görüntüye uygulanmaz)"
@@ -26,17 +26,24 @@ _LEVELS = ((ZONE_DETECT, "detect", "Algılama"), (ZONE_OBSERVE, "observe", "Göz
            (ZONE_RECOG, "recognize", "Tanıma"), (ZONE_IDENT, "identify", "Teşhis"))
 _LEVELS_THERMAL = ((ZONE_DETECT, "detect", "Johnson algılama"), (ZONE_OBSERVE, "observe", "Johnson tanıma"),
                    (ZONE_RECOG, "recognize", "Johnson teşhis"))
+_LEVEL_MONITOR = (ZONE_MONITOR, "monitor", "İzleme")
 VERDICT_OK, VERDICT_PARTIAL, VERDICT_FAIL = "Uygun", "Kısmi", "Uygun değil"
 
 
-def levels_for(camera) -> tuple:
-    return _LEVELS_THERMAL if is_thermal_camera(camera) else _LEVELS
+def levels_for(camera, monitor: bool = False) -> tuple:
+    """The statement's levels. Monitoring (visible cameras only) is listed ONLY
+    for a plan scored by a monitor-floor run: a default run has no cell coded
+    ZONE_MONITOR, so a row for it would claim a measurement nobody made."""
+    if is_thermal_camera(camera):
+        return _LEVELS_THERMAL
+    return (_LEVEL_MONITOR,) + _LEVELS if monitor else _LEVELS
 
 
-def declared_level(camera, target_ppm: float, area_level: Optional[int] = None) -> int:
+def declared_level(camera, target_ppm: float, area_level: Optional[int] = None, monitor: bool = False) -> int:
     """The level the plan was built to hold: an area plan's own level, else the
-    highest level whose threshold the fence target reaches (40 px/m -> Detection)."""
-    zones = [z for z, _k, _l in levels_for(camera)]
+    highest level whose threshold the fence target reaches (40 px/m -> Detection;
+    12.5 px/m -> Monitoring, only from a monitor-floor run)."""
+    zones = [z for z, _k, _l in levels_for(camera, monitor)]
     if area_level in zones:
         return int(area_level)
     thermal = is_thermal_camera(camera)
@@ -54,7 +61,8 @@ def _verdict(continuous: float, patrol: float, goal: float) -> str:
 
 def plan_conformity(plan, camera, mv, zones: List[Dict[str, Any]], *, cell_size_m: float,
                     ptz_zone: Optional[np.ndarray] = None, goal_frac: float = 0.95,
-                    area_level: Optional[int] = None, assist: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                    area_level: Optional[int] = None, assist: Optional[Dict[str, Any]] = None,
+                    monitor: bool = False) -> Dict[str, Any]:
     """Rows of the statement.
 
     ``zones``: ``[{"name", "mask", "kind": "area" | "line", "size": m2 or m}]``
@@ -66,9 +74,12 @@ def plan_conformity(plan, camera, mv, zones: List[Dict[str, Any]], *, cell_size_
     the target, "target_ppm", "max_s"}`` adds the PTZ-ASSISTED requirement per
     area zone: the fixed cameras detect continuously AND a PTZ identifies
     within ``max_s`` -- two different things from patrol coverage, which is
-    whatever the PTZ happens to pass over."""
+    whatever the PTZ happens to pass over.
+
+    ``monitor``: ``mv`` came from a monitor-floor run (visible cameras): adds the
+    Monitoring row and lets the plan declare it."""
     thermal = is_thermal_camera(camera)
-    declared = declared_level(camera, float(plan.target_ppm), area_level)
+    declared = declared_level(camera, float(plan.target_ppm), area_level, monitor)
     out_zones = []
     worst = VERDICT_OK
     order = {VERDICT_OK: 0, VERDICT_PARTIAL: 1, VERDICT_FAIL: 2}
@@ -76,7 +87,7 @@ def plan_conformity(plan, camera, mv, zones: List[Dict[str, Any]], *, cell_size_
         mask = zn["mask"]
         n = int(mask.sum())
         rows = []
-        for z, key, label in levels_for(camera):
+        for z, key, label in levels_for(camera, monitor):
             fixed = (mv.dori_grid >= z) & mask
             cont = float(fixed.sum()) / n if n else 0.0
             patrol = float(((ptz_zone >= z) & ~(mv.dori_grid >= z) & mask).sum()) / n \
@@ -104,9 +115,9 @@ def plan_conformity(plan, camera, mv, zones: List[Dict[str, Any]], *, cell_size_
             if verdict == VERDICT_FAIL:
                 worst_a = VERDICT_FAIL
         assisted = {"max_s": max_s, "target_ppm": float(assist["target_ppm"]), "zones": rows_a, "verdict": worst_a}
-    name = next(lbl for z, _k, lbl in levels_for(camera) if z == declared)
+    name = next(lbl for z, _k, lbl in levels_for(camera, monitor) if z == declared)
     return {"zones": out_zones, "verdict": worst, "goal_frac": goal_frac, "thermal": thermal,
-            "declared_level": next(k for z, k, _l in levels_for(camera) if z == declared), "declared_label": name,
+            "declared_level": next(k for z, k, _l in levels_for(camera, monitor) if z == declared), "declared_label": name,
             "declared_ppm": zone_ppm(declared, thermal), "clause": CLAUSE_THERMAL if thermal else CLAUSE,
             "has_patrol": ptz_zone is not None, "cell_size_m": cell_size_m, "assist": assisted}
 

@@ -12,8 +12,8 @@ from .terrain_methods import _num, _plan_json, _terrain_of
 
 
 def _levels():
-    from ..viewshed_3d import ZONE_DETECT, ZONE_IDENT, ZONE_OBSERVE, ZONE_RECOG
-    return {"detect": ZONE_DETECT, "observe": ZONE_OBSERVE, "recognize": ZONE_RECOG, "identify": ZONE_IDENT}
+    from .terrain_methods import _levels_table      # the one level table (names -> ZONE_*)
+    return _levels_table()
 
 
 def _record(name: str):
@@ -101,7 +101,7 @@ def compare_models(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         cands.append((n, cam, lib[n]))
     level = _levels().get(params.get("level", "detect"))
     if level is None:
-        raise RpcError(INVALID_PARAMS, "'level' detect, observe, recognize ya da identify olmalı.")
+        raise RpcError(INVALID_PARAMS, "'level' monitor, detect, observe, recognize ya da identify olmalı.")
     prices = params.get("model_prices") or {}
     if not isinstance(prices, dict):
         raise RpcError(INVALID_PARAMS, "'model_prices' nesne olmalı.")
