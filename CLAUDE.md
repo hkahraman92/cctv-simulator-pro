@@ -994,6 +994,32 @@ metinleri sarılı; gövde metinlerinin çoğu hâlâ Türkçe-yalnız, `t()` sa
 `en.json`'a eklenir. PyInstaller `cctv_simulator/` dizinini komple veri olarak
 aldığı için `locale/*.json` otomatik paketlenir.
 
+### Masaüstü kabuğunda i18n (`desktop/src/core/i18n.tsx`)
+
+Aynı fikir: **Türkçe metin anahtardır**. `t("Kaydet")` İngilizcede "Save", Türkçede (ve çeviri
+eksikse) anahtarın kendisini döndürür; sarmalamak Türkçeyi bozamaz. `{ad}` yer tutucuları iki
+dilde de doldurulur (`t("… {n} …", { n })`, çeviri parçalarını asla birleştirme). Çoğul için
+`tn(n, "{n} direk")`: İngilizce tabloda `"{n} direk#1"` tekil biçimdir. Tablolar
+`src/locale/en/<alan>.json` (sayfa başına bir dosya, `common.json` ortak sözcükler, `shell.json`
+kabuk); aynı anahtar farklı çevirilerle iki dosyada olamaz. Terim sözlüğü ve kurallar
+`src/locale/GLOSSARY.md`.
+
+- **Canlı geçiş:** dil `prefs.lang`'dır (Ayarlar'da "Dil / Language"); `Shell` `useLang()` çağırır,
+  tüm sayfa ağacı yeniden çizilir, yeniden başlatma yok. Render'da düz `t()` yeter; modül düzeyi
+  sabit / `useState(t())` / `useMemo` içi `t()` dili dondurur (fonksiyon yap ya da `lang`'ı bağımlılığa ekle).
+- **Sayı biçimi:** `fmt()` (components/ui.tsx) dile uyar (tr: virgül, en: nokta); `numberLocale()`.
+- **Testler:** `i18n.test.ts` (yedek, değişken, çoğul, çakışan anahtar, yer tutucu uyumu);
+  `i18nCoverage.test.ts` kaynağı tarar: `TRANSLATED_FILES`'taki dosyada `t()` dışında Türkçe
+  metin (JSX, prop, string) ya da İngilizce karşılığı olmayan `t()` anahtarı = hata. Metin
+  olmayan Türkçe için satıra `// i18n-ignore`. **Yeni bir .ts/.tsx dosyası `TRANSLATED_FILES`'a ya da
+  tek sözcük gerekçeli `NO_UI_TEXT`'e eklenmeden test geçmez.**
+- **Çevrilmeyenler:** çekirdekten gelen metin (not, uyarı, lejant, hata, rapor / dışa aktarım
+  içeriği; Ayarlar bunu İngilizcede söyler) ve **API değeri olan etiketler**: hava ön ayarı adı
+  (`"Berrak hava"` çekirdekte ada göre eşleşir, projeye yazılır), konum etiketi, seviye / palet /
+  kip kimlikleri, kamera adları (`Kamera N` raporları anahtarlar), proje adı varsayılanı
+  (`NEW_PROJECT_NAME`). Görünen metni çevir, gönderilen değeri değil. Kod bir görüntü metniyle
+  karar vermez: katman `kind: "approach"` ile tanınır, başlığıyla değil.
+
 ## Görüş alanı / kapsama mühendislik raporu
 
 `exporters.export_engineering_report_pdf` / `_csv` — `map_3d_window` "📄 Mühendislik

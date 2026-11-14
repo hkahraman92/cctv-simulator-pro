@@ -44,6 +44,20 @@ export const TRANSLATED_FILES: string[] = [
   "components/charts.tsx",
   "components/LegendSwatch.tsx",
   "components/patrolSpeeds.ts",
+  "core/activeTerrain.tsx",
+  "core/benchApi.ts",
+  "core/clarify.ts",
+  "core/i18n.tsx",
+  "core/levelLabel.ts",
+  "core/pageActive.ts",
+  "core/prefs.ts",
+  "core/specApi.ts",
+  "core/terrainApi.ts",
+  "core/useJob.ts",
+  "core/weather.tsx",
+  "main.tsx",
+  "pages/opticsSeed.ts",
+  "pages/terrainTilt.ts",
 ];
 
 // ---------------------------------------------------------------------------------------------
@@ -66,7 +80,8 @@ export interface ScanResult { violations: Hit[]; keys: { key: string; line: numb
 
 /** What may precede an opening quote for it to be a string (not an apostrophe inside JSX text). */
 const STRING_START = /(?:^|[(,=:[!&|?{;+]|=>|\breturn|\bcase|\bfrom|\bextends|\bdefault|\bof|\bin)\s*$/;
-const REGEX_START = /(?:^|[(,=:[!&|?{};]|\breturn|\btypeof)\s*$/;
+// `}` is deliberately absent: after it a `/` is JSX (`} />`) far more often than a regex
+const REGEX_START = /(?:^|[(,=:[!&|?{;]|\breturn|\btypeof)\s*$/;
 const WRAPPED_T = /(?:^|[^\w.$])t\(\s*$/;
 const WRAPPED_TN = /(?:^|[^\w.$])tn\([^"'`]*,\s*$/;
 
@@ -155,7 +170,7 @@ export function scanSource(src: string): ScanResult {
       }
       if (c === "`") { readTemplate(); continue; }
       if ((c === '"' || c === "'") && STRING_START.test(tail)) { readString(c); continue; }
-      if (c === "/" && REGEX_START.test(tail)) { readRegex(); continue; }
+      if (c === "/" && n !== ">" && REGEX_START.test(tail)) { readRegex(); continue; }
       if (c === "{") depth++;
       if (c === "}") { if (untilBrace && depth === 0) { i++; return; } depth--; }
       emit(c); i++;
@@ -191,6 +206,16 @@ describe("scanner", () => {
     expect(bad.keys.map((k) => k.key)).toEqual(["Kapat", "{n} direk", "Ayarlar"]);
   });
 
+  it("does not mistake JSX self-closing tags for regex literals", () => {
+    const r = scanSource([
+      "const a = <div>{x} /> Kaydet</div>;",
+      "const b = <Icon size={1} /> Vazgeç;",
+      'const c = <p><Foo bar={y} /> {t("Kapat")} çit</p>;',
+    ].join("\n"));
+    expect(r.violations.map((v) => v.line)).toEqual([1, 2, 3]);
+    expect(r.keys.map((k) => k.key)).toEqual(["Kapat"]);
+  });
+
   it("rejects a template literal as a t() key and an ignore comment on the previous line works", () => {
     expect(scanSource("t(`a ${x}`)").violations).toHaveLength(1);
     expect(scanSource('// i18n-ignore\nconst x = "Kaydet";').violations).toHaveLength(0);
@@ -212,4 +237,24 @@ describe("translated files", () => {
       });
     });
   }
+});
+
+/** Source files that hold no user-visible text. Each needs a one-word reason. */
+export const NO_UI_TEXT: Record<string, string> = {
+};
+
+describe("every source file is accounted for", () => {
+  it("is in TRANSLATED_FILES or NO_UI_TEXT (a new file cannot be forgotten)", () => {
+    const all = Object.keys(SOURCES).filter((f) => !/\.d\.ts$/.test(f)).sort();
+    const known = new Set([...TRANSLATED_FILES, ...Object.keys(NO_UI_TEXT)]);
+    expect(all.filter((f) => !known.has(f)), "add to TRANSLATED_FILES (after wrapping its text) or NO_UI_TEXT (with a reason)").toEqual([]);
+  });
+
+  it("lists no file twice and no file that does not exist", () => {
+    const both = TRANSLATED_FILES.filter((f) => f in NO_UI_TEXT);
+    expect(both).toEqual([]);
+    expect([...TRANSLATED_FILES, ...Object.keys(NO_UI_TEXT)].filter((f) => !(f in SOURCES))).toEqual([]);
+    expect(new Set(TRANSLATED_FILES).size).toBe(TRANSLATED_FILES.length);
+    for (const [f, why] of Object.entries(NO_UI_TEXT)) expect(why, f).toMatch(/^\S+$/);
+  });
 });

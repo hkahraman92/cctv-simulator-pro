@@ -2,7 +2,7 @@
 
 import type { CallOptions, RpcClient } from "./rpc";
 
-export type Status = "Uyumlu" | "Kısmi" | "Uyumsuz" | "Bulunamadı";
+export type Status = "Uyumlu" | "Kısmi" | "Uyumsuz" | "Bulunamadı"; // i18n-ignore: status values the core returns
 
 export interface Requirement {
   id: string;

@@ -415,7 +415,7 @@ export interface FocalEnvelope {
 
 /** EN 62676-4 conformity of the plan: zone x level x result, from the coverage report already run */
 export interface PlanStatement {
-  verdict: "Uygun" | "Kısmi" | "Uygun değil";
+  verdict: "Uygun" | "Kısmi" | "Uygun değil"; // i18n-ignore: core values
   goal_frac: number;
   thermal: boolean;
   declared_level: TerrainLevel;
@@ -560,7 +560,7 @@ export type LevelShare = Record<"identify" | "recognize" | "observe" | "detect",
 
 export interface LightCondition {
   when: string; sun_el_deg: number; sun_az_deg: number; moon_el_deg: number; moon_az_deg: number;
-  moon_fraction: number; lux: number; period: "gündüz" | "alacakaranlık" | "gece";
+  moon_fraction: number; lux: number; period: "gündüz" | "alacakaranlık" | "gece"; // i18n-ignore: core values
 }
 export interface NightMode { mode: "termal" | "pasif" | "ir" | "beyaz" | "yok"; range_cap_m: number | null; text: string }
 export interface NightParams {

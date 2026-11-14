@@ -13,6 +13,8 @@ export interface Layer {
   overlay: string;
   legend: LegendRow[];
   title: string;
+  /** stable id for code that must recognise a layer (the title is translated display text) */
+  kind?: "approach";
 }
 
 type Job = ReturnType<typeof useJob>;

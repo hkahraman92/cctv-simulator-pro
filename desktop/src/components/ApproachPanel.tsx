@@ -53,7 +53,7 @@ export function ApproachPanel({ T, job, terrainId, useObstacles, onLayer, onMark
     .then((r) => {
       if (!r) return;
       setRes(r);
-      onLayer({ overlay: r.overlay.data, legend: r.legend, title: "Gizli yaklaşma" }); // i18n-ignore: Terrain.tsx matches the layer by this exact title
+      onLayer({ overlay: r.overlay.data, legend: r.legend, title: t("Gizli yaklaşma"), kind: "approach" });
     });
 
   const weak = res ? res.sectors.filter((s) => s.warning_m !== null && s.warning_m / SPEEDS[threat] < response).length : 0;

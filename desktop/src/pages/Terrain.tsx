@@ -112,6 +112,8 @@ export default function Terrain() {
     { interior: true, perPole: 2, streetsOnly: false, maxHole: 0, minCams: 1, maxCams: 120 });
   const [city, setCity] = useState<CityInfo | null>(null);   // OSM streets / homes / places of this terrain
   const [areaRes, setAreaRes] = useState<AreaPlanResult | null>(null);
+  /** the area result that carries the "optimised for another level" note (identity: any new result drops it) */
+  const [optNoteFor, setOptNoteFor] = useState<AreaPlanResult | null>(null);
   const isArea = plan.line_mode === "area";
   const reqLevelOf = levelOf(plan.target_ppm, isThermal);
   const reqLevel: TerrainLevel = reqLevelOf;
@@ -514,7 +516,7 @@ export default function Terrain() {
               gaps={tab === "perimeter" && planRes?.line_mode !== "border" ? planRes?.gaps : []} showFov={showFov}
               inMap={play && play.tab === tab ? <PtzSweep ptz={play.ptz} heightM={info.height_m} playing={playing} rate={rate} onTime={setPlayT} /> : null}
               switches={tab === "perimeter" ? network?.network.switches : []}
-              approach={tab === "perimeter" && mixedLayer?.title === "Gizli yaklaşma" ? // i18n-ignore: layer title set by the core panel, compared by value
+              approach={tab === "perimeter" && mixedLayer?.kind === "approach" ?
                  approachMarks : null}
               tool={tab === "single" ? "camera" : drawing ? "fence" : "none"} onPick={pick}>
               {legend && (
@@ -863,6 +865,7 @@ export default function Terrain() {
                         : t("● Açık kalan parça yok")}
                     </div>
                     {areaRes.notes.map((n) => <div key={n} className="mt-1 text-[11px] text-text-3">◆ {n}</div>)}
+                    {optNoteFor === areaRes && <div className="mt-1 text-[11px] text-text-3">◆ {t("Optimizasyon başka bir seviye için yapıldı; alan payı için Birleşik Kapsamayı yeniden hesaplayın.")}</div>}
                   </div>
                 )}
                 <div className="mt-2 font-mono text-[11px] text-text-3">{(() => {
@@ -953,10 +956,12 @@ export default function Terrain() {
                       // the area tile shows the plan's engine share: keep it true to the optimised plan
                       if (r.applied && areaRes && r.plan.line_mode === "area") {
                         const f = r.after_m2 / Math.max(r.band_area_m2, 1);
-                        setAreaRes(reqLevel === areaRes.level
+                        // the "optimised for another level" note is state (optNoteFor), not text mixed into the core notes
+                        const next = reqLevel === areaRes.level
                           ? { ...areaRes, plan: r.plan, engine_frac: f, met: f >= areaRes.goal_frac }
-                          : { ...areaRes, plan: r.plan, notes: [...areaRes.notes.filter((n) => !n.startsWith("Optimizasyon")),
-                              "Optimizasyon başka bir seviye için yapıldı; alan payı için Birleşik Kapsamayı yeniden hesaplayın."] }); // i18n-ignore: matched by startsWith("Optimizasyon") above, like a core note
+                          : { ...areaRes, plan: r.plan };
+                        setAreaRes(next);
+                        setOptNoteFor((prev) => (reqLevel === areaRes.level ? (prev === areaRes ? next : null) : next));
                       }
                     })}>
                     <Play size={14} />{" "}

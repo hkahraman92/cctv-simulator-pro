@@ -117,7 +117,7 @@
   "Kayıtlı bölge": "Saved region",
   "Kayıtlı bölge yok. \"İndir\" ile indirip kaydedin.": "No saved region. Download and save one with \"Download\".",
   "Lens (aralık hesabı)": "Lens (spacing calculation)",
-  "Odak": "Focal",
+  "Odak": "Focal length",
   "Odak / eğim / konum optimize et": "Optimise focal length / tilt / position",
   "Odak / eğim optimize et": "Optimise focal length / tilt",
   "Odak taraması": "Focal length sweep",
@@ -154,7 +154,7 @@
   "Tanımla": "Define",
   "Tek Kamera": "Single camera",
   "Tekil görüş": "Single view",
-  "Tekil görüş alanına dön": "Back to single view",
+  "Tekil görüş alanına dön": "Back to the single viewshed",
   "Tele {f} mm": "Tele {f} mm",
   "Temizle": "Clear",
   "Tesis": "Facility",
@@ -281,5 +281,6 @@
   "● Açık kalan parça yok": "● No uncovered patches",
   "● Canlı tarama": "● Live sweep",
   "● Erişim zarfı hesaplanıyor…": "● Computing reach envelope…",
-  "● ölçülmüş DEM": "● measured DEM"
+  "● ölçülmüş DEM": "● measured DEM",
+  "Optimizasyon başka bir seviye için yapıldı; alan payı için Birleşik Kapsamayı yeniden hesaplayın.": "The optimisation was done for another level; recompute Combined coverage for the area share."
 }
