@@ -616,7 +616,7 @@ export default function Terrain() {
                 <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono text-[11px]">
                   {/* a thermal is classed on Johnson thresholds and never reaches EN identification */}
                   {levelsFor(!!single.thermal).filter(([k]) => k !== "monitor" || single.zone_areas_m2.monitor !== undefined)
-                    .map(([k, l]) => (<div key={k} className="flex justify-between"><span className="text-text-3">{l}</span><span>{ha(single.zone_areas_m2[k] ?? 0)}</span></div>))}
+                    .map(([k, l]) => (<div key={k} className="flex justify-between"><span className="text-text-3">{l}</span><span className="shrink-0 whitespace-nowrap">{ha(single.zone_areas_m2[k] ?? 0)}</span></div>))}
                 </div>
                 <div className="mt-2 font-mono text-[11px] text-text-3">
                   {t("optik sınır {v} m", { v: fmt(single.optical_limit_m, 0) })}{single.atmospheric_limit_m > 0 && single.atmospheric_limit_m < single.optical_limit_m ? ` · ${t("atmosfer {v} m", { v: fmt(single.atmospheric_limit_m, 0) })}` : ""}
@@ -641,7 +641,7 @@ export default function Terrain() {
                           <div className="text-text-3">◆ {envelope.note}</div>
                           <div className="mt-1.5 grid grid-cols-2 gap-x-3 gap-y-0.5 font-mono">
                             {levelsFor(envelope.thermal).filter(([k]) => k !== "monitor" || envelope.areas_m2.monitor !== undefined)
-                              .map(([k, l]) => (<div key={k} className="flex justify-between"><span className="text-text-3">{l}</span><span>{ha(envelope.areas_m2[k] ?? 0)}</span></div>))}
+                              .map(([k, l]) => (<div key={k} className="flex justify-between"><span className="text-text-3">{l}</span><span className="shrink-0 whitespace-nowrap">{ha(envelope.areas_m2[k] ?? 0)}</span></div>))}
                           </div>
                           {envelope.truncated && <div className="mt-1 text-warn">{t("▲ Bazı görüşler analiz menzilini ({v} m) aşıyor; alanlar alt sınırdır.", { v: fmt(envelope.reach_m, 0) })}</div>}
                         </>

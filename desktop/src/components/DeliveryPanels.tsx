@@ -9,7 +9,7 @@ import { t } from "../core/i18n";
 import { Button, Panel, fmt } from "./ui";
 
 type Job = ReturnType<typeof useJob>;
-const pct = (f: number | null | undefined) => (f == null ? "—" : `%${fmt(f * 100, 1)}`);
+const pct = (f: number | null | undefined) => (f == null ? "—" : t("%{n}", { n: fmt(f * 100, 1) }));
 const levelRows = () => [["detect", t("Algılama")], ["observe", t("Gözlem")], ["recognize", t("Tanıma")], ["identify", t("Teşhis")]] as const;
 
 const glowOptions = (): [string, number][] => [[t("Kırsal (karanlık)"), 0], [t("Banliyö"), 0.01], [t("Şehir"), 0.05]];

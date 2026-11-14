@@ -166,7 +166,7 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
           {DORI.map((d) => (
             <div key={d.key} className="rounded bg-bg-1 p-2">
               <div className="flex items-center gap-1.5 font-mono text-[11px] text-text-3">
-                <span className="h-2.5 w-2.5 rounded-sm" style={{ background: `var(--color-${d.tone})` }} />
+                <span className="h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: `var(--color-${d.tone})` }} />
                 {d.label} ≥{fmt(d.ppm, d.ppm % 1 ? 1 : 0)}
               </div>
               <div className="font-mono text-[16px] font-bold">{r ? fmt(r.ground_distances[d.key]) : "—"} m</div>

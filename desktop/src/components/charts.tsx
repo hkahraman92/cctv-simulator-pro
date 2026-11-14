@@ -38,7 +38,7 @@ export function ProfileChart({ profile }: { profile: SingleViewshed["profile"] }
       <g fontSize="11" fontFamily="var(--font-mono)" fill="var(--color-text-3)">
         <line x1={W - 300} y1={12} x2={W - 282} y2={12} stroke="var(--color-dori-recognize)" strokeWidth={3} /><text x={W - 278} y={15}>{t("görülen zemin")}</text>
         <line x1={W - 170} y1={12} x2={W - 152} y2={12} stroke="var(--color-primary)" strokeDasharray="5 4" /><text x={W - 148} y={15}>{t("optik eksen")}</text>
-        <text x={W - 62} y={15}>{t("kot: m")}</text>
+        <text x={W - 8} y={15} textAnchor="end">{t("kot: m")}</text>
       </g>
       <text x={pad.l - 4} y={Y(zMax) + 4} textAnchor="end" fontSize="11" fill="var(--color-text-3)" fontFamily="var(--font-mono)">{fmt(zMax, 0)}</text>
       <text x={pad.l - 4} y={Y(zMin)} textAnchor="end" fontSize="11" fill="var(--color-text-3)" fontFamily="var(--font-mono)">{fmt(zMin, 0)}</text>

@@ -141,7 +141,7 @@ export default function Library() {
                     <td className="w-full max-w-0 min-w-[90px] truncate px-2 py-2 font-semibold" title={m.name}>{m.name}</td>
                     <td className="px-2 whitespace-nowrap"><Kind m={m} /></td>
                     <td className="px-2 font-mono text-text-2" title={m.sensor_name}>{m.sensor_name}</td>
-                    <td className="px-2 font-mono" title={m.resolution_name}>{m.resolution_name}</td>
+                    <td className="px-2 font-mono" title={m.resolution_name}>{m.resolution_name.replace(" - ", " - ")}</td>
                     <td className="min-w-[110px] px-2 font-mono whitespace-nowrap">{fmt(m.focal_min_mm)}{m.focal_max_mm !== m.focal_min_mm && `–${fmt(m.focal_max_mm)}`} mm</td>
                     <td className="px-2 font-mono whitespace-nowrap">{m.ir_range_m ? `${fmt(m.ir_range_m, 0)} m` : "—"}</td>
                   </tr>

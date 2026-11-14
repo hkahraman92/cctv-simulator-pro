@@ -130,7 +130,7 @@
   "Yol ve montaj": "Road and mounting",
   "Yol şeması": "Road diagram",
   "Yolun ortası": "Middle of the road",
-  "Yön (0° = doğu, saat tersi)": "Pan (0° = east, counter-clockwise)",
+  "Yön (0° = doğu, saat tersi)": "Pan (0° = east, CCW)",
   "açık": "open",
   "etiket {a} MP → etkin {b} MP": "label {a} MP → effective {b} MP",
   "hava: {w} · iletim %{tau}": "weather: {w} · transmission {tau}%",
