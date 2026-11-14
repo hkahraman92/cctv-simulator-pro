@@ -12,7 +12,7 @@ export function Panel({ title, icon, right, children, className = "" }: {
       {title && (
         <div className="mb-2.5 flex items-center gap-2">
           {icon}
-          <h2 className="text-[13px] font-semibold">{title}</h2>
+          <h2 className="shrink-0 whitespace-nowrap text-[13px] font-semibold">{title}</h2>
           <div className="flex-1" />
           {right}
         </div>

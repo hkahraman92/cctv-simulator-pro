@@ -100,9 +100,9 @@ export default function ProjectBar() {
   const can = state === "ready" && isTauri();
   return (
     <div className="flex items-center gap-2">
-      <button type="button" title="Proje adını değiştir" aria-label={`Proje adını değiştir: ${proj.name}`} className="inline-flex h-7 items-center rounded px-1.5 font-mono text-[11px] text-secondary hover:bg-bg-5"
-        onClick={async () => { const n = await promptDialog("Proje adı:", { initial: proj.name }); if (n) proj.rename(n); }}>{proj.name}</button>
-      <span className={`font-mono text-[11px] ${proj.dirty ? "text-warn" : "text-text-3"}`}>
+      <button type="button" title={`Proje adını değiştir: ${proj.name}`} aria-label={`Proje adını değiştir: ${proj.name}`} className="inline-flex h-7 min-w-0 max-w-[260px] items-center rounded px-1.5 font-mono text-[11px] text-secondary hover:bg-bg-5"
+        onClick={async () => { const n = await promptDialog("Proje adı:", { initial: proj.name }); if (n) proj.rename(n); }}><span className="truncate">{proj.name}</span></button>
+      <span className={`shrink-0 whitespace-nowrap font-mono text-[11px] ${proj.dirty ? "text-warn" : "text-text-3"}`}>
         {proj.dirty ? "▲ Kaydedilmedi" : proj.path ? "● Kaydedildi" : ""}
       </span>
       {msg && <span className="max-w-[360px] truncate font-mono text-[11px] text-danger" title={msg}>■ {msg}</span>}

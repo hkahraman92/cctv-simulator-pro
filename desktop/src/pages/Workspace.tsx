@@ -135,7 +135,7 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
 
       <Panel title={view === "site" ? "Vaziyet Planı" : "Seçili kamera"} className="min-w-0"
         right={
-          <div className="flex flex-wrap items-center justify-end gap-1">
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
             {view === "site" && (
               <>
                 <button type="button" title="Taşı / döndür" aria-label="Taşı / döndür" aria-pressed={tool === "move"} onClick={() => setTool("move")} className={`${TOOL_BTN} ${tool === "move" ? "bg-bg-6 text-primary" : "text-text-2"}`}><Move size={15} /></button>
@@ -145,7 +145,7 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
             )}
             {([["site", "Plan"], ["single", "Tek kamera"]] as const).map(([id, l]) => (
               <button key={id} type="button" aria-pressed={view === id} onClick={() => setView(id)}
-                className={`h-7 rounded-full px-3 text-[11px] font-semibold ${view === id ? "bg-secondary text-on-secondary" : "bg-bg-5 text-text-2"}`}>{l}</button>
+                className={`h-7 whitespace-nowrap rounded-full px-3 text-[11px] font-semibold ${view === id ? "bg-secondary text-on-secondary" : "bg-bg-5 text-text-2"}`}>{l}</button>
             ))}
           </div>
         }>

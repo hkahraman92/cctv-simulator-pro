@@ -33,7 +33,7 @@ export default function LevelEditor({ levels, defaults, custom, onChange, onRese
 
   return (
     <Panel title="PPM seviyeleri" icon={<Gauge size={16} className="text-secondary" />} className="w-full min-w-0 self-start"
-      right={<button type="button" className="inline-flex h-7 items-center px-1 text-[11px] text-text-2 underline" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{open ? "kapat" : `${levels.length} seviye`}</button>}>
+      right={<button type="button" className="inline-flex h-7 items-center whitespace-nowrap px-1 text-[11px] text-text-2 underline" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{open ? "kapat" : `${levels.length} seviye`}</button>}>
       {!open ? (
         <p className="text-[11px] text-text-3">{custom ? "● Projeye özel seviyeler var." : "Motorun varsayılan seviyeleri (EN 62676-4 DORI, Johnson, plaka…)."} Mesafe tablosu, kontrol noktası ve raporlar bu listeyi kullanır.</p>
       ) : (
@@ -52,9 +52,9 @@ export default function LevelEditor({ levels, defaults, custom, onChange, onRese
           </ul>
           <div className="mt-2 grid grid-cols-[1fr_64px] gap-1.5">
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Ad (ör. Firma: Yüz)" aria-label="Seviye adı"
-              className="h-8 rounded border border-line bg-bg-0 px-2 text-[12px]" />
+              className="h-8 w-full min-w-0 rounded border border-line bg-bg-0 px-2 text-[12px]" />
             <input value={ppm} onChange={(e) => setPpm(e.target.value)} placeholder="px/m" inputMode="decimal" aria-label="px/m"
-              className="h-8 rounded border border-line bg-bg-0 px-2 font-mono text-[12px]" />
+              className="h-8 w-full min-w-0 rounded border border-line bg-bg-0 px-2 font-mono text-[12px]" />
           </div>
           <select value={type} onChange={(e) => setType(e.target.value)} aria-label="Seviye türü" className="mt-1.5 h-8 w-full rounded border border-line bg-bg-0 px-1 text-[12px]">
             {["Özel", "Standart", "Algoritma", "Termal"].map((t) => <option key={t} value={t}>{t}</option>)}

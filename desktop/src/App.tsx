@@ -80,13 +80,13 @@ function Shell() {
     <div className="flex h-full flex-col">
       <header className="flex h-8 shrink-0 items-center gap-2.5 border-b border-bg-5 bg-bg-0 px-3">
         <Video size={16} className="text-primary" aria-hidden />
-        <span className="text-xs font-semibold">CCTV Simülatör Pro</span>
-        <span className="font-mono text-[11px] text-text-3">—</span>
-        <span className="font-mono text-[11px] text-text-2">{current.label}</span>
+        <span className="shrink-0 whitespace-nowrap text-xs font-semibold">CCTV Simülatör Pro</span>
+        <span className="hidden font-mono text-[11px] text-text-3 xl:inline">—</span>
+        <span className="hidden whitespace-nowrap font-mono text-[11px] text-text-2 xl:inline">{current.label}</span>
         <div className="flex-1" />
         <ProjectBar />
         <button type="button" onClick={() => setSettings(true)} title="Ayarlar, kısayollar, hakkında" aria-label="Ayarlar, kısayollar, hakkında" className="flex h-7 w-7 items-center justify-center rounded text-text-2 hover:bg-bg-5"><SettingsIcon size={14} /></button>
-        <span className="ml-2 font-mono text-[11px] text-text-3">EN 62676-4:2015</span>
+        <span className="ml-2 hidden shrink-0 whitespace-nowrap font-mono text-[11px] text-text-3 lg:inline">EN 62676-4:2015</span>
       </header>
 
       <div className="flex min-h-0 flex-1">
