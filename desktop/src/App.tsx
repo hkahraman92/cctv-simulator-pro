@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   Box, ClipboardCheck, Database, FileText, Mountain, RefreshCw, Settings as SettingsIcon, SlidersHorizontal, SquareDashedMousePointer, Video,
 } from "lucide-react";
+import { I18nProvider, t, useLang } from "./core/i18n";
 import { CoreProvider, useCore } from "./core/CoreProvider";
 import { ProjectProvider, useProject } from "./core/project";
 import { DialogHost } from "./components/dialogs";
@@ -20,33 +21,35 @@ import Reports from "./pages/Reports";
 
 type Page = "workspace" | "optics" | "view3d" | "terrain" | "library" | "spec" | "reports";
 
-const NAV: { id: Page; label: string; icon: typeof Video }[] = [
-  { id: "workspace", label: "CAD Çalışma Alanı", icon: SquareDashedMousePointer },
-  { id: "optics", label: "Optik Laboratuvarı", icon: SlidersHorizontal },
-  { id: "view3d", label: "3B Kamera Görüşü", icon: Box },
-  { id: "terrain", label: "Arazi & Görüş Alanı", icon: Mountain },
-  { id: "library", label: "Kamera Kütüphanesi", icon: Database },
-  { id: "spec", label: "Şartname & Uyum", icon: ClipboardCheck },
-  { id: "reports", label: "Raporlar", icon: FileText },
+// `label` is a function so the text follows the language live (a module-level t() would freeze it)
+const NAV: { id: Page; label: () => string; icon: typeof Video }[] = [
+  { id: "workspace", label: () => t("CAD Çalışma Alanı"), icon: SquareDashedMousePointer },
+  { id: "optics", label: () => t("Optik Laboratuvarı"), icon: SlidersHorizontal },
+  { id: "view3d", label: () => t("3B Kamera Görüşü"), icon: Box },
+  { id: "terrain", label: () => t("Arazi & Görüş Alanı"), icon: Mountain },
+  { id: "library", label: () => t("Kamera Kütüphanesi"), icon: Database },
+  { id: "spec", label: () => t("Şartname & Uyum"), icon: ClipboardCheck },
+  { id: "reports", label: () => t("Raporlar"), icon: FileText },
 ];
 
 function CoreBadge() {
   const { state, rpc } = useCore();
-  if (state === "ready") return <span className="text-primary">● ÇEKİRDEK HAZIR</span>;
-  if (state === "connecting") return <span className="text-text-3">◆ ÇEKİRDEK BAĞLANIYOR</span>;
+  if (state === "ready") return <span className="text-primary">{t("● ÇEKİRDEK HAZIR")}</span>;
+  if (state === "connecting") return <span className="text-text-3">{t("◆ ÇEKİRDEK BAĞLANIYOR")}</span>;
   return (
     <button
       type="button"
       onClick={() => void rpc.restart()}
       className="inline-flex items-center gap-1 text-danger hover:underline"
-      title={`Python çekirdek sürecini yeniden başlat — ${rpc.lastError}`}
+      title={t("Python çekirdek sürecini yeniden başlat — {error}", { error: rpc.lastError })}
     >
-      ■ ÇEKİRDEK YOK{rpc.lastError && `: ${rpc.lastError}`} <RefreshCw size={11} /> yeniden başlat
+      {t("■ ÇEKİRDEK YOK")}{rpc.lastError && `: ${rpc.lastError}`} <RefreshCw size={11} /> {t("yeniden başlat")}
     </button>
   );
 }
 
 function Shell() {
+  useLang();          // re-renders the whole page tree when the language changes
   const [page, setPage] = useState<Page>("workspace");
   const [visited, setVisited] = useState<Set<Page>>(() => new Set(["workspace"]));
   const [status, setStatus] = useState("");
@@ -81,18 +84,18 @@ function Shell() {
     <div className="flex h-full flex-col">
       <header className="flex h-8 shrink-0 items-center gap-2.5 border-b border-bg-5 bg-bg-0 px-3">
         <Video size={16} className="text-primary" aria-hidden />
-        <span className="shrink-0 whitespace-nowrap text-xs font-semibold">CCTV Simülatör Pro</span>
+        <span className="shrink-0 whitespace-nowrap text-xs font-semibold">{t("CCTV Simülatör Pro")}</span>
         <span className="hidden font-mono text-[11px] text-text-3 xl:inline">—</span>
-        <span className="hidden whitespace-nowrap font-mono text-[11px] text-text-2 xl:inline">{current.label}</span>
+        <span className="hidden whitespace-nowrap font-mono text-[11px] text-text-2 xl:inline">{current.label()}</span>
         <div className="flex-1" />
         <ProjectBar />
-        <button type="button" onClick={() => setSettings(true)} title="Ayarlar, kısayollar, hakkında" aria-label="Ayarlar, kısayollar, hakkında" className="flex h-7 w-7 items-center justify-center rounded text-text-2 hover:bg-bg-5"><SettingsIcon size={14} /></button>
+        <button type="button" onClick={() => setSettings(true)} title={t("Ayarlar, kısayollar, hakkında")} aria-label={t("Ayarlar, kısayollar, hakkında")} className="flex h-7 w-7 items-center justify-center rounded text-text-2 hover:bg-bg-5"><SettingsIcon size={14} /></button>
         <span className="ml-2 hidden shrink-0 whitespace-nowrap font-mono text-[11px] text-text-3 lg:inline">EN 62676-4:2015</span>
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <nav className="flex w-[210px] shrink-0 flex-col border-r border-bg-5 bg-bg-3" aria-label="Modüller">
-          <div className="label px-3.5 pt-3 pb-2">Modüller</div>
+        <nav className="flex w-[210px] shrink-0 flex-col border-r border-bg-5 bg-bg-3" aria-label={t("Modüller")}>
+          <div className="label px-3.5 pt-3 pb-2">{t("Modüller")}</div>
           {NAV.map(({ id, label, icon: Icon }, idx) => {
             const active = id === page;
             return (
@@ -109,7 +112,7 @@ function Shell() {
                 }`}
               >
                 <Icon size={17} aria-hidden />
-                {label}
+                {label()}
               </button>
             );
           })}
@@ -138,14 +141,16 @@ function Shell() {
 
 export default function App() {
   return (
-    <CoreProvider>
-      <ProjectProvider>
-        <ActiveTerrainProvider>
-          <WeatherProvider>
-            <Shell />
-          </WeatherProvider>
-        </ActiveTerrainProvider>
-      </ProjectProvider>
-    </CoreProvider>
+    <I18nProvider>
+      <CoreProvider>
+        <ProjectProvider>
+          <ActiveTerrainProvider>
+            <WeatherProvider>
+              <Shell />
+            </WeatherProvider>
+          </ActiveTerrainProvider>
+        </ProjectProvider>
+      </CoreProvider>
+    </I18nProvider>
   );
 }

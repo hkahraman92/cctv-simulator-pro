@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { decimalSeparator, numberLocale, t } from "../core/i18n";
 
 export function Panel({ title, icon, right, children, className = "" }: {
   title?: string;
@@ -66,8 +67,8 @@ export function Slider({ label, value, min, max, step, unit, onChange, disabled,
       <div className="mb-1 flex items-center justify-between">
         <span className="label">{label}</span>
         {draft === null ? (
-          <button type="button" disabled={disabled} title="Değeri yazmak için tıklayın" aria-label={`${label}: ${fmt(value, digits)} ${unit} — yazmak için tıklayın`}
-            onClick={() => setDraft(String(Math.round(value * 1000) / 1000).replace(".", ","))}
+          <button type="button" disabled={disabled} title={t("Değeri yazmak için tıklayın")} aria-label={t("{label}: {value} {unit} — yazmak için tıklayın", { label, value: fmt(value, digits), unit })}
+            onClick={() => setDraft(String(Math.round(value * 1000) / 1000).replace(".", decimalSeparator()))}
             className="rounded px-1 font-mono text-[12px] font-semibold hover:bg-bg-5 disabled:hover:bg-transparent">
             {fmt(value, digits)} {unit}
           </button>
@@ -112,10 +113,10 @@ export function Button({ children, primary, ...rest }: React.ButtonHTMLAttribute
   );
 }
 
-/** Turkish number formatting: decimal comma, 1 decimal under 100. */
+/** Number formatting by interface language (tr: decimal comma, en: point), 1 decimal under 100. */
 export function fmt(v: number | null | undefined, digits?: number): string {
   if (v === null || v === undefined) return "∞";
   if (!Number.isFinite(v)) return "∞";
   const d = digits ?? (Math.abs(v) >= 100 ? 0 : 1);
-  return v.toLocaleString("tr-TR", { minimumFractionDigits: d, maximumFractionDigits: d });
+  return v.toLocaleString(numberLocale(), { minimumFractionDigits: d, maximumFractionDigits: d });
 }

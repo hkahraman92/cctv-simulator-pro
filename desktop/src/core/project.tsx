@@ -64,6 +64,9 @@ export const undoScope: { current: null | { undo: () => boolean; redo: () => boo
 
 const Ctx = createContext<ProjectCtx | null>(null);
 
+/** Name of a project that was never named. Stored and compared as is; shown through t("Yeni proje"). */
+export const NEW_PROJECT_NAME = "Yeni proje"; // i18n-ignore
+
 export const DEFAULT_PLAN: PlanSettings = {
   plan_path: "", plan_width_m: 45, target: { x_m: 20, y_m: 14, active: false }, level_key: "Characterize",
 };
@@ -74,7 +77,8 @@ export const DEFAULT_PLAN: PlanSettings = {
 const FIRST_AT = { x: 8, y: 14 };
 
 export const newSite = (n: number, at?: { x: number; y: number }): Site => ({
-  camera: { ...DEFAULT_CAMERA, name: `Kamera ${n}`, pos_x_m: (at ?? FIRST_AT).x, pos_y_m: (at ?? FIRST_AT).y },
+  // camera names key the reports and the overlap analysis: stored data, never translated
+  camera: { ...DEFAULT_CAMERA, name: `Kamera ${n}`, pos_x_m: (at ?? FIRST_AT).x, pos_y_m: (at ?? FIRST_AT).y }, // i18n-ignore
   focal: DEFAULT_CAMERA.focal_min_mm,
 });
 
@@ -84,7 +88,7 @@ const clamp = (f: number, c: CameraConfig) => Math.min(Math.max(f, c.focal_min_m
 const freeName = (sites: Site[]) => {
   const taken = new Set(sites.map((s) => s.camera.name));
   let n = sites.length + 1;
-  while (taken.has(`Kamera ${n}`)) n++;
+  while (taken.has(`Kamera ${n}`)) n++; // i18n-ignore
   return n;
 };
 
@@ -93,7 +97,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [selected, setSelected] = useState(0);
   const [plan, setPlanState] = useState<PlanSettings>(DEFAULT_PLAN);
   const [path, setPath] = useState("");
-  const [name, setName] = useState("Yeni proje");
+  const [name, setName] = useState(NEW_PROJECT_NAME);
   const [dirty, setDirty] = useState(false);
   const [levels, setLevelsState] = useState<PPMLevel[] | null>(null);
   const [terrainBlock, setTerrainBlockState] = useState<TerrainBlock | null>(null);
@@ -169,7 +173,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     reset: () => {
       clearHistory();
       setSites([newSite(1)]); setSelected(0); setPlanState(DEFAULT_PLAN); setLevelsState(null);
-      setPath(""); setName("Yeni proje"); setTerrainBlockState(null); setLoadedTerrain(null); setDirty(false);
+      setPath(""); setName(NEW_PROJECT_NAME); setTerrainBlockState(null); setLoadedTerrain(null); setDirty(false);
       setResetNonce((n) => n + 1);
       setOpenNonce((n) => n + 1);
     },

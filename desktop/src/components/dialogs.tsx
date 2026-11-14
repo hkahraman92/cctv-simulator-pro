@@ -1,4 +1,5 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
+import { t } from "../core/i18n";
 import { Button } from "./ui";
 
 /**
@@ -29,10 +30,10 @@ function ask(r: Omit<Request, "resolve">): Promise<boolean | string | null> {
 }
 
 export const confirmDialog = (message: string, o: { okLabel?: string; danger?: boolean } = {}) =>
-  ask({ kind: "confirm", message, okLabel: o.okLabel ?? "Devam", danger: !!o.danger, password: false, initial: "" }) as Promise<boolean>;
+  ask({ kind: "confirm", message, okLabel: o.okLabel ?? t("Devam"), danger: !!o.danger, password: false, initial: "" }) as Promise<boolean>;
 
 export const promptDialog = (message: string, o: { okLabel?: string; password?: boolean; initial?: string } = {}) =>
-  ask({ kind: "prompt", message, okLabel: o.okLabel ?? "Tamam", danger: false, password: !!o.password, initial: o.initial ?? "" }) as Promise<string | null>;
+  ask({ kind: "prompt", message, okLabel: o.okLabel ?? t("Tamam"), danger: false, password: !!o.password, initial: o.initial ?? "" }) as Promise<string | null>;
 
 export function DialogHost() {
   const req = useSyncExternalStore((l) => { listeners.add(l); return () => { listeners.delete(l); }; }, () => current);
@@ -52,7 +53,7 @@ export function DialogHost() {
             className="mt-3 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[13px]" />
         )}
         <div className="mt-4 flex justify-end gap-2">
-          <Button onClick={cancel}>Vazgeç</Button>
+          <Button onClick={cancel}>{t("Vazgeç")}</Button>
           <Button autoFocus={req.kind === "confirm"} primary={!req.danger} className={req.danger ? "!bg-danger-bg !text-danger" : ""} onClick={accept}>{req.okLabel}</Button>
         </div>
       </div>

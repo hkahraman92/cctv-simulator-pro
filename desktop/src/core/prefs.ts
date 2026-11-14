@@ -1,19 +1,23 @@
 import { useSyncExternalStore } from "react";
 
+export type Lang = "tr" | "en";
+
 /** Interface preferences, kept in the webview's local storage (per user, survives restarts). */
 export interface Prefs {
   theme: "dark" | "light";
   /** folder the Reports page last wrote to */
   reportDir: string;
+  /** interface language; Turkish is the source language and the default */
+  lang: Lang;
 }
 
 const KEY = "cctv.prefs.v1";
-const DEFAULTS: Prefs = { theme: "dark", reportDir: "" };
+const DEFAULTS: Prefs = { theme: "dark", reportDir: "", lang: "tr" };
 
 function read(): Prefs {
   try {
     const raw = JSON.parse(localStorage.getItem(KEY) ?? "{}") as Partial<Prefs>;
-    return { ...DEFAULTS, ...raw, theme: raw.theme === "light" ? "light" : "dark" };
+    return { ...DEFAULTS, ...raw, theme: raw.theme === "light" ? "light" : "dark", lang: raw.lang === "en" ? "en" : "tr" };
   } catch {
     return DEFAULTS;          // storage unavailable or corrupt: defaults, never a crash
   }
@@ -24,6 +28,7 @@ const listeners = new Set<() => void>();
 
 /** The theme is a data attribute on <html>; index.css redefines the colour tokens under it. */
 export function applyTheme() {
+  if (typeof document === "undefined") return;       // tests without a DOM
   document.documentElement.dataset.theme = cache.theme;
 }
 
