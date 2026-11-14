@@ -6,7 +6,7 @@ import { useCore } from "../core/CoreProvider";
 import { useProject } from "../core/project";
 import { useJob } from "../core/useJob";
 import { publishSpecResult } from "../core/activeTerrain";
-import type { Analysis, MatrixRow, Status } from "../core/specApi";
+import type { Analysis, ComplianceResult, MatrixRow, Status } from "../core/specApi";
 import JobBar from "../components/JobBar";
 import { Button, Panel, fmt } from "../components/ui";
 import { confirmDialog, promptDialog } from "../components/dialogs";
@@ -22,6 +22,35 @@ const MARK: Record<Status, string> = { Uyumlu: "●", Kısmi: "▲", Uyumsuz: "�
 const SOURCE: Record<Analysis["source"], string> = {
   rule: "Kurallı + optik motor", ollama: "Yerel model (Ollama)", gemini: "Gemini", template: "İster şablonu",
 };
+
+function csvCell(v: unknown): string {
+  const t = v == null ? "" : String(v);
+  return /[;"\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+}
+
+/** Compliance matrix as Turkish-Excel CSV: BOM, `;`, CRLF; one status column per camera model. */
+export function buildMatrixCsv(result: ComplianceResult): string {
+  const cams = [...new Set(result.matrix.map((r) => r.camera_model))];
+  const category = new Map(result.requirements.map((q) => [q.id, q.category]));
+  const order: string[] = [];
+  const byReq = new Map<string, MatrixRow[]>();
+  for (const r of result.matrix) {
+    if (!byReq.has(r.requirement_id)) { byReq.set(r.requirement_id, []); order.push(r.requirement_id); }
+    byReq.get(r.requirement_id)!.push(r);
+  }
+  const lines = [["Madde", "İster", "Kategori", "Kanıt türü", "Standart maddesi", ...cams]];
+  for (const id of order) {
+    const rs = byReq.get(id)!;
+    const first = rs[0];
+    lines.push([
+      id, first.requirement, category.get(id) ?? "",
+      rs.find((r) => r.evidence_kind)?.evidence_kind ?? "",
+      rs.find((r) => r.standard_clause)?.standard_clause ?? "",
+      ...cams.map((c) => { const r = rs.find((x) => x.camera_model === c); return r ? (r.user_status ?? r.status) : ""; }),
+    ]);
+  }
+  return "\uFEFF" + lines.map((l) => l.map(csvCell).join(";")).join("\r\n") + "\r\n";
+}
 
 export default function Spec() {
   const { spec, state } = useCore();
@@ -229,10 +258,26 @@ export default function Spec() {
             ))}
             <p className="mt-2 text-[11px] text-text-2">{result.recommendation}</p>
           </Panel>
-          {result.clarification_questions.length > 0 && (
-            <Panel title={`Netleştirilecek (${result.clarification_questions.length})`}>
-              <ul className="list-disc pl-4 text-[11px] text-warn">{result.clarification_questions.map((q) => <li key={q} className="mb-1">{q}</li>)}</ul>
-            </Panel>
+          {(result.ambiguities.length > 0 || result.clarification_questions.length > 0) && (
+            <details className="rounded-md bg-bg-4">
+              <summary className="cursor-pointer select-none px-3 py-2 text-[13px] font-semibold">
+                Belirsiz ifadeler <span className="font-mono text-[11px] text-warn">({result.ambiguities.length})</span>
+              </summary>
+              <div className="px-3 pb-3">
+                {result.ambiguities.map((a, i) => (
+                  <div key={`${a.term}-${i}`} className="mb-2 text-[11px]">
+                    <div className="text-text-3">“{a.quote}”</div>
+                    <div className="text-warn"><span className="font-semibold">{a.term}</span> — {a.clarification}</div>
+                  </div>
+                ))}
+                {result.clarification_questions.length > 0 && (
+                  <>
+                    <div className="label mt-2 mb-1">Netleştirme soruları ({result.clarification_questions.length})</div>
+                    <ul className="list-disc pl-4 text-[11px] text-text-2">{result.clarification_questions.map((q) => <li key={q} className="mb-1">{q}</li>)}</ul>
+                  </>
+                )}
+              </div>
+            </details>
           )}
           <Panel title="Çıktı">
             <div className="flex flex-col gap-1.5">

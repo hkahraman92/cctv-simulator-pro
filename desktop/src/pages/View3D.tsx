@@ -10,6 +10,17 @@ const PALETTES = [
 ] as const;
 const TARGETS = [["human", "İnsan (1,8 m)"], ["vehicle", "Araç (2,3 m)"], ["object", "Nesne (1,0 m)"]] as const;
 
+let measureCtx: CanvasRenderingContext2D | null | undefined;
+/** Rendered width of a 11px mono label in SVG user units (the SVG and its text share one scale). */
+function textWidth(text: string): number {
+  if (measureCtx === undefined) measureCtx = document.createElement("canvas").getContext("2d");
+  if (!measureCtx) return text.length * 6.6;
+  let fam = "monospace";
+  try { fam = getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim() || fam; } catch { /* keep fallback */ }
+  measureCtx.font = `11px ${fam}`;
+  return measureCtx.measureText(text).width;
+}
+
 /** What the camera itself would show: real FOV, sensor and MTF loss, palette, weather. */
 export default function View3D() {
   const active = usePageActive();
@@ -42,6 +53,24 @@ export default function View3D() {
     lateral_m: i.lateral, palette: i.palette, weather: i.weather, show_dori: i.dori, max_dist_m: Math.max(100, i.dist * 1.5),
   }), state === "ready" && active);
   const f = res.value;
+  // Target label box (SVG units), sized from its text; grid labels that would sit under it are dropped.
+  const targetBox = useMemo(() => {
+    if (!f || !f.target_head.visible) return null;
+    const text = `${fmt(p.dist, 0)} m · ${fmt(f.target_px, 0)} px`;
+    const w = Math.max(104, Math.ceil(textWidth(text)) + 16);
+    const y = Math.max(f.target_head.v - 30, 2);
+    return { text, x: f.target_head.u - w / 2, y, w, h: 18 };
+  }, [f, p.dist]);
+  const gridLabels = useMemo(() => {
+    if (!f) return [];
+    return f.grid.filter((g) => g.label && g.lu != null && g.lv != null && g.lu >= 0 && g.lu <= f.width).filter((g) => {
+      if (!targetBox) return true;
+      const x = g.lu! + 14, w = textWidth(g.label) + 4;
+      const top = g.lv! - 11, bottom = g.lv! + 3; // 11px text sits above its baseline
+      const pad = 4;
+      return x + w < targetBox.x - pad || x > targetBox.x + targetBox.w + pad || bottom < targetBox.y - pad || top > targetBox.y + targetBox.h + pad;
+    });
+  }, [f, targetBox]);
   const atmAlarm = f && f.visibility_km < 20 && f.transmittance < 0.3;
   const varifocal = c.focal_max_mm > c.focal_min_mm;
 
@@ -55,18 +84,18 @@ export default function View3D() {
               {p.grid && f.grid.map((g, i) => (
                 <line key={i} x1={g.u1} y1={g.v1} x2={g.u2} y2={g.v2} stroke={g.center ? "rgba(120,140,150,.8)" : "rgba(176,190,197,.35)"} strokeWidth={g.major || g.center ? 1.5 : 0.8} />
               ))}
-              {p.grid && f.grid.filter((g) => g.label && g.lu != null && g.lv != null && g.lu >= 0 && g.lu <= f.width).map((g, i) => (
+              {p.grid && gridLabels.map((g, i) => (
                 <text key={i} x={g.lu! + 14} y={g.lv!} fontSize="11" fill="#eceff1" fontFamily="var(--font-mono)" stroke="rgba(0,0,0,.5)" strokeWidth={2.5} paintOrder="stroke">{g.label}</text>
               ))}
               {f.horizon_v > 0 && f.horizon_v < f.height && (
                 <g><line x1={0} y1={f.horizon_v} x2={f.width} y2={f.horizon_v} stroke="#b0bec5" strokeDasharray="4 4" />
                   <text x={f.width - 54} y={Math.max(f.horizon_v - 8, 14)} fontSize="10" fill="#cfd8dc" fontFamily="var(--font-mono)">UFUK</text></g>
               )}
-              {f.target_head.visible && (
+              {targetBox && (
                 <g>
-                  <rect x={f.target_head.u - 52} y={Math.max(f.target_head.v - 30, 2)} width={104} height={18} rx={3} fill="rgba(15,19,28,.82)" stroke="rgba(255,255,255,.18)" />
-                  <text x={f.target_head.u} y={Math.max(f.target_head.v - 30, 2) + 13} textAnchor="middle" fontSize="11" fill="#dfe2ee" fontFamily="var(--font-mono)">
-                    {fmt(p.dist, 0)} m · {fmt(f.target_px, 0)} px
+                  <rect x={targetBox.x} y={targetBox.y} width={targetBox.w} height={targetBox.h} rx={3} fill="rgba(15,19,28,.82)" stroke="rgba(255,255,255,.18)" />
+                  <text x={targetBox.x + targetBox.w / 2} y={targetBox.y + 13} textAnchor="middle" fontSize="11" fill="#dfe2ee" fontFamily="var(--font-mono)">
+                    {targetBox.text}
                   </text>
                 </g>
               )}

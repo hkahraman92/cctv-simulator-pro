@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Database, Search } from "lucide-react";
 import { DORI, type ModelSummary, type OpticResult } from "../core/api";
 import { useCore } from "../core/CoreProvider";
-import { Panel, fmt } from "../components/ui";
+import { Button, Panel, fmt } from "../components/ui";
+import { useProject } from "../core/project";
 import LibraryEditor from "../components/LibraryEditor";
 
 type Filter = "all" | "fixed" | "ptz" | "thermal";
@@ -11,6 +12,8 @@ const isThermal = (m: ModelSummary) => /lwir|termal|thermal/i.test(`${m.sensor_n
 
 export default function Library() {
   const { api, state } = useCore();
+  const { replaceCamera, site } = useProject();
+  const [applyMsg, setApplyMsg] = useState("");
   const [models, setModels] = useState<ModelSummary[]>([]);
   const [error, setError] = useState("");
   const [query, setQuery] = useState("");
@@ -53,6 +56,37 @@ export default function Library() {
     return () => { live = false; };
   }, [api, sel, rev]);
 
+  // Keyboard navigation: the scroll container is the single tab stop, the selection roves over `shown`.
+  const tableRef = useRef<HTMLDivElement>(null);
+  const selIndex = shown.findIndex((m) => m.name === sel);
+  useEffect(() => {
+    if (selIndex < 0) return;
+    tableRef.current?.querySelector(`#lib-row-${selIndex}`)?.scrollIntoView({ block: "nearest" });
+  }, [selIndex]);
+  const onTableKey = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (!shown.length || e.altKey || e.ctrlKey || e.metaKey) return;
+    let next = -1;
+    if (e.key === "ArrowDown") next = Math.min(shown.length - 1, selIndex + 1);
+    else if (e.key === "ArrowUp") next = selIndex < 0 ? 0 : Math.max(0, selIndex - 1);
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = shown.length - 1;
+    else return;
+    e.preventDefault();
+    setSel(shown[next].name);
+  };
+
+  const applyToProject = async () => {
+    if (!current) return;
+    try {
+      const { camera } = await api.cameraFor(current.name, site.camera);
+      replaceCamera(camera);
+      setApplyMsg(`“${current.name}”, “${site.camera.name}” kamerasına uygulandı.`);
+    } catch (e) {
+      setApplyMsg(String((e as Error).message ?? e));
+    }
+  };
+  useEffect(() => setApplyMsg(""), [sel]);
+
   const counts: Record<Filter, number> = {
     all: models.length,
     fixed: models.filter((m) => !m.is_ptz && !isThermal(m)).length,
@@ -83,12 +117,13 @@ export default function Library() {
         </Panel>
 
         <section className="overflow-hidden rounded-md bg-bg-4">
-          <div className="max-h-[440px] overflow-auto">
-            <table className="w-full min-w-[720px] border-collapse [&_td:not(:first-child)]:whitespace-nowrap">
+          <div ref={tableRef} className="max-h-[440px] overflow-auto" tabIndex={0} role="grid" aria-label="Kamera modelleri"
+            aria-activedescendant={selIndex >= 0 ? `lib-row-${selIndex}` : undefined} onKeyDown={onTableKey}>
+            <table className="w-full min-w-[820px] border-collapse [&_td:not(:first-child)]:whitespace-nowrap">
               <thead>
                 <tr>
                   {["Model", "Tip", "Sensör", "Çözünürlük", "Odak", "IR"].map((h, i) => (
-                    <th key={h} className="label sticky top-0 bg-bg-5 px-2 py-2 text-left" aria-sort={sort.col === i ? (sort.dir > 0 ? "ascending" : "descending") : "none"}>
+                    <th key={h} className={`label sticky top-0 bg-bg-5 px-2 py-2 text-left whitespace-nowrap ${h === "Odak" ? "min-w-[110px]" : ""}`} aria-sort={sort.col === i ? (sort.dir > 0 ? "ascending" : "descending") : "none"}>
                       <button type="button" className="uppercase hover:text-text" title="Sırala"
                         onClick={() => setSort((s) => (s.col === i ? { col: i, dir: s.dir > 0 ? -1 : 1 } : { col: i, dir: 1 }))}>
                         {h}{sort.col === i ? (sort.dir > 0 ? " ▲" : " ▼") : ""}
@@ -98,14 +133,14 @@ export default function Library() {
                 </tr>
               </thead>
               <tbody>
-                {shown.map((m) => (
-                  <tr key={m.name} onClick={() => setSel(m.name)} aria-selected={m.name === sel}
-                    className={`cursor-pointer border-b border-line-soft text-[12px] ${m.name === sel ? "bg-bg-5 shadow-[inset_3px_0_0_var(--color-primary)]" : "hover:bg-bg-3"}`}>
+                {shown.map((m, i) => (
+                  <tr key={m.name} id={`lib-row-${i}`} role="row" onClick={() => setSel(m.name)} aria-selected={m.name === sel}
+                    className={`cursor-pointer scroll-mt-9 border-b border-line-soft text-[12px] ${m.name === sel ? "bg-bg-5 shadow-[inset_3px_0_0_var(--color-primary)]" : "hover:bg-bg-3"}`}>
                     <td className="min-w-[240px] px-2 py-2 font-semibold">{m.name}</td>
                     <td className="px-2"><Kind m={m} /></td>
                     <td className="px-2 font-mono text-text-2">{m.sensor_name}</td>
                     <td className="px-2 font-mono">{m.resolution_name}</td>
-                    <td className="px-2 font-mono">{fmt(m.focal_min_mm)}{m.focal_max_mm !== m.focal_min_mm && `–${fmt(m.focal_max_mm)}`} mm</td>
+                    <td className="min-w-[110px] px-2 font-mono">{fmt(m.focal_min_mm)}{m.focal_max_mm !== m.focal_min_mm && `–${fmt(m.focal_max_mm)}`} mm</td>
                     <td className="px-2 font-mono">{m.ir_range_m ? `${fmt(m.ir_range_m, 0)} m` : "—"}</td>
                   </tr>
                 ))}
@@ -135,6 +170,10 @@ export default function Library() {
                   </div>
                 </div>
               ))}
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <Button onClick={() => void applyToProject()}>Projede kullan</Button>
+              <span className="text-[11px] text-text-3" role="status">{applyMsg || `Seçili proje kamerası: ${site.camera.name}`}</span>
             </div>
             <p className="mt-3 text-[11px] text-text-3">
               ◆ Yer mesafesi, modelin kütüphanedeki direk ve eğim değerleriyle optik motordan. {isThermal(current) && "Termal kamerada EN 62676-4 px/m tabloları görünür bant içindir; Johnson ölçütleri ayrıca geçerlidir."}

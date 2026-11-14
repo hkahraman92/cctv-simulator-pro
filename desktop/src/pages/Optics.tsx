@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { isTauri } from "@tauri-apps/api/core";
 import { CheckCircle2, ScanLine, XCircle } from "lucide-react";
@@ -11,23 +11,33 @@ import PlanView from "../components/PlanView";
 import AnprBench from "../components/AnprBench";
 import { Button, Panel, Slider, Tile, fmt } from "../components/ui";
 
-const TASKS = [
+const EN_TASKS: [string, number][] = [
   ["Teşhis (Identification)", 250],
   ["Tanıma (Recognition)", 125],
   ["Gözlem (Observation)", 62.5],
   ["Algılama (Detection)", 25],
-] as const;
+];
+/** The core reports a ground reach for these four EN levels only. */
+const REACH_KEY: Record<number, "identify" | "recognize" | "observe" | "detect"> = { 250: "identify", 125: "recognize", 62.5: "observe", 25: "detect" };
 
 /** EN 62676-4 optics bench: one camera, one task at one distance, a verdict with reasons. */
 export default function Optics() {
   const active = usePageActive();
   const { api, bench, terrain, state } = useCore();
-  const { site, update } = useProject();
+  const { site, update, levels } = useProject();
   const c = site.camera;
+  // The project's own levels (strongest first); EN defaults when the project has none.
+  const TASKS = useMemo<[string, number][]>(() => {
+    const own = (levels ?? []).filter((l) => l.ppm > 0).sort((a, b) => b.ppm - a.ppm);
+    return own.length ? own.map((l) => [`${l.name} (${fmt(l.ppm, l.ppm % 1 ? 1 : 0)} px/m)`, l.ppm] as [string, number]) : EN_TASKS;
+  }, [levels]);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [weathers, setWeathers] = useState<{ label: string; visibility_km: number }[]>([]);
   const [mode, setMode] = useState<"min" | "max">("min");
-  const [task, setTask] = useState(0);
+  const [taskRaw, setTask] = useState(0);
+  const task = Math.min(taskRaw, TASKS.length - 1);
+  const touched = useRef(false);
+  const seeded = useRef(false);
   const [dist, setDist] = useState(20);
   const [weather, setWeather] = useState("Berrak hava");
   const [edge, setEdge] = useState<EdgeMeasure | null>(null);
@@ -40,11 +50,12 @@ export default function Optics() {
     terrain.catalog().then((t) => setWeathers(t.weather)).catch(() => undefined);
   }, [api, terrain, state]);
 
-  const input = useMemo(() => ({ c, mode, task, dist, weather }), [c, mode, task, dist, weather]);
+  const taskPpm = TASKS[task][1];
+  const input = useMemo(() => ({ c, mode, taskPpm, dist, weather }), [c, mode, taskPpm, dist, weather]);
   const res = useCoalesced(input, async (i) => {
     const [plan, verdict] = await Promise.all([
       api.optics(i.c, { mode: i.mode }),
-      bench.bench({ camera: i.c, mode: i.mode, req_ppm: TASKS[i.task][1], distance_m: i.dist, weather: i.weather }),
+      bench.bench({ camera: i.c, mode: i.mode, req_ppm: i.taskPpm, distance_m: i.dist, weather: i.weather }),
     ]);
     return { plan, verdict } as { plan: OpticResult; verdict: BenchResult };
   }, state === "ready" && active && view === "dori");
@@ -53,6 +64,23 @@ export default function Optics() {
     const r = catalog?.resolutions.find((x) => x.name === c.resolution_name);
     return r ? (r.width_px * r.height_px) / 1e6 : 0;
   })();
+
+  // First open: the fixed defaults (wide lens, strongest task at 20 m) fail for most cameras, which
+  // read as a broken page. Once, from the core's own DORI reaches, start at the strongest task the
+  // camera reaches at the default distance (else the weakest, at 80 % of its reach). Never after
+  // the user has touched an input.
+  useEffect(() => {
+    if (seeded.current || touched.current || !v) return;
+    seeded.current = true;
+    if (v.pass) return;
+    const reach = (ppm: number) => (REACH_KEY[ppm] ? v.dori_reach_m[REACH_KEY[ppm]] : undefined);
+    const ok = TASKS.findIndex(([, ppm]) => (reach(ppm) ?? 0) >= dist);
+    if (ok >= 0) { setTask(ok); return; }
+    let weakest = -1;
+    TASKS.forEach(([, ppm], i) => { if (reach(ppm) != null && (weakest < 0 || ppm < TASKS[weakest][1])) weakest = i; });
+    const r = weakest >= 0 ? reach(TASKS[weakest][1]) ?? 0 : 0;
+    if (weakest >= 0 && r >= 2) { setTask(weakest); setDist(Math.max(1, Math.floor(r * 0.8))); }
+  }, [v, TASKS, dist]);
 
   const measure = async () => {
     setEdgeErr("");
@@ -90,7 +118,7 @@ export default function Optics() {
           <Slider label="Eğim (aşağı)" unit="°" value={c.tilt_deg} min={0} max={60} step={0.5} onChange={(x) => update({ tilt_deg: x })} />
           <Slider label="Hedef yüksekliği" unit="m" value={c.target_height_m} min={0.5} max={2.5} step={0.1} onChange={(x) => update({ target_height_m: x })} />
           <Slider label="IR menzili" unit="m" value={c.ir_range_m} min={0} max={500} step={5} onChange={(x) => update({ ir_range_m: x })} />
-          <Slider label="En düşük ışık" unit="lux" value={c.min_lux} min={0} max={2} step={0.01} onChange={(x) => update({ min_lux: x })} />
+          <Slider label="En düşük ışık" unit="lux" value={c.min_lux} min={0} max={2} step={0.01} digits={2} onChange={(x) => update({ min_lux: x })} />
         </div>
       </Panel>
 
@@ -98,7 +126,7 @@ export default function Optics() {
         <Panel title="Kuş bakışı" right={
           <div className="flex gap-1">
             {(["min", "max"] as const).map((m) => (
-              <button key={m} type="button" onClick={() => setMode(m)}
+              <button key={m} type="button" onClick={() => { touched.current = true; setMode(m); }}
                 className={`h-7 rounded-full px-3 text-[11px] font-semibold ${mode === m ? "bg-secondary text-on-secondary" : "bg-bg-5 text-text-2"}`}>
                 {m === "min" ? `Geniş ${fmt(c.focal_min_mm)} mm` : `Dar ${fmt(c.focal_max_mm)} mm`}
               </button>
@@ -111,10 +139,10 @@ export default function Optics() {
         </Panel>
         <Panel title="Gereksinim">
           <div className="grid grid-cols-2 gap-3">
-            <Select label="Görev (EN 62676-4)" value={TASKS[task][0]} options={TASKS.map((t) => t[0])} onChange={(v) => setTask(TASKS.findIndex((t) => t[0] === v))} />
-            <Select label="Hava" value={weather} options={weathers.length ? weathers.map((w) => w.label) : ["Berrak hava"]} onChange={setWeather} />
+            <Select label="Görev (EN 62676-4)" value={TASKS[task][0]} options={TASKS.map((t) => t[0])} onChange={(v) => { touched.current = true; setTask(Math.max(0, TASKS.findIndex((t) => t[0] === v))); }} />
+            <Select label="Hava" value={weather} options={weathers.length ? weathers.map((w) => w.label) : ["Berrak hava"]} onChange={(w) => { touched.current = true; setWeather(w); }} />
           </div>
-          <div className="mt-3"><Slider label="Hedef mesafesi" unit="m" value={dist} min={1} max={Math.max(200, Math.ceil((v?.dori_reach_m.detect ?? 0) * 1.2))} step={0.5} onChange={setDist} /></div>
+          <div className="mt-3"><Slider label="Hedef mesafesi" unit="m" value={dist} min={1} max={Math.max(200, Math.ceil((v?.dori_reach_m.detect ?? 0) * 1.2))} step={0.5} onChange={(d) => { touched.current = true; setDist(d); }} /></div>
         </Panel>
       </div>
 
