@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Transport } from "./rpc";
+import { t } from "./i18n";
 
 /** Line pipe to the core through the Rust shell (`src-tauri/src/lib.rs`). */
 export const tauriTransport: Transport = {
@@ -19,7 +20,7 @@ export const tauriTransport: Transport = {
 
 /** Opened in a plain browser (`npm run dev` without Tauri): no core. */
 export const missingTransport: Transport = {
-  send: () => Promise.reject(new Error("Tauri dışında çalışıyor — çekirdek yok")),
+  send: () => Promise.reject(new Error(t("Tauri dışında çalışıyor — çekirdek yok"))),
   restart: () => Promise.resolve(),
   listen: () => Promise.resolve(() => undefined),
 };

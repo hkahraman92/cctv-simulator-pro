@@ -1,3 +1,5 @@
+import { t } from "../core/i18n";
+
 /** PTZ patrol speed search: the candidate list and the revisit-limit field, kept pure so they can be tested. */
 
 /** perimeter.ptz_patrol accepts 0.5–400 deg/s per candidate, 1–12 candidates, 1–3600 s revisit limit. */
@@ -21,10 +23,10 @@ export function speedCandidates(base: number): number[] {
 
 /** The optional "En uzun izlenmeyen süre (sn)" field: empty = no limit; a number outside 1–3600 is an error. */
 export function parseMaxRevisit(text: string): { value?: number; error?: string } {
-  const t = text.trim().replace(",", ".");
-  if (t === "") return {};
-  const v = Number(t);
-  if (!Number.isFinite(v) || v < REVISIT_MIN || v > REVISIT_MAX) return { error: `${REVISIT_MIN}–${REVISIT_MAX} sn arasında bir değer girin.` };
+  const raw = text.trim().replace(",", ".");
+  if (raw === "") return {};
+  const v = Number(raw);
+  if (!Number.isFinite(v) || v < REVISIT_MIN || v > REVISIT_MAX) return { error: t("{min}–{max} sn arasında bir değer girin.", { min: REVISIT_MIN, max: REVISIT_MAX }) };
   return { value: v };
 }
 

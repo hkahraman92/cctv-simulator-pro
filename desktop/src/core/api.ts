@@ -3,6 +3,7 @@
 // field means "unbounded" (the core sends non-finite floats as null).
 
 import type { CallOptions, RpcClient } from "./rpc";
+import { t } from "./i18n";
 
 export const API_VERSION = "1.0";
 
@@ -137,8 +138,9 @@ export type Api = ReturnType<typeof api>;
 
 /** CameraConfig defaults — identical to cctv_simulator/models.py. */
 export const DEFAULT_CAMERA: CameraConfig = {
+  // i18n-ignore: stored defaults (identical to models.py); camera names are data
   name: "Kamera 1",
-  model_name: "Özel kamera",
+  model_name: "Özel kamera", // i18n-ignore
   sensor_name: '1/2.8"',
   resolution_name: "4 MP (2K - 2688x1520)",
   focal_min_mm: 2.8,
@@ -155,10 +157,13 @@ export const DEFAULT_CAMERA: CameraConfig = {
   camera_type: "",
 };
 
-/** EN 62676-4 DORI levels as keyed in models.DEFAULT_LEVELS. */
+/**
+ * EN 62676-4 DORI levels as keyed in models.DEFAULT_LEVELS. `label` is a getter so it follows the
+ * language at the moment it is read (render time), not at module load; `key` / `tone` are API values.
+ */
 export const DORI = [
-  { key: "Characterize", label: "Teşhis", ppm: 250, tone: "dori-identify" },
-  { key: "Perceive", label: "Tanıma", ppm: 125, tone: "dori-recognize" },
-  { key: "Discern", label: "Gözlem", ppm: 62.5, tone: "dori-observe" },
-  { key: "Outline", label: "Algılama", ppm: 25, tone: "dori-detect" },
+  { key: "Characterize", get label() { return t("Teşhis"); }, ppm: 250, tone: "dori-identify" },
+  { key: "Perceive", get label() { return t("Tanıma"); }, ppm: 125, tone: "dori-recognize" },
+  { key: "Discern", get label() { return t("Gözlem"); }, ppm: 62.5, tone: "dori-observe" },
+  { key: "Outline", get label() { return t("Algılama"); }, ppm: 25, tone: "dori-detect" },
 ] as const;

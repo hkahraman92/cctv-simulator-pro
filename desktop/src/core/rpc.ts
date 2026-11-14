@@ -4,6 +4,8 @@
 // fake in tests). This file owns request ids, response matching, progress,
 // cancellation and timeouts — the Rust side never parses a frame.
 
+import { t } from "./i18n";
+
 export interface Transport {
   send(line: string): Promise<void>;
   /** Subscribe to frames, logs and exits; returns an unsubscribe function. */
@@ -115,7 +117,7 @@ export class RpcClient {
         },
       };
       if (opts.signal?.aborted) {
-        reject(new RpcError(REQUEST_CANCELLED, "İstek iptal edildi."));
+        reject(new RpcError(REQUEST_CANCELLED, t("İstek iptal edildi.")));
         return;
       }
       opts.signal?.addEventListener("abort", onAbort, { once: true });
@@ -124,7 +126,7 @@ export class RpcClient {
         entry.timer = setTimeout(() => {
           onAbort();
           entry.cleanup();
-          reject(new RpcError(TIMEOUT, `Çekirdek ${Math.round(timeout / 1000)} sn içinde yanıt vermedi: ${method}`));
+          reject(new RpcError(TIMEOUT, t("Çekirdek {s} sn içinde yanıt vermedi: {method}", { s: Math.round(timeout / 1000), method })));
         }, timeout);
       }
       this.pending.set(id, entry);
@@ -132,7 +134,7 @@ export class RpcClient {
         .send(JSON.stringify({ jsonrpc: "2.0", id, method, params }))
         .catch((e) => {
           entry.cleanup();
-          reject(new RpcError(CORE_GONE, `Çekirdeğe ulaşılamadı: ${String(e)}`));
+          reject(new RpcError(CORE_GONE, t("Çekirdeğe ulaşılamadı: {error}", { error: String(e) })));
         });
     });
   }
@@ -177,11 +179,11 @@ export class RpcClient {
 
   private onExit() {
     // the core's last stderr line usually says why (missing DLL, traceback tail)
-    this.lastError = this.lastLog ? `Çekirdek süreci kapandı — ${this.lastLog}` : "Çekirdek süreci kapandı.";
+    this.lastError = this.lastLog ? t("Çekirdek süreci kapandı — {log}", { log: this.lastLog }) : t("Çekirdek süreci kapandı.");
     this.setState("down");
     for (const entry of [...this.pending.values()]) {
       entry.cleanup();
-      entry.reject(new RpcError(CORE_GONE, "Çekirdek süreci kapandı."));
+      entry.reject(new RpcError(CORE_GONE, t("Çekirdek süreci kapandı.")));
     }
   }
 }

@@ -8,6 +8,13 @@ describe("splitLevelName", () => {
     expect(splitLevelName("Firma: Yüz")).toEqual({ group: "Firma", short: "Yüz" });
     expect(splitLevelName("Plaka")).toEqual({ group: "", short: "Plaka" });
   });
+  it("shows the EN part of a \"TR / EN\" name only in English, never mistaking px / m for a name", () => {
+    expect(splitLevelName("Optik: İnceleme / Inspection", "en")).toEqual({ group: "Optik", short: "Inspection" });
+    expect(splitLevelName("Teşhis / Identification", "en")).toEqual({ group: "", short: "Identification" });
+    expect(splitLevelName("Firma: Yüz", "en")).toEqual({ group: "Firma", short: "Yüz" });
+    expect(splitLevelName("Tanıma 125 px / m", "en")).toEqual({ group: "", short: "Tanıma 125 px" });
+    expect(splitLevelName("Teşhis / Identification", "tr")).toEqual({ group: "", short: "Teşhis" });
+  });
 });
 
 describe("levelLabel", () => {

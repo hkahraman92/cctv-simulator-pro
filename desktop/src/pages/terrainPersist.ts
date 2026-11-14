@@ -7,6 +7,7 @@
  * Computed results are never persisted; they are recomputed.
  */
 import type { CameraConfig } from "../core/api";
+import { t } from "../core/i18n";
 import type { CoverageLayer, DoriLevel, Scenario, TerrainLevel } from "../core/terrainApi";
 
 export type LineMode = "facility" | "border" | "highway" | "area";
@@ -166,7 +167,7 @@ export function restoreMixedPtz(read: ExtraRead["mixedPtz"], resolved: CameraCon
   const everyN = read.everyN !== undefined ? Math.min(20, Math.max(1, Math.round(read.everyN))) : current.everyN;
   const span = read.span !== undefined ? Math.min(360, Math.max(10, read.span)) : current.span;
   if (!read.model) return { value: { camera: null, everyN, span } };
-  if (!resolved) return { value: { camera: null, everyN, span }, notice: `Projedeki PTZ modeli "${read.model}" kütüphanede yok; "PTZ yok" bırakıldı.` };
+  if (!resolved) return { value: { camera: null, everyN, span }, notice: t("Projedeki PTZ modeli \"{model}\" kütüphanede yok; \"PTZ yok\" bırakıldı.", { model: read.model }) };
   return { value: { camera: resolved, everyN, span } };
 }
 

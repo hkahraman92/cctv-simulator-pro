@@ -1,4 +1,5 @@
 import type { FocalChoice, SingleViewshed } from "../core/terrainApi";
+import { t } from "../core/i18n";
 import { fmt } from "./ui";
 
 /** Sight-line cross-section along the camera axis (engine profile arrays). */
@@ -21,7 +22,7 @@ export function ProfileChart({ profile }: { profile: SingleViewshed["profile"] }
   });
   if (cur.length) visSegs.push(cur.join(" "));
   return (
-    <svg viewBox={`0 0 ${W} ${Hh}`} className="block h-auto w-full" role="img" aria-label="Görüş hattı kesiti">
+    <svg viewBox={`0 0 ${W} ${Hh}`} className="block h-auto w-full" role="img" aria-label={t("Görüş hattı kesiti")}>
       <polygon points={`${X(0)},${Hh - pad.b} ${ground} ${X(maxD)},${Hh - pad.b}`} fill="var(--color-bg-5)" />
       <polyline points={ground} fill="none" stroke="var(--color-text-3)" strokeWidth={1} />
       {visSegs.map((s, i) => <polyline key={i} points={s} fill="none" stroke="var(--color-dori-recognize)" strokeWidth={3} />)}
@@ -35,14 +36,14 @@ export function ProfileChart({ profile }: { profile: SingleViewshed["profile"] }
         </>
       )}
       <g fontSize="11" fontFamily="var(--font-mono)" fill="var(--color-text-3)">
-        <line x1={W - 300} y1={12} x2={W - 282} y2={12} stroke="var(--color-dori-recognize)" strokeWidth={3} /><text x={W - 278} y={15}>görülen zemin</text>
-        <line x1={W - 170} y1={12} x2={W - 152} y2={12} stroke="var(--color-primary)" strokeDasharray="5 4" /><text x={W - 148} y={15}>optik eksen</text>
-        <text x={W - 62} y={15}>kot: m</text>
+        <line x1={W - 300} y1={12} x2={W - 282} y2={12} stroke="var(--color-dori-recognize)" strokeWidth={3} /><text x={W - 278} y={15}>{t("görülen zemin")}</text>
+        <line x1={W - 170} y1={12} x2={W - 152} y2={12} stroke="var(--color-primary)" strokeDasharray="5 4" /><text x={W - 148} y={15}>{t("optik eksen")}</text>
+        <text x={W - 62} y={15}>{t("kot: m")}</text>
       </g>
       <text x={pad.l - 4} y={Y(zMax) + 4} textAnchor="end" fontSize="11" fill="var(--color-text-3)" fontFamily="var(--font-mono)">{fmt(zMax, 0)}</text>
       <text x={pad.l - 4} y={Y(zMin)} textAnchor="end" fontSize="11" fill="var(--color-text-3)" fontFamily="var(--font-mono)">{fmt(zMin, 0)}</text>
       <text x={W - pad.r} y={Hh - 5} textAnchor="end" fontSize="11" fill="var(--color-text-3)" fontFamily="var(--font-mono)">{fmt(maxD, 0)} m</text>
-      <text x={pad.l} y={Hh - 5} fontSize="11" fill="var(--color-text-3)" fontFamily="var(--font-mono)">kamera</text>
+      <text x={pad.l} y={Hh - 5} fontSize="11" fill="var(--color-text-3)" fontFamily="var(--font-mono)">{t("kamera")}</text>
     </svg>
   );
 }
@@ -59,7 +60,7 @@ export function FocalCurve({ curve, best, level }: { curve: FocalChoice[]; best:
   const Y = (v: number) => Hh - pad.b - (v / yMax) * (Hh - pad.t - pad.b);
   const pts = curve.map((c, i) => `${X(c.focal_mm)},${Y(ys[i])}`).join(" ");
   return (
-    <svg viewBox={`0 0 ${W} ${Hh}`} className="block h-auto w-full" role="img" aria-label="Odak uzunluğuna göre kapsama alanı">
+    <svg viewBox={`0 0 ${W} ${Hh}`} className="block h-auto w-full" role="img" aria-label={t("Odak uzunluğuna göre kapsama alanı")}>
       <line x1={pad.l} y1={Hh - pad.b} x2={W - pad.r} y2={Hh - pad.b} stroke="var(--color-bg-6)" />
       <polyline points={pts} fill="none" stroke="var(--color-secondary)" strokeWidth={2} />
       {curve.map((c, i) => <circle key={i} cx={X(c.focal_mm)} cy={Y(ys[i])} r={3} fill="var(--color-secondary)" />)}

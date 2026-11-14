@@ -8,11 +8,14 @@ export function nameStatesPpm(name: string, ppm: number): boolean {
  * Level names commonly read "<group>: <TR name> / <EN name>". For a narrow list the distinguishing
  * part is the Turkish name; the group becomes a muted prefix. Stored names are never changed.
  */
-export function splitLevelName(name: string): { group: string; short: string } {
+export function splitLevelName(name: string, lang: "tr" | "en" = "tr"): { group: string; short: string } {
   const m = /^\s*([^:/]{1,24}?)\s*:\s*(.+)$/.exec(name);
   const rest = m ? m[2] : name;
   const group = m ? m[1].trim() : "";
-  const short = rest.split("/")[0].trim();
+  // English UI: a "<TR> / <EN>" name shows its EN part (display only; "px/m" and "px / m" are not names)
+  const parts = rest.split(/\s+\/\s+/);
+  const en = lang === "en" && parts.length > 1 && !/^(m|ppm)\b/i.test(parts[1].trim()) ? parts[1].trim() : "";
+  const short = en || rest.split("/")[0].trim();
   return short ? { group, short } : { group: "", short: name };
 }
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Maximize, Minus, Plus } from "lucide-react";
 import type { FenceGap, PlacedCamera } from "../core/terrainApi";
 import type { ApproachMarks } from "./ApproachPanel";
+import { t } from "../core/i18n";
 import { fmt } from "./ui";
 import { toDisplayTilt } from "../pages/terrainTilt";
 import { ptzSpeed } from "./patrolSpeeds";
@@ -146,7 +147,7 @@ export default function MapView(p: Props) {
         onPointerUp={onUp}
         onPointerLeave={() => setCursor(null)}
         role="img"
-        aria-label="Arazi haritası"
+        aria-label={t("Arazi haritası")}
       >
         {p.base && <image href={p.base} x={0} y={0} width={W} height={H} preserveAspectRatio="none" />}
         {p.overlay && <image href={p.overlay} x={0} y={0} width={W} height={H} preserveAspectRatio="none" />}
@@ -168,7 +169,7 @@ export default function MapView(p: Props) {
           if (Math.hypot(nx - x, ny - y) < 40 * px) return null;       // too short on screen to hit
           return (
             <rect key={`m${i}`} data-m={i} x={(x + nx) / 2 - 5 * px} y={H - (y + ny) / 2 - 5 * px} width={10 * px} height={10 * px}
-              fill="var(--color-bg-0)" stroke="var(--color-warn)" strokeWidth={1.2 * px} className="cursor-copy"><title>Köşe ekle</title></rect>
+              fill="var(--color-bg-0)" stroke="var(--color-warn)" strokeWidth={1.2 * px} className="cursor-copy"><title>{t("Köşe ekle")}</title></rect>
           );
         })}
         {(p.fence ?? []).map(([x, y], i) => (p.onFenceChange ? (
@@ -177,7 +178,7 @@ export default function MapView(p: Props) {
             {/* the hit area is larger than the mark */}
             <rect data-v={i} x={x - 11 * px} y={H - y - 11 * px} width={22 * px} height={22 * px} fill="transparent" className="cursor-move"
               onDoubleClick={() => p.onFenceChange?.((p.fence ?? []).filter((_, j) => j !== i))}>
-              <title>{`Köşe ${i + 1}: sürükle = taşı · çift tık = sil`}</title>
+              <title>{t("Köşe {n}: sürükle = taşı · çift tık = sil", { n: i + 1 })}</title>
             </rect>
           </g>
         ) : (
@@ -194,7 +195,7 @@ export default function MapView(p: Props) {
         )}
         {p.approach?.breakout && (
           <circle cx={p.approach.breakout[0]} cy={H - p.approach.breakout[1]} r={6 * px} fill="none" stroke="var(--color-danger)" strokeWidth={2.5 * px}>
-            <title>İlk görülme noktası</title>
+            <title>{t("İlk görülme noktası")}</title>
           </circle>
         )}
         {(p.gaps ?? []).map((g, i) => (
@@ -245,9 +246,9 @@ export default function MapView(p: Props) {
       <div className="pointer-events-none absolute top-3 left-3 flex flex-col gap-2">{p.children}</div>
 
       <div className="absolute top-3 right-3 flex flex-col gap-1">
-        <MapButton label="Yakınlaştır" onClick={() => zoom(1 / 1.4)}><Plus size={16} /></MapButton>
-        <MapButton label="Uzaklaştır" onClick={() => zoom(1.4)}><Minus size={16} /></MapButton>
-        <MapButton label="Tümünü göster" onClick={fit}><Maximize size={15} /></MapButton>
+        <MapButton label={t("Yakınlaştır")} onClick={() => zoom(1 / 1.4)}><Plus size={16} /></MapButton>
+        <MapButton label={t("Uzaklaştır")} onClick={() => zoom(1.4)}><Minus size={16} /></MapButton>
+        <MapButton label={t("Tümünü göster")} onClick={fit}><Maximize size={15} /></MapButton>
       </div>
 
       <div className="pointer-events-none absolute right-3 bottom-3 rounded border border-bg-5 bg-bg-1/85 px-2 py-1 font-mono text-[11px] text-text-2 backdrop-blur">
@@ -272,7 +273,7 @@ function ScaleBar({ metresPerPx }: { metresPerPx: number }) {
   const target = metresPerPx * 90;
   const p = 10 ** Math.floor(Math.log10(target));
   const step = [1, 2, 5, 10].map((k) => k * p).find((s) => s >= target) ?? p * 10;
-  return <span>ölçek {step >= 1000 ? `${fmt(step / 1000, step % 1000 ? 1 : 0)} km` : `${fmt(step, 0)} m`}</span>;
+  return <span>{t("ölçek {v}", { v: step >= 1000 ? `${fmt(step / 1000, step % 1000 ? 1 : 0)} km` : `${fmt(step, 0)} m` })}</span>;
 }
 
 /** Hover text for a planned camera: the numbers the plan placed it with. */
@@ -280,14 +281,14 @@ function camTitle(c: PlacedCamera, patrolSpeed?: number) {
   const ptz = c.patrol_span_deg > 0;
   // a PTZ shows its own searched speed when it has one, else the page's global patrol speed
   const sp = ptz ? ptzSpeed(c.speed_deg_s, patrolSpeed ?? NaN) : null;
-  const speed = sp && Number.isFinite(sp.speed) ? ` · hız ${fmt(sp.speed, sp.speed % 1 ? 1 : 0)}°/sn${sp.own ? " (aranan)" : ""}` : "";
+  const speed = sp && Number.isFinite(sp.speed) ? " " + t("· hız {v}°/sn{own}", { v: fmt(sp.speed, sp.speed % 1 ? 1 : 0), own: sp.own ? " " + t("(aranan)") : "" }) : "";
   return [
-    `Direk ${c.pole_id}${ptz ? " · PTZ" : ""} — ${c.camera_model}`,
-    ptz ? `devriye ${fmt(c.patrol_span_deg, 0)}° · merkez ${fmt(c.pan_deg, 0)}° · teşhis erişimi ${fmt(c.effective_range_m, 0)} m${speed}`
-      : `odak ${fmt(c.focal_mm, 1)} mm · yatay FOV ${fmt(c.hfov_deg, 1)}° · yön ${fmt(c.pan_deg, 0)}°`,
-    ptz ? `geniş uç ${fmt(c.focal_mm, 1)} mm · eğim (aşağı) ${fmt(toDisplayTilt(c.tilt_deg), 1)}°`
-      : `menzil ${fmt(c.effective_range_m, 0)} m · eğim (aşağı) ${fmt(toDisplayTilt(c.tilt_deg), 1)}° · kör nokta ${fmt(c.dead_zone_m, 1)} m`,
-    `direk ${fmt(c.mast_height_m, 1)} m`,
+    `${t("Direk {id}", { id: c.pole_id })}${ptz ? " · PTZ" : ""} — ${c.camera_model}`,
+    ptz ? t("devriye {span}° · merkez {pan}° · teşhis erişimi {r} m{speed}", { span: fmt(c.patrol_span_deg, 0), pan: fmt(c.pan_deg, 0), r: fmt(c.effective_range_m, 0), speed })
+      : t("odak {f} mm · yatay FOV {h}° · yön {pan}°", { f: fmt(c.focal_mm, 1), h: fmt(c.hfov_deg, 1), pan: fmt(c.pan_deg, 0) }),
+    ptz ? t("geniş uç {f} mm · eğim (aşağı) {tilt}°", { f: fmt(c.focal_mm, 1), tilt: fmt(toDisplayTilt(c.tilt_deg), 1) })
+      : t("menzil {r} m · eğim (aşağı) {tilt}° · kör nokta {d} m", { r: fmt(c.effective_range_m, 0), tilt: fmt(toDisplayTilt(c.tilt_deg), 1), d: fmt(c.dead_zone_m, 1) }),
+    t("direk {h} m", { h: fmt(c.mast_height_m, 1) }),
   ].join("\n");
 }
 

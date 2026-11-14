@@ -3,6 +3,7 @@ import { DORI } from "../core/api";
 import type { ProjectCamera } from "../core/benchApi";
 import type { Site } from "../core/project";
 import { fmt } from "./ui";
+import { t, tn } from "../core/i18n";
 
 interface Props {
   sites: Site[];
@@ -106,7 +107,7 @@ export default function SitePlan(p: Props) {
     <svg ref={svg} viewBox={`${vw.x} ${vw.y} ${VW} ${VH}`}
       className={`block h-full w-full touch-none rounded bg-bg-2 ${pan ? "cursor-grabbing" : vw.k > 1 && p.tool === "move" ? "cursor-grab" : ""}`}
       onPointerMove={onMove} onPointerUp={end} onPointerLeave={end} role="img"
-      aria-label={`Vaziyet planı, ${p.sites.length} kamera`}
+      aria-label={tn(p.sites.length, "Vaziyet planı, {n} kamera")}
       onDoubleClick={(e) => { if (e.target === e.currentTarget || (e.target as Element).tagName !== "circle") setVw({ x: 0, y: 0, k: 1 }); }}
       onPointerDown={(e) => {
         if (e.target !== e.currentTarget && (e.target as Element).tagName === "circle") return;
@@ -157,11 +158,11 @@ export default function SitePlan(p: Props) {
             <line x1={X(c.pos_x_m)} y1={Y(c.pos_y_m)} x2={X(hx)} y2={Y(hy)} stroke="var(--color-primary)" strokeWidth={1.5 * px} pointerEvents="none" />
             <circle cx={X(hx)} cy={Y(hy)} r={5 * px} fill="var(--color-bg-1)" stroke="var(--color-primary)" strokeWidth={1.5 * px}
               className="cursor-grab" onPointerDown={(e) => { e.stopPropagation(); p.onSelect(i); setDrag({ kind: "turn", i }); }}>
-              <title>{`${c.name}: yön ${fmt(c.heading_deg, 0)}° (sürükle)`}</title>
+              <title>{t("{name}: yön {deg}° (sürükle)", { name: c.name, deg: fmt(c.heading_deg, 0) })}</title>
             </circle>
             <circle cx={X(c.pos_x_m)} cy={Y(c.pos_y_m)} r={(sel ? 8 : 6.5) * px} fill="var(--color-primary)" stroke={sel ? "var(--color-text)" : "var(--color-bg-0)"}
               strokeWidth={2 * px} className="cursor-move" onPointerDown={(e) => { e.stopPropagation(); p.onSelect(i); setDrag({ kind: "move", i }); }}>
-              <title>{`${c.name} (${fmt(c.pos_x_m)}, ${fmt(c.pos_y_m)}) m — sürükle`}</title>
+              <title>{t("{name} ({x}, {y}) m — sürükle", { name: c.name, x: fmt(c.pos_x_m), y: fmt(c.pos_y_m) })}</title>
             </circle>
             <text x={X(c.pos_x_m) + 10 * px} y={Y(c.pos_y_m) - 8 * px} fontSize={11 * px} fill="var(--color-text)" fontFamily="var(--font-mono)"
               stroke="var(--color-bg-0)" strokeWidth={3 * px} paintOrder="stroke" pointerEvents="none">{c.name}</text>
@@ -171,7 +172,7 @@ export default function SitePlan(p: Props) {
     </svg>
       {/* top corner: at the bottom it sat on the axis' last metre label */}
       <div className="pointer-events-none absolute right-2 top-1.5 font-mono text-[11px] text-text-3">
-        {vw.k > 1.01 ? `${fmt(vw.k, 1)}× · sürükle: kaydır · çift tık: sığdır` : "tekerlek: yakınlaştır"}
+        {vw.k > 1.01 ? t("{k}× · sürükle: kaydır · çift tık: sığdır", { k: fmt(vw.k, 1) }) : t("tekerlek: yakınlaştır")}
       </div>
     </div>
   );

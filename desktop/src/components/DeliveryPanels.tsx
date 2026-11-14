@@ -5,14 +5,16 @@ import type { NightCoverage, NightTimeline, Scenario, TerrainApi } from "../core
 import type { useJob } from "../core/useJob";
 import type { Layer } from "./PtzPanels";
 import { confirmDialog } from "./dialogs";
+import { t } from "../core/i18n";
 import { Button, Panel, fmt } from "./ui";
 
 type Job = ReturnType<typeof useJob>;
 const pct = (f: number | null | undefined) => (f == null ? "—" : `%${fmt(f * 100, 1)}`);
-const LEVELS = [["detect", "Algılama"], ["observe", "Gözlem"], ["recognize", "Tanıma"], ["identify", "Teşhis"]] as const;
+const levelRows = () => [["detect", t("Algılama")], ["observe", t("Gözlem")], ["recognize", t("Tanıma")], ["identify", t("Teşhis")]] as const;
 
-const GLOW: [string, number][] = [["Kırsal (karanlık)", 0], ["Banliyö", 0.01], ["Şehir", 0.05]];
-const MODE_TEXT: Record<string, string> = { termal: "Termal", pasif: "Ortam ışığı", ir: "IR", beyaz: "Beyaz ışık", yok: "Görüntü yok" };
+const glowOptions = (): [string, number][] => [[t("Kırsal (karanlık)"), 0], [t("Banliyö"), 0.01], [t("Şehir"), 0.05]];
+// the keys are the core's mode ids; only the text is translated
+const modeText = (m: string): string => ({ termal: t("Termal"), pasif: t("Ortam ışığı"), ir: "IR", beyaz: t("Beyaz ışık"), yok: t("Görüntü yok") } as Record<string, string>)[m];
 const MODE_TONE: Record<string, string> = { termal: "bg-secondary", pasif: "bg-primary", ir: "bg-info", beyaz: "bg-warn", yok: "bg-danger" };
 
 const localNow = (h = 23) => {
@@ -43,66 +45,66 @@ export function NightPanel({ T, job, terrainId, useObstacles, camera, hasLatLon,
     cloud_cover: cfg.cloud / 100, sky_glow_lux: cfg.glow, ir_on: cfg.ir_on, white_light_range_m: cfg.white, camera: cam,
     ...(hasLatLon ? {} : pos),
   };
-  const run = () => void job.run("Gece kapsaması", (o) => T.nightCoverage({ terrain_id: terrainId, use_obstacles: useObstacles, datetime: when, max_px: 1200, ...common, ...band }, o))
+  const run = () => void job.run(t("Gece kapsaması"), (o) => T.nightCoverage({ terrain_id: terrainId, use_obstacles: useObstacles, datetime: when, max_px: 1200, ...common, ...band }, o))
     .then((r) => {
       if (!r) return;
       // remember the position this run was sent with: a terrain without a location uses the typed (assumed) one
       setUsed(hasLatLon ? null : { ...pos });
       setRes(r); onResult(r);
-      onLayer(r.overlay ? { overlay: r.overlay.data, legend: r.legend, title: `Gece · ${r.mode.text}` } : null);
+      onLayer(r.overlay ? { overlay: r.overlay.data, legend: r.legend, title: t("Gece · {mode}", { mode: r.mode.text }) } : null);
       void T.nightTimeline({ terrain_id: terrainId, date: when.slice(0, 10), step_min: 60, ...common }).then(setTl).catch(() => undefined);
     });
   const c = res?.condition;
   return (
-    <Panel title="Gece senaryosu" icon={<Moon size={16} className="text-secondary" />}>
-      <label className="block text-[12px]"><span className="label">Yerel tarih / saat (varsayılan: bugün 23:00, bilgisayar saati)</span>
+    <Panel title={t("Gece senaryosu")} icon={<Moon size={16} className="text-secondary" />}>
+      <label className="block text-[12px]"><span className="label">{t("Yerel tarih / saat (varsayılan: bugün 23:00, bilgisayar saati)")}</span>
         <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)}
           className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 font-mono text-[12px]" /></label>
       {!hasLatLon && (
         <div className="mt-2 grid grid-cols-2 gap-2 text-[12px]">
           {(["lat", "lon"] as const).map((k) => (
-            <label key={k}><span className="label">{k === "lat" ? "Enlem" : "Boylam"}</span>
+            <label key={k}><span className="label">{k === "lat" ? t("Enlem") : t("Boylam")}</span>
               <input type="number" value={pos[k]} step={0.01} onChange={(e) => setPos({ ...pos, [k]: Number(e.target.value) || 0 })}
                 className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 font-mono" /></label>
           ))}
-          <p className="col-span-2 text-[11px] text-text-3">Arazinin konumu yok: güneş / ay için konum girin.</p>
+          <p className="col-span-2 text-[11px] text-text-3">{t("Arazinin konumu yok: güneş / ay için konum girin.")}</p>
         </div>
       )}
       <div className="mt-2 grid grid-cols-2 gap-2 text-[12px]">
-        <label><span className="label">Bulut (%)</span>
+        <label><span className="label">{t("Bulut (%)")}</span>
           <input type="number" min={0} max={100} value={cfg.cloud} onChange={(e) => setCfg({ ...cfg, cloud: Math.min(100, Math.max(0, Number(e.target.value) || 0)) })}
             className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 font-mono" /></label>
-        <label><span className="label">Gökyüzü parıltısı</span>
+        <label><span className="label">{t("Gökyüzü parıltısı")}</span>
           <select value={cfg.glow} onChange={(e) => setCfg({ ...cfg, glow: Number(e.target.value) })} className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-1">
-            {GLOW.map(([l, v]) => <option key={l} value={v}>{l}</option>)}
+            {glowOptions().map(([l, v]) => <option key={l} value={v}>{l}</option>)}
           </select></label>
-        <label><span className="label">Min. aydınlatma (lux)</span>
+        <label><span className="label">{t("Min. aydınlatma (lux)")}</span>
           <input type="number" min={0} step={0.001} value={cfg.min_lux} onChange={(e) => setCfg({ ...cfg, min_lux: Math.max(0, Number(e.target.value) || 0) })}
             className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 font-mono" /></label>
-        <label><span className="label">IR menzili (m)</span>
+        <label><span className="label">{t("IR menzili (m)")}</span>
           <input type="number" min={0} value={cfg.ir} onChange={(e) => setCfg({ ...cfg, ir: Math.max(0, Number(e.target.value) || 0) })}
             className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 font-mono" /></label>
-        <label className="col-span-2 flex items-center gap-2"><input type="checkbox" checked={cfg.ir_on} onChange={(e) => setCfg({ ...cfg, ir_on: e.target.checked })} /> IR aydınlatma açık</label>
-        <label className="col-span-2"><span className="label">Ek beyaz ışık menzili (m, 0 = yok)</span>
+        <label className="col-span-2 flex items-center gap-2"><input type="checkbox" checked={cfg.ir_on} onChange={(e) => setCfg({ ...cfg, ir_on: e.target.checked })} /> {t("IR aydınlatma açık")}</label>
+        <label className="col-span-2"><span className="label">{t("Ek beyaz ışık menzili (m, 0 = yok)")}</span>
           <input type="number" min={0} value={cfg.white} onChange={(e) => setCfg({ ...cfg, white: Math.max(0, Number(e.target.value) || 0) })}
             className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 font-mono" /></label>
       </div>
-      <Button className="mt-2 w-full" disabled={job.running} onClick={run}><Play size={14} /> Gece Kapsamasını Hesapla</Button>
+      <Button className="mt-2 w-full" disabled={job.running} onClick={run}><Play size={14} /> {t("Gece Kapsamasını Hesapla")}</Button>
       {res && c && (
         <div className="mt-2 text-[12px]">
           <div className={res.mode.mode === "yok" ? "text-danger" : res.mode.range_cap_m != null ? "text-warn" : "text-primary"}>● {res.mode.text}</div>
           <div className="mt-1 font-mono text-[11px] text-text-2">
-            Kullanılan: {c.when.replace("T", " ")} (yerel)
-            {used ? ` · enlem ${fmt(used.lat, 2)}, boylam ${fmt(used.lon, 2)}` : tl ? ` · enlem ${fmt(tl.lat, 2)}, boylam ${fmt(tl.lon, 2)}` : ""}
+            {t("Kullanılan: {when} (yerel)", { when: c.when.replace("T", " ") })}
+            {used ? " " + t("· enlem {lat}, boylam {lon}", { lat: fmt(used.lat, 2), lon: fmt(used.lon, 2) }) : tl ? " " + t("· enlem {lat}, boylam {lon}", { lat: fmt(tl.lat, 2), lon: fmt(tl.lon, 2) }) : ""}
           </div>
-          {used && <div className="mt-0.5 text-[11px] text-warn">▲ Arazinin konumu yok: güneş / ay için bu enlem / boylam varsayımdır, gerçek konum değildir.</div>}
+          {used && <div className="mt-0.5 text-[11px] text-warn">{t("▲ Arazinin konumu yok: güneş / ay için bu enlem / boylam varsayımdır, gerçek konum değildir.")}</div>}
           <div className="mt-1 font-mono text-[11px] text-text-2">
-            {c.period} · {fmt(c.lux, c.lux < 1 ? 4 : 0)} lux · güneş {fmt(c.sun_el_deg, 0)}° · ay {fmt(c.moon_el_deg, 0)}° (%{fmt(c.moon_fraction * 100, 0)} aydınlık)
+            {t("{period} · {lux} lux · güneş {sun}° · ay {moon}° (%{frac} aydınlık)", { period: c.period, lux: fmt(c.lux, c.lux < 1 ? 4 : 0), sun: fmt(c.sun_el_deg, 0), moon: fmt(c.moon_el_deg, 0), frac: fmt(c.moon_fraction * 100, 0) })}
           </div>
           <table className="mt-2 w-full font-mono text-[11px]">
-            <thead><tr className="text-text-3"><th className="text-left font-normal">{res.roi_kind === "area" ? "Alan" : `±${fmt(res.band_m, 0)} m bant`}</th><th className="text-right font-normal">Gündüz</th><th className="text-right font-normal">Gece</th></tr></thead>
+            <thead><tr className="text-text-3"><th className="text-left font-normal">{res.roi_kind === "area" ? t("Alan") : t("±{v} m bant", { v: fmt(res.band_m, 0) })}</th><th className="text-right font-normal">{t("Gündüz")}</th><th className="text-right font-normal">{t("Gece")}</th></tr></thead>
             <tbody>
-              {LEVELS.map(([k, l]) => (
+              {levelRows().map(([k, l]) => (
                 <tr key={k}><td className="font-sans">{l}</td><td className="text-right">{pct(res.day_band_share[k])}</td>
                   <td className={`text-right ${res.night_band_share[k] < res.day_band_share[k] - 1e-9 ? "text-warn" : ""}`}>{pct(res.night_band_share[k])}</td></tr>
               ))}
@@ -110,18 +112,18 @@ export function NightPanel({ T, job, terrainId, useObstacles, camera, hasLatLon,
           </table>
           {tl && (
             <div className="mt-2">
-              <div className="label mb-1">24 saat (öğlen → öğlen)</div>
+              <div className="label mb-1">{t("24 saat (öğlen → öğlen)")}</div>
               <div className="flex h-4 overflow-hidden rounded">
                 {tl.steps.slice(0, -1).map((s) => (
-                  <div key={s.when} className={`flex-1 ${MODE_TONE[s.mode ?? "pasif"]}`} title={`${s.when.slice(11)} · ${MODE_TEXT[s.mode ?? "pasif"]} · ${fmt(s.lux, s.lux < 1 ? 4 : 0)} lux`} />
+                  <div key={s.when} className={`flex-1 ${MODE_TONE[s.mode ?? "pasif"]}`} title={`${s.when.slice(11)} · ${modeText(s.mode ?? "pasif")} · ${fmt(s.lux, s.lux < 1 ? 4 : 0)} lux`} />
                 ))}
               </div>
               <div className="mt-1 flex flex-wrap gap-x-3 text-[11px] text-text-3">
-                {[...new Set(tl.steps.map((s) => s.mode ?? "pasif"))].map((m) => <span key={m}><i className={`mr-1 inline-block h-2 w-2 rounded-sm ${MODE_TONE[m]}`} />{MODE_TEXT[m]}</span>)}
+                {[...new Set(tl.steps.map((s) => s.mode ?? "pasif"))].map((m) => <span key={m}><i className={`mr-1 inline-block h-2 w-2 rounded-sm ${MODE_TONE[m]}`} />{modeText(m)}</span>)}
               </div>
             </div>
           )}
-          <p className="mt-2 text-[11px] text-text-3">Aydınlatma menzili motorun kamera başına menzilini sınırlar; IR huzme açısı ve hedef yansıtıcılığı modellenmez.</p>
+          <p className="mt-2 text-[11px] text-text-3">{t("Aydınlatma menzili motorun kamera başına menzilini sınırlar; IR huzme açısı ve hedef yansıtıcılığı modellenmez.")}</p>
         </div>
       )}
     </Panel>
@@ -141,25 +143,26 @@ export function ScenarioPanel({ T, terrainId, scenarios, onChange, canSnapshot }
     T.compareScenarios(scenarios).then((r) => live && setCmp(r)).catch((e) => live && setErr(String(e.message ?? e)));
     return () => { live = false; };
   }, [T, scenarios]);
-  const add = () => T.snapshot({ terrain_id: terrainId, label: label.trim() || `Senaryo ${scenarios.length + 1}` })
+  const add = () => T.snapshot({ terrain_id: terrainId, label: label.trim() || t("Senaryo {n}", { n: scenarios.length + 1 }) })
     .then((r) => {
       onChange([...scenarios, r.scenario].slice(-12)); setLabel("");
-      setErr(scenarios.length >= 12 ? `12 senaryo sınırı: en eski senaryo ("${scenarios[0].label}") listeden çıkarıldı.` : "");
+      setErr(scenarios.length >= 12 ? t('12 senaryo sınırı: en eski senaryo ("{label}") listeden çıkarıldı.', { label: scenarios[0].label }) : "");
     })
     .catch((e) => setErr(String(e.message ?? e)));
   // best column per row, by the metric the core marked (first row = header)
   const bestCol: Record<string, number | null> = cmp ? {
-    Direk: cmp.best.poles, "Toplam maliyet": cmp.best.cost_total, "Bant Algılama": cmp.best.band_detect, "Bant Gözlem": cmp.best.band_observe,
-    "Bant Tanıma": cmp.best.band_recognize, "Bant Teşhis": cmp.best.band_identify, "Gece bant Algılama": cmp.best.night_detect, Kayıt: cmp.best.storage_tb,
+    // i18n-ignore: the keys are the core's row labels
+    Direk: cmp.best.poles, "Toplam maliyet": cmp.best.cost_total, "Bant Algılama": cmp.best.band_detect, "Bant Gözlem": cmp.best.band_observe, // i18n-ignore
+    "Bant Tanıma": cmp.best.band_recognize, "Bant Teşhis": cmp.best.band_identify, "Gece bant Algılama": cmp.best.night_detect, Kayıt: cmp.best.storage_tb, // i18n-ignore
   } : {};
   return (
-    <Panel title="Senaryolar" icon={<Bookmark size={16} className="text-secondary" />} right={<span className="font-mono text-[11px] text-text-3">{scenarios.length}/12</span>}>
+    <Panel title={t("Senaryolar")} icon={<Bookmark size={16} className="text-secondary" />} right={<span className="font-mono text-[11px] text-text-3">{scenarios.length}/12</span>}>
       <div className="flex gap-1.5">
-        <input className="h-8 min-w-0 flex-1 rounded border border-line bg-bg-0 px-2 text-[12px]" placeholder={`Senaryo ${scenarios.length + 1}`}
-          value={label} onChange={(e) => setLabel(e.target.value)} aria-label="Senaryo adı" />
-        <Button disabled={!canSnapshot} onClick={() => void add()}><Bookmark size={14} /> Senaryoyu Kaydet</Button>
+        <input className="h-8 min-w-0 flex-1 rounded border border-line bg-bg-0 px-2 text-[12px]" placeholder={t("Senaryo {n}", { n: scenarios.length + 1 })}
+          value={label} onChange={(e) => setLabel(e.target.value)} aria-label={t("Senaryo adı")} />
+        <Button disabled={!canSnapshot} onClick={() => void add()}><Bookmark size={14} /> {t("Senaryoyu Kaydet")}</Button>
       </div>
-      <p className="mt-1 text-[11px] text-text-3">O anki plan ile o plana çalıştırılan kapsama, ağ/maliyet ve gece sonuçları saklanır; proje dosyasına yazılır.</p>
+      <p className="mt-1 text-[11px] text-text-3">{t("O anki plan ile o plana çalıştırılan kapsama, ağ/maliyet ve gece sonuçları saklanır; proje dosyasına yazılır.")}</p>
       {err && <div className="mt-1 text-[11px] text-danger">■ {err}</div>}
       {cmp && (
         <div className="mt-2 overflow-x-auto">
@@ -167,8 +170,8 @@ export function ScenarioPanel({ T, terrainId, scenarios, onChange, canSnapshot }
             <thead>
               <tr>{cmp.rows[0].map((h, i) => (
                 <th key={i} className={`whitespace-nowrap px-1 pb-1 text-left font-sans font-semibold ${i ? "" : "text-text-3"}`}>
-                  {h}{i > 0 && <button type="button" className="ml-1 text-text-3 hover:text-danger" aria-label={`${h} senaryosunu sil`}
-                    onClick={async () => { if (await confirmDialog(`"${h}" senaryosu silinsin mi? Geri alınamaz.`, { okLabel: "Sil", danger: true })) onChange(scenarios.filter((_, j) => j !== i - 1)); }}><Trash2 size={11} className="inline" /></button>}
+                  {h}{i > 0 && <button type="button" className="ml-1 text-text-3 hover:text-danger" aria-label={t("{name} senaryosunu sil", { name: h })}
+                    onClick={async () => { if (await confirmDialog(t('"{name}" senaryosu silinsin mi? Geri alınamaz.', { name: h }), { okLabel: t("Sil"), danger: true })) onChange(scenarios.filter((_, j) => j !== i - 1)); }}><Trash2 size={11} className="inline" /></button>}
                 </th>))}</tr>
             </thead>
             <tbody>
@@ -179,7 +182,7 @@ export function ScenarioPanel({ T, terrainId, scenarios, onChange, canSnapshot }
               ))}
             </tbody>
           </table>
-          <p className="mt-1 text-[11px] text-text-3">Yeşil: o ölçütte en iyi senaryo. "—" = o senaryoda çalıştırılmadı.</p>
+          <p className="mt-1 text-[11px] text-text-3">{t('Yeşil: o ölçütte en iyi senaryo. "—" = o senaryoda çalıştırılmadı.')}</p>
         </div>
       )}
     </Panel>

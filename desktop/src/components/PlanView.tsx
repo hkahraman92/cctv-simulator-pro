@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { DORI, type OpticResult } from "../core/api";
 import { fmt } from "./ui";
+import { t } from "../core/i18n";
 
 /**
  * Top view drawn from engine numbers only: HFOV, dead zone, DORI distances.
@@ -54,7 +55,7 @@ export default function PlanView({ r, requirement, irRangeM, className = "h-[min
   const ry = requirement ? cy - requirement.distance_m * scale : 0;
   const reqTone = !requirement ? "" : requirement.pass ? "var(--color-primary)"
     : requirement.dayPass ? "var(--color-warn)" : "var(--color-danger)";
-  const reqLabel = requirement ? `hedef ${fmt(requirement.distance_m)} m` : "";
+  const reqLabel = requirement ? t("hedef {d} m", { d: fmt(requirement.distance_m) }) : "";
   const reqRight = cx + 70 + reqLabel.length * 7.5 < W;
   const irArc = (() => {
     if (!ir) return "";
@@ -66,7 +67,7 @@ export default function PlanView({ r, requirement, irRangeM, className = "h-[min
   return (
     <div ref={box} className={`w-full ${className}`}>
       <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="block rounded bg-bg-2" role="img"
-        aria-label={`Kuş bakışı kapsama: yatay FOV ${fmt(r.hfov_deg)} derece, algılama ${fmt(dists[3])} m`}>
+        aria-label={t("Kuş bakışı kapsama: yatay FOV {h} derece, algılama {d} m", { h: fmt(r.hfov_deg), d: fmt(dists[3]) })}>
         {rings.map((m) => {
           const [lx, ly] = pt(m * scale, labelAt);
           return (

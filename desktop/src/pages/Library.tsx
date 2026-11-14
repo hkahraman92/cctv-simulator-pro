@@ -5,6 +5,7 @@ import { useCore } from "../core/CoreProvider";
 import { Button, Panel, fmt } from "../components/ui";
 import { useProject } from "../core/project";
 import LibraryEditor from "../components/LibraryEditor";
+import { t, tn } from "../core/i18n";
 
 type Filter = "all" | "fixed" | "ptz" | "thermal";
 
@@ -80,7 +81,7 @@ export default function Library() {
     try {
       const { camera } = await api.cameraFor(current.name, site.camera);
       replaceCamera(camera);
-      setApplyMsg(`“${current.name}”, “${site.camera.name}” kamerasına uygulandı.`);
+      setApplyMsg(t("“{model}”, “{camera}” kamerasına uygulandı.", { model: current.name, camera: site.camera.name }));
     } catch (e) {
       setApplyMsg(String((e as Error).message ?? e));
     }
@@ -93,18 +94,18 @@ export default function Library() {
     ptz: models.filter((m) => m.is_ptz).length,
     thermal: models.filter(isThermal).length,
   };
-  const chips: [Filter, string][] = [["all", "Tümü"], ["fixed", "Sabit"], ["ptz", "PTZ"], ["thermal", "Termal"]];
+  const chips: [Filter, string][] = [["all", t("Tümü")], ["fixed", t("Sabit")], ["ptz", "PTZ"], ["thermal", t("Termal")]];
   const current = models.find((m) => m.name === sel);
 
   return (
     <div className="flex min-h-full flex-wrap content-start gap-3 p-3">
       <div className="flex min-w-0 flex-[7_1_560px] flex-col gap-3">
-        <Panel title="Kamera Kütüphanesi" icon={<Database size={18} className="text-primary" />}
-          right={<span className="font-mono text-[11px] text-text-3">{models.length} model</span>}>
+        <Panel title={t("Kamera Kütüphanesi")} icon={<Database size={18} className="text-primary" />}
+          right={<span className="font-mono text-[11px] text-text-3">{tn(models.length, "{n} model")}</span>}>
           <label className="relative block">
             <Search size={16} className="absolute top-2.5 left-2.5 text-text-3" aria-hidden />
-            <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Model, sensör, çözünürlük ara…"
-              aria-label="Kamera ara" className="h-9 w-full rounded border border-line bg-bg-0 pr-3 pl-9 text-[13px]" />
+            <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("Model, sensör, çözünürlük ara…")}
+              aria-label={t("Kamera ara")} className="h-9 w-full rounded border border-line bg-bg-0 pr-3 pl-9 text-[13px]" />
           </label>
           <div className="mt-2.5 flex flex-wrap gap-1.5">
             {chips.map(([id, label]) => (
@@ -117,14 +118,14 @@ export default function Library() {
         </Panel>
 
         <section className="overflow-hidden rounded-md bg-bg-4">
-          <div ref={tableRef} className="max-h-[440px] overflow-auto" tabIndex={0} role="grid" aria-label="Kamera modelleri"
+          <div ref={tableRef} className="max-h-[440px] overflow-auto" tabIndex={0} role="grid" aria-label={t("Kamera modelleri")}
             aria-activedescendant={selIndex >= 0 ? `lib-row-${selIndex}` : undefined} onKeyDown={onTableKey}>
             <table className="w-full min-w-[600px] border-collapse">
               <thead>
                 <tr>
-                  {["Model", "Tip", "Sensör", "Çözünürlük", "Odak", "IR"].map((h, i) => (
-                    <th key={h} className={`label sticky top-0 bg-bg-5 px-2 py-2 text-left whitespace-nowrap ${h === "Odak" ? "min-w-[110px]" : ""}`} aria-sort={sort.col === i ? (sort.dir > 0 ? "ascending" : "descending") : "none"}>
-                      <button type="button" className="uppercase hover:text-text" title="Sırala"
+                  {[t("Model"), t("Tip"), t("Sensör"), t("Çözünürlük"), t("Odak"), "IR"].map((h, i) => (
+                    <th key={h} className={`label sticky top-0 bg-bg-5 px-2 py-2 text-left whitespace-nowrap ${i === 4 ? "min-w-[110px]" : ""}`} aria-sort={sort.col === i ? (sort.dir > 0 ? "ascending" : "descending") : "none"}>
+                      <button type="button" className="uppercase hover:text-text" title={t("Sırala")}
                         onClick={() => setSort((s) => (s.col === i ? { col: i, dir: s.dir > 0 ? -1 : 1 } : { col: i, dir: 1 }))}>
                         {h}{sort.col === i ? (sort.dir > 0 ? " ▲" : " ▼") : ""}
                       </button>
@@ -147,19 +148,19 @@ export default function Library() {
                 ))}
               </tbody>
             </table>
-            {!models.length && <div className="p-6 text-center text-text-3">{error || (state === "ready" ? "Yükleniyor…" : "Çekirdeğe bağlı değil.")}</div>}
+            {!models.length && <div className="p-6 text-center text-text-3">{error || (state === "ready" ? t("Yükleniyor…") : t("Çekirdeğe bağlı değil."))}</div>}
           </div>
         </section>
       </div>
 
       <div className="flex min-w-0 flex-[5_1_360px] flex-col gap-3 self-start">
-      <Panel title={current ? current.name : "Model seçin"}>
-        {!current && <p className="text-text-3">Ayrıntı ve DORI menzilleri için tablodan bir model seçin.</p>}
-        {current && !ends && <p className="text-text-3">{error || "Hesaplanıyor…"}</p>}
+      <Panel title={current ? current.name : t("Model seçin")}>
+        {!current && <p className="text-text-3">{t("Ayrıntı ve DORI menzilleri için tablodan bir model seçin.")}</p>}
+        {current && !ends && <p className="text-text-3">{error || t("Hesaplanıyor…")}</p>}
         {current && ends && (
           <>
             <div className="mb-3 font-mono text-[11px] text-text-2">
-              {current.sensor_name} · {current.resolution_name} · yatay FOV {fmt(ends.wide.hfov_deg)}°{ends.tele.focal_mm !== ends.wide.focal_mm && ` → ${fmt(ends.tele.hfov_deg)}°`}
+              {current.sensor_name} · {current.resolution_name} · {t("yatay FOV {v}", { v: `${fmt(ends.wide.hfov_deg)}°${ends.tele.focal_mm !== ends.wide.focal_mm ? ` → ${fmt(ends.tele.hfov_deg)}°` : ""}` })}
             </div>
             <div className="grid grid-cols-2 gap-1.5 font-mono">
               {DORI.map((d) => (
@@ -173,11 +174,11 @@ export default function Library() {
               ))}
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2">
-              <Button onClick={() => void applyToProject()}>Projede kullan</Button>
-              <span className="text-[11px] text-text-3" role="status">{applyMsg || `Seçili proje kamerası: ${site.camera.name}`}</span>
+              <Button onClick={() => void applyToProject()}>{t("Projede kullan")}</Button>
+              <span className="text-[11px] text-text-3" role="status">{applyMsg || t("Seçili proje kamerası: {name}", { name: site.camera.name })}</span>
             </div>
             <p className="mt-3 text-[11px] text-text-3">
-              ◆ Yer mesafesi, modelin kütüphanedeki direk ve eğim değerleriyle optik motordan. {isThermal(current) && "Termal kamerada EN 62676-4 px/m tabloları görünür bant içindir; Johnson ölçütleri ayrıca geçerlidir."}
+              {t("◆ Yer mesafesi, modelin kütüphanedeki direk ve eğim değerleriyle optik motordan.")} {isThermal(current) && t("Termal kamerada EN 62676-4 px/m tabloları görünür bant içindir; Johnson ölçütleri ayrıca geçerlidir.")}
             </p>
           </>
         )}
@@ -190,7 +191,7 @@ export default function Library() {
 
 function Kind({ m }: { m: ModelSummary }) {
   const [cls, label] = isThermal(m)
-    ? ["bg-info-bg text-dori-identify", m.is_ptz ? "PTZ Termal" : "Termal"]   // warm colours are for alarms only
-    : m.is_ptz ? ["bg-bg-6 text-ptz", "PTZ"] : ["bg-bg-5 text-text-2", "Sabit"];
+    ? ["bg-info-bg text-dori-identify", m.is_ptz ? t("PTZ Termal") : t("Termal")]   // warm colours are for alarms only
+    : m.is_ptz ? ["bg-bg-6 text-ptz", "PTZ"] : ["bg-bg-5 text-text-2", t("Sabit")];
   return <span className={`rounded px-1.5 py-0.5 font-mono text-[11px] ${cls}`}>{label}</span>;
 }

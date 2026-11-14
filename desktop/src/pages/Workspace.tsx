@@ -7,6 +7,7 @@ import LevelEditor from "../components/LevelEditor";
 import { useProject } from "../core/project";
 import { useCoalesced, useCore } from "../core/CoreProvider";
 import { usePageActive } from "../core/pageActive";
+import { t } from "../core/i18n";
 import { Button, Panel, Slider, Tile, fmt } from "../components/ui";
 import PlanView, { atGeomLimit } from "../components/PlanView";
 import SitePlan from "../components/SitePlan";
@@ -53,7 +54,7 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
   const r = res.value;
 
   useEffect(() => {
-    if (res.ms !== undefined) onStatus(`Hesap ${fmt(res.ms, 0)} ms`);
+    if (res.ms !== undefined) onStatus(t("Hesap {ms} ms", { ms: fmt(res.ms, 0) }));
   }, [res.ms, onStatus]);
 
   const applyModel = async (name: string) => {
@@ -68,7 +69,7 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
   const mine = proj.value?.cameras.find((x) => x.name === c.name);
 
   const pickPlan = async () => {
-    const f = await open({ title: "Vaziyet planı resmi", filters: [{ name: "Resim", extensions: ["png", "jpg", "jpeg", "bmp", "tif", "tiff"] }] });
+    const f = await open({ title: t("Vaziyet planı resmi"), filters: [{ name: t("Resim"), extensions: ["png", "jpg", "jpeg", "bmp", "tif", "tiff"] }] });
     if (typeof f === "string") setPlan({ plan_path: f });
   };
   const identify = r?.ground_distances.Characterize;
@@ -76,9 +77,9 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
   return (
     <div className="grid min-h-full grid-cols-1 content-start items-start gap-3 p-3 lg:grid-cols-[200px_minmax(280px,1fr)_260px] xl:grid-cols-[220px_minmax(380px,1fr)_300px]">
       <div className="flex min-w-0 flex-col gap-3">
-      <Panel title="Kameralar" icon={<Camera size={16} className="text-secondary" />} className="min-w-0"
+      <Panel title={t("Kameralar")} icon={<Camera size={16} className="text-secondary" />} className="min-w-0"
         right={
-          <button type="button" aria-label="Kamera ekle" title="Kamera ekle" className="flex h-7 w-7 items-center justify-center rounded text-text-2 hover:bg-bg-5 hover:text-primary"
+          <button type="button" aria-label={t("Kamera ekle")} title={t("Kamera ekle")} className="flex h-7 w-7 items-center justify-center rounded text-text-2 hover:bg-bg-5 hover:text-primary"
             onClick={add}>
             <Plus size={16} />
           </button>
@@ -96,30 +97,30 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
         </ul>
         {sites.length > 1 && (
           <Button className="mt-2 w-full" onClick={() => remove(sel)}>
-            <Trash2 size={14} /> Seçiliyi Sil
+            <Trash2 size={14} /> {t("Seçiliyi sil")}
           </Button>
         )}
-        <div className="label mt-4 mb-1">Plan</div>
+        <div className="label mt-4 mb-1">{t("Plan")}</div>
         <div className="flex gap-1.5">
-          <Button className="flex-1" disabled={!isTauri()} onClick={pickPlan}><ImagePlus size={14} /> Resim</Button>
-          {plan.plan_path && <Button title="Plan resmini kaldır" aria-label="Plan resmini kaldır" onClick={() => setPlan({ plan_path: "" })}><X size={14} /></Button>}
+          <Button className="flex-1" disabled={!isTauri()} onClick={pickPlan}><ImagePlus size={14} /> {t("Resim")}</Button>
+          {plan.plan_path && <Button title={t("Plan resmini kaldır")} aria-label={t("Plan resmini kaldır")} onClick={() => setPlan({ plan_path: "" })}><X size={14} /></Button>}
         </div>
         {plan.plan_path && <div className="mt-1 truncate font-mono text-[11px] text-text-3" title={plan.plan_path}>{plan.plan_path.split(/[\\/]/).pop()}</div>}
         {planErr && <div className="mt-1 text-[11px] text-danger">■ {planErr}</div>}
-        <label className="mt-2 block"><span className="label">Plan genişliği (m)</span>
+        <label className="mt-2 block"><span className="label">{t("Plan genişliği (m)")}</span>
           <input type="number" min={5} step={1} value={plan.plan_width_m} onChange={(e) => { const v = Number(e.target.value); if (v >= 5) setPlan({ plan_width_m: v }); }}
             className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 font-mono text-[12px]" /></label>
-        <div className="label mt-4 mb-1">Kontrol noktası</div>
+        <div className="label mt-4 mb-1">{t("Kontrol noktası")}</div>
         <label className="flex items-center gap-2 text-[12px]">
-          <input type="checkbox" checked={plan.target.active} onChange={(e) => setPlan({ target: { ...plan.target, active: e.target.checked } })} /> Etkin
+          <input type="checkbox" checked={plan.target.active} onChange={(e) => setPlan({ target: { ...plan.target, active: e.target.checked } })} /> {t("Etkin")}
         </label>
         {plan.target.active && (
           <>
-            <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-1 text-[12px]" value={plan.level_key} aria-label="Gereken seviye"
+            <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-1 text-[12px]" value={plan.level_key} aria-label={t("Gereken seviye")}
               onChange={(e) => setPlan({ level_key: e.target.value })}>
               {[...effLevels].sort((a, b) => b.ppm - a.ppm).map((lv) => <option key={lv.key} value={lv.key}>{lv.name} · {fmt(lv.ppm, lv.ppm % 1 ? 1 : 0)}</option>)}
             </select>
-            <div className="mt-1 font-mono text-[11px] text-text-3">({fmt(plan.target.x_m)}, {fmt(plan.target.y_m)}) m · ⌖ ile haritaya tıklayın</div>
+            <div className="mt-1 font-mono text-[11px] text-text-3">{t("({x}, {y}) m · ⌖ ile haritaya tıklayın", { x: fmt(plan.target.x_m), y: fmt(plan.target.y_m) })}</div>
             <ul className="mt-2 flex flex-col gap-1 text-[11px]">
               {proj.value?.cameras.map((pc) => pc.target && (
                 <li key={pc.name} className={pc.target.status === "uygun" ? "text-primary" : "text-text-2"}>
@@ -133,17 +134,17 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
       <LevelEditor levels={effLevels} defaults={defaults} onChange={(l) => setLevels(l)} onReset={() => setLevels(null)} custom={!!levels} />
       </div>
 
-      <Panel title={view === "site" ? "Vaziyet Planı" : "Seçili kamera"} className="min-w-0"
+      <Panel title={view === "site" ? t("Vaziyet Planı") : t("Seçili kamera")} className="min-w-0"
         right={
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-1">
             {view === "site" && (
               <>
-                <button type="button" title="Taşı / döndür" aria-label="Taşı / döndür" aria-pressed={tool === "move"} onClick={() => setTool("move")} className={`${TOOL_BTN} ${tool === "move" ? "bg-bg-6 text-primary" : "text-text-2"}`}><Move size={15} /></button>
-                <button type="button" title="Kontrol noktası koy" aria-label="Kontrol noktası koy" aria-pressed={tool === "target"} onClick={() => { setTool("target"); setPlan({ target: { ...plan.target, active: true } }); }}
+                <button type="button" title={t("Taşı / döndür")} aria-label={t("Taşı / döndür")} aria-pressed={tool === "move"} onClick={() => setTool("move")} className={`${TOOL_BTN} ${tool === "move" ? "bg-bg-6 text-primary" : "text-text-2"}`}><Move size={15} /></button>
+                <button type="button" title={t("Kontrol noktası koy")} aria-label={t("Kontrol noktası koy")} aria-pressed={tool === "target"} onClick={() => { setTool("target"); setPlan({ target: { ...plan.target, active: true } }); }}
                   className={`${TOOL_BTN} ${tool === "target" ? "bg-bg-6 text-secondary" : "text-text-2"}`}><Crosshair size={15} /></button>
               </>
             )}
-            {([["site", "Plan"], ["single", "Tek kamera"]] as const).map(([id, l]) => (
+            {([["site", t("Plan")], ["single", t("Tek kamera")]] as const).map(([id, l]) => (
               <button key={id} type="button" aria-pressed={view === id} onClick={() => setView(id)}
                 className={`h-7 whitespace-nowrap rounded-full px-3 text-[11px] font-semibold ${view === id ? "bg-secondary text-on-secondary" : "bg-bg-5 text-text-2"}`}>{l}</button>
             ))}
@@ -151,7 +152,7 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
         }>
         {view === "site" ? (
           <div className="h-[420px]">
-            {dupNames ? <Empty state={state} error="Kamera adları benzersiz olmalı — İnceleme'den yeniden adlandırın." /> : (
+            {dupNames ? <Empty state={state} error={t("Kamera adları benzersiz olmalı — İnceleme'den yeniden adlandırın.")} /> : (
               <SitePlan sites={sites} results={proj.value?.cameras} selected={sel} widthM={planW} heightM={planH} image={planImg?.data}
                 target={plan.target} tool={tool} onSelect={setSel}
                 onMove={(i, x, y) => updateAt(i, { pos_x_m: x, pos_y_m: y })}
@@ -169,30 +170,30 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
                 {d.label} ≥{fmt(d.ppm, d.ppm % 1 ? 1 : 0)}
               </div>
               <div className="font-mono text-[16px] font-bold">{r ? fmt(r.ground_distances[d.key]) : "—"} m</div>
-              {r && atGeomLimit(r, d.key) && <div className="font-mono text-[11px] text-warn">▲ geometrik sınır</div>}
+              {r && atGeomLimit(r, d.key) && <div className="font-mono text-[11px] text-warn">{t("▲ geometrik sınır")}</div>}
             </div>
           ))}
         </div>
         {r && DORI.some((d) => atGeomLimit(r, d.key)) && (
           <p className="mt-2 text-[11px] text-text-2">
-            ▲ Kadrajın üst kenarı zemine {fmt(r.max_geom_dist_m)} m'de iniyor; bu seviyeler lensle değil eğimle sınırlı. Daha uzağı görmek için eğimi azaltın.
+            {t("▲ Kadrajın üst kenarı zemine {m} m'de iniyor; bu seviyeler lensle değil eğimle sınırlı. Daha uzağı görmek için eğimi azaltın.", { m: fmt(r.max_geom_dist_m) })}
           </p>
         )}
       </Panel>
 
-      <Panel title="İnceleme" className="min-w-0">
+      <Panel title={t("İnceleme")} className="min-w-0">
         <label className="mb-3 block">
-          <span className="label">Kamera adı</span>
+          <span className="label">{t("Kamera adı")}</span>
           <input className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={c.name}
-            onChange={(e) => update({ name: e.target.value })} aria-label="Kamera adı" />
-          {sites.filter((s) => s.camera.name === c.name).length > 1 && <span className="text-[11px] text-warn">▲ Bu ad başka bir kamerada da var</span>}
+            onChange={(e) => update({ name: e.target.value })} aria-label={t("Kamera adı")} />
+          {sites.filter((s) => s.camera.name === c.name).length > 1 && <span className="text-[11px] text-warn">{t("▲ Bu ad başka bir kamerada da var")}</span>}
         </label>
         <label className="mb-3 block">
-          <span className="label">Kütüphane modeli</span>
+          <span className="label">{t("Kütüphane modeli")}</span>
           <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]"
             value={models.some((m) => m.name === c.model_name) ? c.model_name : ""}
             onChange={(e) => e.target.value && void applyModel(e.target.value)} disabled={!models.length}>
-            <option value="">{models.length ? "Model seç…" : "Kütüphane yükleniyor…"}</option>
+            <option value="">{models.length ? t("Model seç…") : t("Kütüphane yükleniyor…")}</option>
             {models.map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
           </select>
         </label>
@@ -200,12 +201,12 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
           {c.sensor_name} · {c.resolution_name} · {fmt(c.focal_min_mm)}{varifocal && `–${fmt(c.focal_max_mm)}`} mm
         </div>
         <div className="flex flex-col gap-3">
-          <Slider label="Odak" unit="mm" value={site.focal} min={c.focal_min_mm} max={c.focal_max_mm}
+          <Slider label={t("Odak")} unit="mm" value={site.focal} min={c.focal_min_mm} max={c.focal_max_mm}
             step={(c.focal_max_mm - c.focal_min_mm) / 200 || 1} disabled={!varifocal} onChange={(f) => update({}, f)} />
-          <Slider label="Eğim (aşağı)" unit="°" value={c.tilt_deg} min={0} max={60} step={0.5} onChange={(v) => update({ tilt_deg: v })} />
-          <Slider label="Direk yüksekliği" unit="m" value={c.pole_height_m} min={2} max={30} step={0.5} onChange={(v) => update({ pole_height_m: v })} />
-          <Slider label="Hedef yüksekliği" unit="m" value={c.target_height_m} min={0.5} max={2.5} step={0.1} onChange={(v) => update({ target_height_m: v })} />
-          <Slider label="Yön (0° = doğu, saat tersi)" unit="°" value={c.heading_deg} min={0} max={359} step={1} onChange={(v) => update({ heading_deg: v })} />
+          <Slider label={t("Eğim (aşağı)")} unit="°" value={c.tilt_deg} min={0} max={60} step={0.5} onChange={(v) => update({ tilt_deg: v })} />
+          <Slider label={t("Direk yüksekliği")} unit="m" value={c.pole_height_m} min={2} max={30} step={0.5} onChange={(v) => update({ pole_height_m: v })} />
+          <Slider label={t("Hedef yüksekliği")} unit="m" value={c.target_height_m} min={0.5} max={2.5} step={0.1} onChange={(v) => update({ target_height_m: v })} />
+          <Slider label={t("Yön (0° = doğu, saat tersi)")} unit="°" value={c.heading_deg} min={0} max={359} step={1} onChange={(v) => update({ heading_deg: v })} />
           <div className="grid grid-cols-2 gap-2">
             <label><span className="label">X (m)</span><input type="number" step={0.5} value={c.pos_x_m} onChange={(e) => update({ pos_x_m: Number(e.target.value) || 0 })}
               className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 font-mono text-[12px]" /></label>
@@ -216,25 +217,25 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
         {mine && mine.dead_zone_m > 0.5 && sites.length > 1 && (
           <div className={`mt-3 rounded p-2 text-[11px] ${mine.dead_zone_covered_by.length ? "bg-ok-bg text-primary" : "bg-warn-bg text-warn"}`}>
             {mine.dead_zone_covered_by.length
-              ? `● Kör nokta (${fmt(mine.dead_zone_m)} m) şu kameralarca kapatılıyor: ${mine.dead_zone_covered_by.join(", ")}`
-              : `▲ Kör nokta (${fmt(mine.dead_zone_m)} m) başka hiçbir kamerayla kapatılmıyor.`}
+              ? t("● Kör nokta ({m} m) şu kameralarca kapatılıyor: {names}", { m: fmt(mine.dead_zone_m), names: mine.dead_zone_covered_by.join(", ") })
+              : t("▲ Kör nokta ({m} m) başka hiçbir kamerayla kapatılmıyor.", { m: fmt(mine.dead_zone_m) })}
           </div>
         )}
         <div className="mt-3 grid grid-cols-2 gap-1.5">
-          <Tile label="Yatay FOV" value={r ? fmt(r.hfov_deg) : "—"} unit="°" tone="text-secondary" />
-          <Tile label="Dikey FOV" value={r ? fmt(r.vfov_deg) : "—"} unit="°" />
-          <Tile label="Kör nokta" value={r ? fmt(r.dead_zone_m) : "—"} unit="m" tone={r && r.dead_zone_m > 3 ? "text-warn" : "text-text"} />
-          <Tile label="Teşhis menzili" value={r ? fmt(identify) : "—"} unit="m" tone="text-dori-identify" />
+          <Tile label={t("Yatay FOV")} value={r ? fmt(r.hfov_deg) : "—"} unit="°" tone="text-secondary" />
+          <Tile label={t("Dikey FOV")} value={r ? fmt(r.vfov_deg) : "—"} unit="°" />
+          <Tile label={t("Kör nokta")} value={r ? fmt(r.dead_zone_m) : "—"} unit="m" tone={r && r.dead_zone_m > 3 ? "text-warn" : "text-text"} />
+          <Tile label={t("Teşhis menzili")} value={r ? fmt(identify) : "—"} unit="m" tone="text-dori-identify" />
         </div>
         {r && c.ir_range_m > 0 && r.ground_distances.Outline != null && r.ground_distances.Outline > c.ir_range_m && (
           <div className="mt-3 flex gap-2 rounded bg-warn-bg p-2 text-[11px] text-warn">
             <AlertTriangle size={14} className="shrink-0" />
-            Gece IR menzili ({fmt(c.ir_range_m, 0)} m) Algılama menzilinin ({fmt(r.ground_distances.Outline)} m) altında; gece kapsaması IR ile sınırlı.
+            {t("Gece IR menzili ({ir} m) Algılama menzilinin ({det} m) altında; gece kapsaması IR ile sınırlı.", { ir: fmt(c.ir_range_m, 0), det: fmt(r.ground_distances.Outline) })}
           </div>
         )}
         {r?.recommendations.length ? (
           <ul className="mt-3 list-disc pl-4 text-[11px] text-text-2">
-            {r.recommendations.slice(0, 4).map((t) => <li key={t}>{t}</li>)}
+            {r.recommendations.slice(0, 4).map((rec) => <li key={rec}>{rec}</li>)}
           </ul>
         ) : null}
       </Panel>
@@ -245,7 +246,7 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
 function Empty({ state, error }: { state: string; error?: string }) {
   return (
     <div className="flex h-[340px] items-center justify-center rounded bg-bg-2 p-4 text-center text-text-3">
-      {error ? <span className="text-danger">{error}</span> : state === "down" ? "Çekirdeğe bağlı değil." : "Hesaplanıyor…"}
+      {error ? <span className="text-danger">{error}</span> : state === "down" ? t("Çekirdeğe bağlı değil.") : t("Hesaplanıyor…")}
     </div>
   );
 }
