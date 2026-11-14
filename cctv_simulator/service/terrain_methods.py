@@ -917,6 +917,7 @@ def perimeter_ptz_patrol(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]
     of patrols are scored by the sweep engine and the plan changes only if it gained."""
     from ..focal_optimizer import band_area
     from ..perimeter_ptz import optimize_patrols
+    from ..viewshed_3d import THERMAL_NO_MONITOR, ZONE_MONITOR, is_thermal_camera
 
     entry, t = _terrain_of(params)
     if "plan" not in entry.results:
@@ -925,7 +926,18 @@ def perimeter_ptz_patrol(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]
     ptz_cam = kw.get("ptz_camera")
     if ptz_cam is None or not plan.ptz_cameras:
         raise RpcError(APP_ERROR, "Planda PTZ yok: PTZ modeli ve 'her N direkte bir' seçip planı yeniden kurun.")
-    level = _level_of(params, ptz_cam)
+    level = _level_of(params, ptz_cam, monitor_ok=True)
+    monitor = level == ZONE_MONITOR
+    if monitor and is_thermal_camera(cam):          # the fixed cameras' hold is scored at the same level
+        raise RpcError(APP_ERROR, THERMAL_NO_MONITOR)
+    speeds = params.get("speeds_deg_s")
+    if speeds is not None:
+        if (not isinstance(speeds, list) or not 1 <= len(speeds) <= 12
+                or not all(isinstance(v, (int, float)) and not isinstance(v, bool) and 0.5 <= v <= 400
+                           for v in speeds)):
+            raise RpcError(INVALID_PARAMS, "'speeds_deg_s' 1–12 sayılık (0,5–400 °/sn) bir liste olmalı.")
+        speeds = [float(v) for v in speeds]
+    max_revisit = None if params.get("max_revisit_s") is None else _num(params, "max_revisit_s", lo=1, hi=3600)
     is_area = kw.get("line_mode") == "area"
     band, inside = (0.0, None) if is_area else _band_params(params)
     roi = _plan_roi(t, fence, kw, band, inside)
@@ -936,16 +948,20 @@ def perimeter_ptz_patrol(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]
         if mv is not None:
             exclude = mv.dori_grid >= level
     n = len(plan.ptz_cameras)
-    res = optimize_patrols(t, plan, ptz_cam, roi=roi, exclude=exclude, level=level,
-                           speed_deg_s=_num(params, "speed_deg_s", 20.0, lo=0.5, hi=400),
-                           end_dwell_s=_num(params, "end_dwell_s", 2.0, lo=0, hi=600),
-                           n_focals=int(_num(params, "n_focals", 6, lo=2, hi=16)),
-                           visibility_km=kw["visibility_km"], weather=kw["weather"],
-                           progress=lambda d, total: ctx.progress(d, total + 1, f"PTZ {d}/{total}"))
+    try:
+        res = optimize_patrols(t, plan, ptz_cam, roi=roi, exclude=exclude, level=level,
+                               speed_deg_s=_num(params, "speed_deg_s", 20.0, lo=0.5, hi=400),
+                               end_dwell_s=_num(params, "end_dwell_s", 2.0, lo=0, hi=600),
+                               n_focals=int(_num(params, "n_focals", 6, lo=2, hi=16)),
+                               visibility_km=kw["visibility_km"], weather=kw["weather"],
+                               speeds_deg_s=speeds, max_revisit_s=max_revisit,
+                               progress=lambda d, total: ctx.progress(d, total + 1, f"PTZ {d}/{total}"))
+    except ValueError as exc:
+        raise RpcError(APP_ERROR, str(exc)) from None
     applied = bool(params.get("apply", True)) and res.applied
     if applied:
         entry.set_plan((res.plan, cam, kw, fence))
-    notes = []
+    notes = list(res.notes)
     if not res.applied:
         notes.append("Tarama motoru yeni devriyeleri daha iyi bulmadı; plan değiştirilmedi.")
     elif res.worst_revisit_after_s > res.worst_revisit_before_s + 0.5:
@@ -955,7 +971,11 @@ def perimeter_ptz_patrol(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]
             "worst_revisit_before_s": res.worst_revisit_before_s, "worst_revisit_after_s": res.worst_revisit_after_s,
             "changed": sum(1 for c in res.choices if c.changed), "ptz_count": n, "applied": applied, "notes": notes,
             "choices": [{"pole_id": c.pole_id, "focal_mm": c.focal_mm, "tilt_deg": c.tilt_deg, "hfov_deg": c.hfov_deg,
-                         "changed": c.changed} for c in res.choices],
+                         "changed": c.changed, "speed_deg_s": c.speed_deg_s,
+                         "revisit_before_s": c.revisit_before_s, "revisit_after_s": c.revisit_after_s}
+                        for c in res.choices],
+            "monitor_floor": monitor, "speed_search": speeds is not None, "max_revisit_s": max_revisit,
+            "truncated": res.truncated,
             "plan": _plan_json(res.plan if applied else plan)}
 
 
@@ -963,6 +983,7 @@ def area_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     """Area goal: fewest cameras / poles holding a DORI level over a polygon (verified by the engine)."""
     from ..area_planner import plan_area
     from ..atmosphere import WEATHER_PRESETS
+    from ..viewshed_3d import ZONE_MONITOR
 
     entry, t = _terrain_of(params)
     cam = _camera_from(params.get("camera", {}))
@@ -970,7 +991,7 @@ def area_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     if len(poly) < 3:
         raise RpcError(INVALID_PARAMS, "Alan için en az üç köşe gerekir.")
     levels = _levels_table()
-    level = _level_of(params, cam, "recognize")
+    level = _level_of(params, cam, "recognize", monitor_ok=True)
     weather = str(params.get("weather", "")) if params.get("weather") in WEATHER_PRESETS else ""
     vis = WEATHER_PRESETS.get(weather, 40.0)
     mast = _num(params, "mast_m", 6.0, lo=0.5, hi=200)
@@ -1014,6 +1035,7 @@ def area_plan(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
             "curve": [dataclasses.asdict(st) for st in res.steps], "notes": res.notes,
             "holes_count": res.holes_count, "largest_hole_m2": res.largest_hole_m2,
             "uncovered_m2": res.uncovered_m2, "hole_cameras": res.hole_cameras,
+            "monitor_floor": res.level == ZONE_MONITOR,
             "warnings": _ptz_main_warning(cam), "plan": _plan_json(res.plan)}
 
 
@@ -1052,7 +1074,7 @@ def city_analyse(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     from .. import map_render
     from ..city import CLASS_LABEL, analyse_city
     from ..focal_optimizer import band_area
-    from ..viewshed_3d import ZONE_DETECT, ZONE_MONITOR
+    from ..viewshed_3d import THERMAL_NO_MONITOR, ZONE_DETECT, ZONE_MONITOR, is_thermal_camera
 
     entry, t = _terrain_of(params)
     if entry.city is None:
@@ -1066,10 +1088,13 @@ def city_analyse(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     level = levels.get(params.get("level", "observe"))
     if level is None:
         raise RpcError(INVALID_PARAMS, "'level' monitor, detect, observe, recognize ya da identify olmalı.")
-    if level == ZONE_MONITOR:
-        raise RpcError(APP_ERROR, _MONITOR_UNSUPPORTED)
+    monitor = level == ZONE_MONITOR
+    if monitor and is_thermal_camera(cam):
+        raise RpcError(APP_ERROR, THERMAL_NO_MONITOR)
     ctx.progress(0, 2, f"{len(plan.placed_cameras)} kamera (otoriter motor)")
-    mv, _ = band_area(t, plan, cam, None, ZONE_DETECT, visibility_km=kw["visibility_km"], weather=kw["weather"])
+    # the one engine run the plan's coverage reports; a Monitoring level adds the monitor floor to it
+    mv, _ = band_area(t, plan, cam, None, ZONE_MONITOR if monitor else ZONE_DETECT,
+                      visibility_km=kw["visibility_km"], weather=kw["weather"])
     ctx.progress(1, 2, "Sokak, yüz ve gizlilik")
     roi = None
     if params.get("inside_plan", True) and kw.get("line_mode") == "area":
@@ -1097,7 +1122,7 @@ def city_analyse(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
                      "flagged": c.flagged} for c in res.privacy],
         "private_seen_m2": res.private_seen_m2, "notes": res.notes,
         "overlay": _image(map_render.zone_overlay(res.layer, _overlay_size(t, max_px), mode="city"), max_px=max_px),
-        "legend": map_render.legend("city")[1], "measured": bool(t.is_measured),
+        "legend": map_render.legend("city")[1], "measured": bool(t.is_measured), "monitor_floor": monitor,
     }
 
 

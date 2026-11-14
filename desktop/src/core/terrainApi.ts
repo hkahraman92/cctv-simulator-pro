@@ -60,7 +60,9 @@ export interface RegionInfo {
 
 /** `monitor` is present only in a monitor-floor run (visible cameras): a default run has no such cells */
 export type ZoneAreas = Record<"identify" | "recognize" | "observe" | "detect" | "occluded", number> & { monitor?: number };
-export type LegendRow = [string, [number, number, number, number]];
+/** [label, rgba, key?]. The core does not send the key yet (rows are [text, rgba]); once it sends the level key (e.g.
+ *  "monitor") the legend can mark that row without matching the Turkish label. */
+export type LegendRow = [string, [number, number, number, number]] | [string, [number, number, number, number], string];
 
 export interface SingleViewshed {
   /** zones on Johnson thresholds (thermal camera): detect / observe / recognize = Johnson det / rec / id */

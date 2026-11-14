@@ -57,13 +57,14 @@ from .focal_optimizer import (
     auto_tilts,
     focal_steps,
     level_ppm,
+    levels_for,
 )
 from .models import CameraConfig
 from .mount_visibility import mount_visibility, view_layers
 from .perimeter_planner import PerimeterPlanResult, PlacedCamera, _bitrate_mbps
 from .network_plan import storage_tb as _storage_tb
 from .terrain_loader import TerrainData
-from .viewshed_3d import ZONE_RECOG
+from .viewshed_3d import THERMAL_NO_MONITOR, ZONE_DETECT, ZONE_MONITOR, ZONE_RECOG, is_thermal_camera
 
 NEW_POLE_FACTOR = 0.8          # a new pole must add > 1/0.8 = 1.25x the cells of the best view on a standing one
 MAX_ROUNDS = 3                 # engine-verification rounds
@@ -218,7 +219,9 @@ class _View:
     zone: np.ndarray               # int8, ROI-masked, cropped
 
 
-def _views_for_site(terrain, camera, x, y, mast, roi, level, n_focals, rng, vis, weather, site) -> List[_View]:
+def _views_for_site(terrain, camera, x, y, mast, roi, level, n_focals, rng, vis, weather, site,
+                    truncated: Optional[List[bool]] = None) -> List[_View]:
+    monitor = level == ZONE_MONITOR
     mv = mount_visibility(terrain, x, y, mast, max_range_m=rng)
     roi_w = roi[mv.window]
     out: List[_View] = []
@@ -226,10 +229,13 @@ def _views_for_site(terrain, camera, x, y, mast, roi, level, n_focals, rng, vis,
         return out
     for f in focal_steps(camera, n_focals):
         for t in auto_tilts(camera, f, mast, level, rng):
-            lay = view_layers(mv, camera, tilt_deg=t, focal_mm=f, max_range_m=rng, visibility_km=vis, weather=weather)
+            lay = view_layers(mv, camera, tilt_deg=t, focal_mm=f, max_range_m=rng, visibility_km=vis, weather=weather,
+                              monitor_floor=monitor)
             zv = np.where(lay.visible & roi_w, lay.zone, 0)
             if not (zv >= level).any():
                 continue
+            if truncated is not None and lay.truncated:
+                truncated.append(True)
             step = max(10.0, min(30.0, lay.hfov_deg / 2.0))
             for p in np.arange(0.0, 360.0, step):
                 z = np.where(_cone(lay.center_az_rad, float(p), lay.hfov_deg), zv, 0)
@@ -253,11 +259,18 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
 
     ``roi_mask`` narrows the target to part of the polygon (e.g. its streets);
     ``sites_fn(step_m)`` replaces the boundary / grid pole sites (e.g. points
-    along the streets, where lamp posts stand)."""
-    from . import surface_obstacles as obs
-    from .viewshed_3d import reject_monitor_level
+    along the streets, where lamp posts stand).
 
-    reject_monitor_level(level, "alan planlayıcısı")
+    ``level=ZONE_MONITOR`` (EN 62676-4 Monitoring, 12.5 px/m; visible cameras) is
+    planned and verified with the monitor floor: candidate spacing and the mount
+    raster follow the monitor reach (about twice Detection's), every view is built
+    with ``monitor_floor`` and the engine run that reports the share carries it too."""
+    from . import surface_obstacles as obs
+
+    monitor = level == ZONE_MONITOR
+    lvls = levels_for(level)
+    if monitor and is_thermal_camera(camera):
+        raise ValueError(THERMAL_NO_MONITOR)
     ring = _ring(polygon)
     if len(ring) < 4:
         raise ValueError("Alan için en az üç köşe gerekir.")
@@ -277,7 +290,10 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
         raise ValueError("Termal kamerada Teşhis (yüz) seviyesi yoktur; hedef olarak Johnson algılama, "
                          "tanıma ya da teşhis seviyesini seçin.")
     tele = float(max(camera.focal_max_mm, camera.focal_min_mm))
-    reach_tele = _ground_reach(camera, tele, ppm, mast_height_m)
+    # Candidate spacing follows the target's reach -- but Monitoring's (about twice Detection's) must not
+    # thin the candidates out: a 100 m street got ONE site and the goal could not be held. A monitor
+    # plan therefore spaces its candidates like a Detection plan; the longer reach shows in the views.
+    reach_tele = _ground_reach(camera, tele, level_ppm(camera, ZONE_DETECT) if monitor else ppm, mast_height_m)
     # open ground: half the tele reach; street poles: lamp-post density (buildings cut the sightlines)
     step0 = spacing_m or max(2.0 * terrain.cell_size_m, (0.25 if sites_fn is not None else 0.5) * reach_tele)
     if sites_fn is None:
@@ -289,7 +305,8 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
             step *= 1.15
             sites = sites_fn(step)
     xs, ys = [p[0] for p in ring], [p[1] for p in ring]
-    cap = _mount_range(camera, None)
+    cap = _mount_range(camera, None, level)
+    clipped: List[bool] = []
 
     views: List[_View] = []
     site_xy: List[Tuple[float, float]] = []
@@ -303,12 +320,12 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
         k = len(site_xy)
         site_xy.append((x, y))
         views += _views_for_site(terrain, camera, x, y, mast_height_m, roi, level, n_focals, rng,
-                                 visibility_km, weather, k)
+                                 visibility_km, weather, k, clipped if rng >= cap - 1e-6 else None)
         if progress:
             progress(i + 1, len(sites) + MAX_ROUNDS)
 
-    cnt = {lv: np.zeros(roi.shape, np.int32) for lv in LEVELS}
-    weights = {lv: (1.0 if lv == level else (1e-3 if lv > level else 0.0)) for lv in LEVELS}
+    cnt = {lv: np.zeros(roi.shape, np.int32) for lv in lvls}
+    weights = {lv: (1.0 if lv == level else (1e-3 if lv > level else 0.0)) for lv in lvls}
     chosen: List[int] = []
     per_site: Dict[int, int] = {}
     steps: List[AreaStep] = []
@@ -336,7 +353,7 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
 
     def add(i: int, sign: int) -> None:
         v = views[i]
-        for lv in LEVELS:
+        for lv in lvls:
             cnt[lv][v.sl] += sign * (v.zone >= lv)
 
     def frac() -> float:
@@ -427,11 +444,12 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
 
     def engine(plan_):
         from .focal_optimizer import band_area
-        from .viewshed_3d import ZONE_DETECT
         # the same engine run (every pole out to its Algılama reach) as coverage, approach and
         # city analysis: a cut at the target level's reach samples rays differently and gave
-        # the same plan a second, slightly different share
-        mv_, _ = band_area(terrain, plan_, camera, roi, ZONE_DETECT, visibility_km=visibility_km, weather=weather)
+        # the same plan a second, slightly different share. A Monitoring target runs the engine
+        # with the monitor floor, exactly as coverage does for a monitor-level plan.
+        mv_, _ = band_area(terrain, plan_, camera, roi, ZONE_MONITOR if monitor else ZONE_DETECT,
+                           visibility_km=visibility_km, weather=weather)
         return mv_
 
     chosen_set: set = set()
@@ -495,6 +513,9 @@ def plan_area(terrain: TerrainData, polygon: Sequence[Tuple[float, float]], came
     if max_hole_m2 is not None and holes and max(holes) > max_hole_m2:
         notes.append(f"{sum(a > max_hole_m2 for a in holes)} delik {max_hole_m2:.0f} m² sınırından büyük kaldı: "
                      "aday direklerden oraya yeterli görüş yok (engel / menzil / kamera tavanı).")
+    if clipped:
+        notes.append("İzleme erişimi aday direğin analiz menzilini (en çok "
+                     f"{cap:.0f} m) aşıyor: ötesindeki hücreler bu planda sayılmadı.")
     if skipped:
         notes.append(f"{skipped} aday direk yeri bina / ağaç içinde kaldığı için atlandı.")
     notes.append(f"Aday direk yerleri {step:.0f} m aralıkla: {len(site_xy)} yer"

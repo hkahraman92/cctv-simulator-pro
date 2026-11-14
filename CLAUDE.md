@@ -1043,8 +1043,20 @@ rasteri tabandan bağımsızdır (önbellek anahtarı değişmez), ama direğin
 `coverage_masks["monitor"]`). Aranan istek 25 px/m altındaysa
 `perimeter.coverage` motoru izleme tabanıyla koşar ve `band_share.monitor` yazar.
 `"monitor"` kabul eden hizmet yöntemleri: coverage, optimize, minimize_poles, compare,
-focal.sweep, viewshed.single; reddedenler: area.plan, ptz_patrol, city.analyse
-(`_level_of(monitor_ok=)`, `reject_monitor_level`).
+focal.sweep, viewshed.single, area.plan, ptz_patrol, city.analyse; reddeden:
+`plan_assisted` (PTZ destekli en az direk; `_level_of(monitor_ok=)`). Üçü de bayrağı
+gerçekten taşır: `area_planner` her görüşü `monitor_floor`'lu kurar, raster menzili
+`_mount_range(level=)` ile izleme erişimine göre (≈ 2× Algılama), doğrulama
+`band_area(ZONE_MONITOR)`; aday direk aralığı Algılama'nınkiyle aynı kalır (daha uzun
+izleme erişimi adayları seyreltirse 100 m'lik sokakta tek yer kalıyor, hedef
+tutmuyordu). `evaluate_sweep` / `ptz_sweeps(monitor_floor=)` ve
+`optimize_patrols(level=ZONE_MONITOR)`: tarama motoru bayrağı `view_layers`'a
+geçirir, `_sweep_reach(monitor_floor=True)` raster'ı iki ucun izleme erişimine göre
+boyar (`truncated` raporlanır); varsayılan koşu bit-aynıdır. `analyse_city(level=
+ZONE_MONITOR)` yalnız izleme tabanıyla koşmuş ızgarayı (`pct_by_zone["monitor"]`
+var) kabul eder; yüz ve gizlilik `>= Algılama` kümelerinden okur, izlemeden
+etkilenmez. `reject_monitor_level` şu an çağrılmıyor; bayrağı taşımayan yeni bir
+yöntem onu kullansın.
 
 ## Çevre çiti boşluk analizi
 
@@ -1170,6 +1182,21 @@ Modu" satırı.
   (`band_share_reach`: ne sürekli ne devriye, ama PTZ çevrilirse ulaşır —
   `focal_optimizer.envelope`, her yön; sonuç `entry.results["ptz_reach"]`'te,
   `PLAN_DERIVED`). Rapor: sürekli · devriye · talep üzerine.
+  **Devriye hızı da aranabilir (açık istek):** `speeds_deg_s=[…]` (None = her PTZ
+  kendi hızını korur, bit-aynı) her (odak, eğim) için hızları da puanlar — yavaş
+  hız bakışı uzatır (daha çok hücre `min_dwell_s`'i geçer) ama revizit büyür.
+  Mevcut hız her zaman adaydır. `max_revisit_s`: hedef hücrelerde (korunan alan,
+  sabitlerin tutmadığı) bu devriyenin güvenilir gördüğü hücrelerin en kötü revizit'i
+  sınırı aşan aday uygun değildir; uygunlar arasında alan belirler, eşitlikte kısa
+  revizit kazanır; hiçbiri tutmazsa PTZ devriyesini korur ve not düşer. Seçilen hız
+  `PlacedCamera.speed_deg_s`'e yazılır (None = çağıranın genel hızı); `patrol_for`
+  onu önceler, dolayısıyla kapsama (`ptz_sweeps`), karma değerlendirme ve canlı
+  oynatma (`ptz.playback`) aynı hızı koşar; plan JSON'u (`asdict`) `speed_deg_s`'i
+  taşır. Ölçüldü (aynı 24 PTZ'li tepelik, Tanıma, ±100 m bant 32,4 ha, 5 odak adımı,
+  hızlar 5/10/20/40/80): hız araması yok 10,88 ha (en kötü revizit 17,4 sn);
+  aramayla 15,09 ha (5 °/sn ve 20 °/sn karışık, en kötü revizit 71 sn);
+  `max_revisit_s=30` → 10,88 ha / 17,4 sn, `=100` → 15,09 ha / 71 sn; 1,0–1,2 sn.
+  İzleme düzeyi aramada 10,4 sn sürdü (raster 3000 m tavanına kadar uzar).
   Testler: `tests/test_ptz_patrol.py`.
 - **Plan uygunluk beyanı** (`plan_statement.py`, `export.plan_statement`):
   `compliance_report` bir MODELİN şartnameye yanıtını beyan eder; bu, bir
@@ -1262,8 +1289,8 @@ Modu" satırı.
 
 ## Açık işler
 
-- İzleme (12,5 px/m) alan planlayıcı, PTZ devriye araması ve şehir analizinde yok:
-  üçü de Türkçe hatayla reddeder (aşağıdaki DORI bölümüne bak).
+- İzleme (12,5 px/m) yalnız `perimeter.plan_assisted`'da yok (Türkçe hatayla reddedilir);
+  alan planlayıcı, PTZ devriye araması ve şehir analizi taşır (DORI bölümüne bak).
 - Kütüphanede adı yalnız kod olan (AB-0000-4413, AB-0000-3224) ve adı broşür
   başlığından gelen (AB-0000-3951 … "FULL HD ÇÖZÜNÜRLÜK …") kayıtlar —
   kullanıcı verisi, kodla düzeltilmez.

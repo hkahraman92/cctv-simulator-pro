@@ -279,16 +279,19 @@ def face_mask(terrain: TerrainData, mv, *, face_height_m: float = 1.6, face_max_
 def analyse_city(terrain: TerrainData, layer: CityLayer, mv, *, level: int, roi: Optional[np.ndarray] = None,
                  face_height_m: float = 1.6, face_max_deg: float = 15.0, flag_share: float = 0.10,
                  labels: Optional[Sequence[str]] = None) -> CityResult:
-    from .focal_optimizer import LEVELS
-    from .viewshed_3d import ZONE_DETECT, reject_monitor_level
+    from .focal_optimizer import levels_for
+    from .viewshed_3d import ZONE_DETECT, ZONE_MONITOR
 
-    reject_monitor_level(level, "şehir analizi")
+    if level == ZONE_MONITOR and "monitor" not in mv.pct_by_zone:
+        # the grids carry no ZONE_MONITOR cells: scoring them would report Detection as Monitoring
+        raise ValueError("İzleme (12,5 px/m) seviyesi için kameralar izleme tabanıyla (monitor_floor) hesaplanmış "
+                         "olmalı; verilen görüş alanı Algılama tabanında.")
     cs2 = terrain.cell_size_m ** 2
     inside = np.ones(layer.street_class.shape, bool) if roi is None else roi
     street = street_target(layer, terrain) & inside
     n_st = int(street.sum())
     dori = mv.dori_grid
-    share = {lv: (float(((dori >= lv) & street).sum()) / n_st if n_st else 0.0) for lv in LEVELS}
+    share = {lv: (float(((dori >= lv) & street).sum()) / n_st if n_st else 0.0) for lv in levels_for(level)}
     by_class = {}
     for code in sorted(CLASS_LABEL, reverse=True):
         m = street_target(layer, terrain, code) & inside

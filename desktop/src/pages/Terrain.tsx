@@ -13,6 +13,7 @@ import type {
 } from "../core/terrainApi";
 import { useJob } from "../core/useJob";
 import { useActiveTerrain } from "../core/activeTerrain";
+import { useWeather } from "../core/weather";
 import { undoScope, useProject } from "../core/project";
 import { confirmDialog } from "../components/dialogs";
 import MapView from "../components/MapView";
@@ -26,6 +27,10 @@ import { ApproachPanel, type ApproachMarks } from "../components/ApproachPanel";
 import { CityPanel } from "../components/CityPanel";
 import { Button, Panel, Slider, Tile, fmt } from "../components/ui";
 import { DISPLAY_TILT_MAX, DISPLAY_TILT_MIN, fromDisplayTilt, toDisplayTilt } from "./terrainTilt";
+import {
+  LEVEL_PPM, buildTerrainExtra, changedKeys, readPlacement, readTerrainExtra, terrainToProjectCamera, type LineMode,
+} from "./terrainPersist";
+import { LegendSwatch } from "../components/LegendSwatch";
 
 const ha = (m2: number) => `${fmt(m2 / 1e4, 2)} ha`;
 const pct = (f: number) => `%${fmt(f * 100, 1)}`;
@@ -61,12 +66,10 @@ type Step = "define" | "plan" | "verify" | "improve" | "deliver";
 const STEPS: readonly (readonly [Step, string])[] = [["define", "Tanımla"], ["plan", "Planla"], ["verify", "Doğrula"], ["improve", "İyileştir"], ["deliver", "Teslim"]];
 // The requirement is ONE target px/m; its level is the highest one that target reaches
 // (plan_statement.declared_level says the same on the core side: 40 px/m -> Detection).
-const LEVEL_PPM: Record<TerrainLevel, number> = { monitor: 12.5, detect: 25, observe: 62.5, recognize: 125, identify: 250 };
 const LEVEL_PPM_THERMAL: Record<TerrainLevel, number> = { monitor: Number.POSITIVE_INFINITY, detect: 1.3, observe: 6.67, recognize: 13.33, identify: 13.33 };
 const levelPpm = (k: TerrainLevel, thermal: boolean) => (thermal ? LEVEL_PPM_THERMAL : LEVEL_PPM)[k];
 const levelOf = (ppm: number, thermal: boolean): TerrainLevel =>
   levelsFor(thermal).reduce<TerrainLevel>((best, [k]) => (ppm >= levelPpm(k, thermal) - 1e-9 ? k : best), "detect");
-type LineMode = "facility" | "border" | "highway" | "area";
 
 export default function Terrain() {
   const active = usePageActive();
@@ -85,7 +88,7 @@ export default function Terrain() {
   // single camera
   const [camera, setCamera] = useState<CameraConfig>({ ...DEFAULT_CAMERA, name: "KAM-01" });
   const [mount, setMount] = useState({ x: 0, y: 0, mast: 8, pan: 0, tilt: -5, range: 600, lens: "max" as "min" | "max", focal: undefined as number | undefined });
-  const [weather, setWeather] = useState("Berrak hava");
+  const [weather, setWeather] = useWeather();   // one "Hava" for the whole session (shared with the optics and 3D pages)
   // DORI target: a person this tall on each cell (sight line + framing to the head)
   const [targetH, setTargetH] = useState(1.8);
   const [sweep, setSweep] = useState<FocalSweep | null>(null);
@@ -267,7 +270,7 @@ export default function Terrain() {
   };
 
   // ── project file: publish this page's state, restore it when a project opens ──
-  const { setTerrainBlock, loadedTerrain, sites: projectSites } = useProject();
+  const { setTerrainBlock, loadedTerrain, sites: projectSites, site: projectSite, update: updateProjectCamera } = useProject();
   // Fence edits undo with Ctrl+Z while this tab is in front (ProjectBar asks undoScope first).
   // Changes closer than 500 ms (a corner drag) are one step.
   const fenceHist = useRef<{ past: [number, number][][]; future: [number, number][][]; last: number; prev: [number, number][] | null; skip: boolean }>(
@@ -306,6 +309,11 @@ export default function Terrain() {
     setPlan((p) => ({ ...p, mast_m: s.camera.pole_height_m || p.mast_m }));
     setSweep(null); setPtzLayer(null);
   };
+  // the reverse of adoptProjectCamera: this page's camera settings into the selected project camera (one undo step)
+  const writeNow = useMemo(() => terrainToProjectCamera({ camera, mast: tab === "perimeter" ? plan.mast_m : mount.mast, tilt: mount.tilt,
+    focal: mount.focal, lens: mount.lens }), [camera, tab, plan.mast_m, mount.mast, mount.tilt, mount.focal, mount.lens]);
+  const writeChanges = changedKeys(projectSite.camera, projectSite.focal, writeNow);
+  const writeToProjectCamera = () => updateProjectCamera(writeNow.patch, writeNow.focal);
   const restoring = useRef(false);     // a project being reopened is not an unsaved change
   useEffect(() => {
     if (!info) return;
@@ -315,20 +323,14 @@ export default function Terrain() {
       terrain_file: info.file, terrain_width_m: info.width_m, terrain_grid: info.cols, viewshed_range_m: mount.range, weather,
       placements: [{ camera: camera.name, x_m: mount.x, y_m: mount.y, mast_m: mount.mast, pan_deg: mount.pan, tilt_deg: mount.tilt,
         range_m: mount.range, lens_mode: mount.lens }],
-      terrain_extra: {
-        camera_name: camera.name, camera_model: camera.model_name, planner_mode: tab === "perimeter" ? "perimeter" : "single",
-        fence_points: fence, fence_closed: plan.closed, line_mode: plan.line_mode, watch_side: plan.watch_side,
-        target_ppm: plan.target_ppm, perimeter_mast_m: plan.mast_m, lens_mode: plan.lens_mode, back_to_back: plan.back_to_back, band_out_m: band.out, band_in_m: band.in, target_height_m: targetH,
-        requirement: { target_ppm: plan.target_ppm, goal_pct: goal },
-        // level / goal_pct repeated for readers of the older schema
-        area_goal: { level: reqLevel, goal_pct: goal, interior: area.interior, per_pole: area.perPole, streets_only: area.streetsOnly,
-          max_hole_m2: area.maxHole, min_cameras: area.minCams, max_cameras: area.maxCams },
-        mixed_ptz: { camera: mixedPtz.camera?.model_name ?? "", every_n: mixedPtz.everyN, patrol_span_deg: mixedPtz.span },
-        prices, scenarios,
-      },
+      terrain_extra: buildTerrainExtra({
+        camera, tab, fence, plan, band, targetH, goal, reqLevel, area, mixedPtz, prices, scenarios,
+        mapMode, useObstacles, focal: mount.focal, patrol, ptzReach, slide, panSearch, covLayer, covLevel, sweepLevel,
+      }),
     }, { touch: !restoring.current });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [setTerrainBlock, info, mount, weather, camera, tab, fence, plan, band, targetH, area, mixedPtz, prices, scenarios, goal, isThermal]);
+  }, [setTerrainBlock, info, mount, weather, camera, tab, fence, plan, band, targetH, area, mixedPtz, prices, scenarios, goal, isThermal,
+    mapMode, useObstacles, patrol, ptzReach, slide, panSearch, covLayer, covLevel, sweepLevel]);
 
   useEffect(() => {
     if (!loadedTerrain || state !== "ready") return;
@@ -343,42 +345,41 @@ export default function Terrain() {
       setTimeout(() => { restoring.current = false; }, 1500);
       if (!t) { setNotice("Projedeki arazi açılamadı (kayıtlı bölge silinmiş ya da dosya taşınmış olabilir)."); return; }
       adopt(t);
-      const pl = (Array.isArray(b.placements) ? b.placements[0] : null) as Record<string, number> | null;
-      if (pl) setMount((m) => ({ ...m, x: pl.x_m ?? m.x, y: pl.y_m ?? m.y, mast: pl.mast_m ?? m.mast, pan: pl.pan_deg ?? m.pan,
-        tilt: pl.tilt_deg ?? m.tilt, range: pl.range_m ?? m.range }));
+      const pl = readPlacement(b);
+      if (pl) setMount((m) => ({ ...m, x: pl.x ?? m.x, y: pl.y ?? m.y, mast: pl.mast ?? m.mast, pan: pl.pan ?? m.pan,
+        tilt: pl.tilt ?? m.tilt, range: pl.range ?? m.range, lens: pl.lens ?? m.lens }));
       if (typeof b.weather === "string" && b.weather) setWeather(b.weather);
-      if (Array.isArray(x.fence_points)) setFence(x.fence_points as [number, number][]);
+      // every key is optional: a project saved before it existed keeps the page's default
+      const e = readTerrainExtra(x);
+      if (e.fence) setFence(e.fence);
       setPlan((p) => ({
-        ...p, closed: typeof x.fence_closed === "boolean" ? x.fence_closed : p.closed,
-        line_mode: (["facility", "border", "highway", "area"].includes(String(x.line_mode)) ? x.line_mode : p.line_mode) as typeof p.line_mode,
-        watch_side: (x.watch_side === "left" || x.watch_side === "right" ? x.watch_side : p.watch_side) as typeof p.watch_side,
-        target_ppm: typeof x.target_ppm === "number" ? x.target_ppm : p.target_ppm,
-        mast_m: typeof x.perimeter_mast_m === "number" ? x.perimeter_mast_m : p.mast_m,
-        lens_mode: x.lens_mode === "max" ? "max" : "min",
-        back_to_back: x.back_to_back === true,
+        ...p, closed: e.closed ?? p.closed, line_mode: e.lineMode ?? p.line_mode, watch_side: e.watchSide ?? p.watch_side,
+        target_ppm: e.targetPpm ?? p.target_ppm, mast_m: e.mast ?? p.mast_m, lens_mode: e.lensMode, back_to_back: e.backToBack,
       }));
-      setBand((bd) => ({ out: typeof x.band_out_m === "number" ? x.band_out_m : bd.out, in: typeof x.band_in_m === "number" ? x.band_in_m : bd.in }));
-      if (typeof x.target_height_m === "number") setTargetH(x.target_height_m);
-      if (x.planner_mode === "perimeter") setTab("perimeter");
-      const ag = (x.area_goal ?? {}) as Record<string, unknown>;
-      const rq = (x.requirement ?? {}) as Record<string, unknown>;
-      if (typeof rq.goal_pct === "number") setGoal(rq.goal_pct);
-      else if (x.line_mode === "area" && typeof ag.goal_pct === "number") setGoal(ag.goal_pct);
-      // an older area project kept its level apart from the fence target
-      if (typeof rq.target_ppm !== "number" && x.line_mode === "area" && typeof ag.level === "string" && ag.level in LEVEL_PPM)
-        setPlan((p) => ({ ...p, target_ppm: LEVEL_PPM[ag.level as DoriLevel] }));
-      setStep(Array.isArray(x.fence_points) && x.fence_points.length >= 2 ? "plan" : "define");
+      setBand((bd) => ({ out: e.bandOut ?? bd.out, in: e.bandIn ?? bd.in }));
+      if (e.targetH !== undefined) setTargetH(e.targetH);
+      if (e.plannerMode === "perimeter") setTab("perimeter");
+      if (e.goal !== undefined) setGoal(e.goal);
+      setStep(e.fence && e.fence.length >= 2 ? "plan" : "define");
       setArea((a) => ({
-        interior: typeof ag.interior === "boolean" ? ag.interior : a.interior,
-        perPole: typeof ag.per_pole === "number" ? ag.per_pole : a.perPole,
-        streetsOnly: typeof ag.streets_only === "boolean" ? ag.streets_only : a.streetsOnly,
-        maxHole: typeof ag.max_hole_m2 === "number" ? ag.max_hole_m2 : a.maxHole,
-        minCams: typeof ag.min_cameras === "number" ? ag.min_cameras : a.minCams,
-        maxCams: typeof ag.max_cameras === "number" ? ag.max_cameras : a.maxCams,
+        interior: e.area.interior ?? a.interior, perPole: e.area.perPole ?? a.perPole, streetsOnly: e.area.streetsOnly ?? a.streetsOnly,
+        maxHole: e.area.maxHole ?? a.maxHole, minCams: e.area.minCams ?? a.minCams, maxCams: e.area.maxCams ?? a.maxCams,
       }));
-      if (x.prices && typeof x.prices === "object") setPrices({ ...EMPTY_PRICES, ...(x.prices as Partial<PriceBook>) });
-      setScenarios(Array.isArray(x.scenarios) ? (x.scenarios as Scenario[]) : []);
-      if (typeof x.camera_model === "string" && x.camera_model) void applyModel(x.camera_model, { keepMount: true }).catch(() => undefined);
+      if (e.prices) setPrices({ ...EMPTY_PRICES, ...(e.prices as Partial<PriceBook>) });
+      setScenarios(e.scenarios);
+      if (e.mapMode) setMapMode(e.mapMode);
+      if (e.useObstacles !== undefined) setUseObstacles(e.useObstacles);
+      if (e.patrol) setPatrol(e.patrol);
+      if (e.ptzReach !== undefined) setPtzReach(e.ptzReach);
+      if (e.slide !== undefined) setSlide(e.slide);
+      if (e.panSearch !== undefined) setPanSearch(e.panSearch);
+      if (e.covLayer) setCovLayer(e.covLayer);
+      if (e.covLevel) setCovLevel(e.covLevel);
+      if (e.sweepLevel) setSweepLevel(e.sweepLevel);
+      // applyModel resets the focal to the lens end, so the saved focal goes back after it
+      const restoreFocal = () => { if (e.focal !== undefined) setMount((m) => ({ ...m, focal: e.focal })); };
+      if (e.cameraModel) void applyModel(e.cameraModel, { keepMount: true }).then(restoreFocal).catch(restoreFocal);
+      else restoreFocal();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadedTerrain?.nonce, state]);
@@ -496,9 +497,9 @@ export default function Terrain() {
                 <div className="rounded border border-bg-5 bg-bg-1/85 px-3 py-2 backdrop-blur">
                   <div className="label mb-1">{extra ? extra.title : tab === "single" ? "Görüş alanı · DORI"
                     : covLayer === "target" ? `Hedef · ${coverage?.target.label ?? ""}` : covLayer === "overlap" ? "Yedeklilik" : "Birleşik kapsama · DORI"}</div>
-                  {legend.map(([text, [r, g, b, a]]) => (
-                    <div key={text} className="flex items-center gap-2 text-[11px]">
-                      <span className="h-3 w-3 rounded-sm border border-line" style={{ background: `rgba(${r},${g},${b},${a / 255})` }} />{text}
+                  {legend.map((row) => (
+                    <div key={row[0]} className="flex items-center gap-2 text-[11px]">
+                      <LegendSwatch rgba={row[1]} levelKey={row[2]} />{row[0]}
                     </div>
                   ))}
                 </div>
@@ -536,9 +537,18 @@ export default function Terrain() {
             <option value="">Proje kamerasını kullan…</option>
             {projectSites.map((s, i) => <option key={i} value={i}>{s.camera.name} · {s.camera.model_name} · direk {fmt(s.camera.pole_height_m, 1)} m</option>)}
           </select>
+          <Button className="mt-1.5 w-full" disabled={writeChanges.length === 0} onClick={writeToProjectCamera}
+            title={writeChanges.length === 0 ? "Proje kamerası zaten bu ayarlarda" : `${projectSite.camera.name} kamerasına yazılır (Ctrl+Z ile geri alınır)`}>
+            Proje kamerasına yaz
+          </Button>
+          <p className="mt-1 text-[11px] text-text-3">{writeChanges.length === 0
+            ? `Yazılacak değişiklik yok: ${projectSite.camera.name} zaten bu ayarlarda.`
+            : `Seçili proje kamerasına (${projectSite.camera.name}) model, odak, direk ve eğim yazılır; konum ve ad değişmez.`}</p>
           <label className="mt-2 block">
             <span className="label">Hava (görüş)</span>
             <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={weather} onChange={(e) => setWeather(e.target.value)}>
+              {/* a stored value the catalog does not list (an older project) stays selectable */}
+              {catalog && !catalog.weather.some((w) => w.label === weather) && <option value={weather}>{weather}</option>}
               {(catalog?.weather ?? [{ label: "Berrak hava", visibility_km: 40 }]).map((w) => (
                 <option key={w.label} value={w.label}>{w.label} · {fmt(w.visibility_km)} km</option>
               ))}

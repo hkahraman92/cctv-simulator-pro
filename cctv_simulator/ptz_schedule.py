@@ -128,8 +128,14 @@ def sweep_timing(az_deg: np.ndarray, hfov_deg: float, sweep: Sweep):
 def evaluate_sweep(terrain: TerrainData, x_m: float, y_m: float, mast_height_m: float,
                    camera: CameraConfig, sweep: Sweep, *, max_range_m: float = 2000.0,
                    min_dwell_s: float = 0.5, earth_curvature: bool = True,
-                   visibility_km: float = 40.0, weather: str = "") -> SweepResult:
-    """Revisit / look-time / DORI maps of one sweeping PTZ."""
+                   visibility_km: float = 40.0, weather: str = "",
+                   monitor_floor: bool = False) -> SweepResult:
+    """Revisit / look-time / DORI maps of one sweeping PTZ.
+
+    ``monitor_floor`` (opt-in, default False = unchanged): the view's Monitoring
+    floor (``view_layers``) -- cells between 12.5 and 25 px/m are ZONE_MONITOR; a
+    thermal camera ignores it. The mount raster's ``max_range_m`` must reach the
+    monitor distance or ``truncated`` says so."""
     mv = mount_visibility(terrain, x_m, y_m, mast_height_m, max_range_m=max_range_m,
                           earth_curvature=earth_curvature)
     # Unbounded request: view_layers clamps the view to the raster anyway, so
@@ -138,7 +144,7 @@ def evaluate_sweep(terrain: TerrainData, x_m: float, y_m: float, mast_height_m: 
     # request it could never be true).
     lay = view_layers(mv, camera, tilt_deg=sweep.tilt_deg, focal_mm=sweep.focal_mm,
                       lens_mode=sweep.lens_mode, max_range_m=math.inf,
-                      visibility_km=visibility_km, weather=weather)
+                      visibility_km=visibility_km, weather=weather, monitor_floor=monitor_floor)
     swept, revisit, look, period = sweep_timing(np.degrees(lay.center_az_rad), lay.hfov_deg, sweep)
     # The optics may resolve far past the raster while a steep tilt frames only
     # the foot of the mast: the view runs past the analysis range only if the

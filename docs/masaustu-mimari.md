@@ -35,9 +35,15 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
     PTZ — sabitler sürekli algılar, PTZ `level`'i `max_s` sn içinde tutar; yalnız tutarsa planı değiştirir; bant: `band_m` dış,
     `band_in_m` iç; kapsama `layer=target|dori|overlap`, `level=plan|…`, PTZ
     aralıklı pay, çit çizgisi payı, `ptz_reach` ile talep üzerine erişim; `ptz_patrol`: PTZ
-    başına devriye odak / eğim araması, tarama motoruyla doğrulanır), `area.plan` (alan hedefi: poligonda en az
-    kamera, motorla doğrulanır; `streets_only`, `max_hole_m2`, PTZ), `city.osm|analyse`
-    (sokak / konut / öncelikli yer; sokak kapsaması, yüz, KVKK), `focal.sweep`
+    başına devriye odak / eğim araması, tarama motoruyla doğrulanır; `level` `monitor` olabilir;
+    isteğe bağlı `speeds_deg_s` (1–12 sayı, 0,5–400 °/sn: hız da aranır) ve `max_revisit_s`
+    (en uzun izlenmeyen süre sınırı); yanıtta `choices[].speed_deg_s|revisit_before_s|revisit_after_s`,
+    `monitor_floor`, `speed_search`, `max_revisit_s`, `truncated`; seçilen hız plan JSON'unda
+    `ptz[].speed_deg_s`), `area.plan` (alan hedefi: poligonda en az
+    kamera, motorla doğrulanır; `streets_only`, `max_hole_m2`, PTZ; `level` `monitor` olabilir,
+    yanıtta `monitor_floor`), `city.osm|analyse`
+    (sokak / konut / öncelikli yer; sokak kapsaması, yüz, KVKK; `level` `monitor` olabilir,
+    yanıtta `monitor_floor`, `share_by_level.monitor`), `focal.sweep`
   - `ptz_methods.py`: `ptz.sweep|cue|tour|playback` (canlı tarama: PTZ başına
     pan'dan bağımsız resimler, koniyi kabuk döndürür), `perimeter.mixed`
   - `bench_methods.py`: `optics.project|bench`, `plan.image`, `iq.measure`, `scene.render`,

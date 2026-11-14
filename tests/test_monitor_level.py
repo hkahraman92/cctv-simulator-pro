@@ -311,8 +311,9 @@ def test_service_unknown_level_errors_and_thermal_monitor_is_rejected(plan_sessi
     r = call("focal.sweep", terrain_id=tid, camera=SVC_CAM, x_m=600, y_m=600, level="bogus")
     assert r["error"]["code"] == INVALID_PARAMS
     # planners that do not carry the floor say so instead of answering at the Detection floor
-    r = call("area.plan", terrain_id=tid, camera=SVC_CAM, fence=[[450, 450], [750, 450], [750, 700], [450, 700]],
-             level="monitor")
+    # (area.plan, ptz_patrol and city.analyse now carry it; the PTZ-assisted pole search does not)
+    r = call("perimeter.plan_assisted", terrain_id=tid, camera=SVC_CAM, ptz_camera=dataclasses.asdict(PTZ_CAM),
+             fence=FENCE, level="monitor")
     assert r["error"]["code"] == APP_ERROR and "desteklenmiyor" in r["error"]["message"]
 
 
@@ -380,3 +381,155 @@ def test_no_module_compares_a_zone_grid_to_a_bare_integer():
                         offenders.append(f"{path.relative_to(root)}:{node.lineno}: {ast.unparse(node)}")
     assert not offenders, "zone grids must be compared with ZONE_* names (0 = out of frame is allowed):\n" + \
         "\n".join(offenders)
+
+
+# ── Monitoring in the area planner, the city analysis and the PTZ patrol search ──────────────────
+AREA_SQ = [(100.0, 100.0), (220.0, 100.0), (220.0, 200.0), (100.0, 200.0)]
+AREA_BIG = [(60.0, 60.0), (340.0, 60.0), (340.0, 340.0), (60.0, 340.0)]
+AREA_CAM = CameraConfig(focal_min_mm=2.8, focal_max_mm=12.0)
+
+
+@pytest.mark.parametrize("poly", [AREA_SQ, AREA_BIG])
+def test_area_plan_monitoring_is_engine_verified_and_never_needs_more_cameras_than_detection(poly):
+    from cctv_simulator.area_planner import plan_area, polygon_mask
+
+    terr = TerrainData(np.zeros((200, 200)), cell_size_m=2.0)
+    det = plan_area(terr, poly, AREA_CAM, level=ZONE_DETECT, goal_frac=0.9, mast_height_m=6.0)
+    mon = plan_area(terr, poly, AREA_CAM, level=ZONE_MONITOR, goal_frac=0.9, mast_height_m=6.0)
+    assert det.met and mon.met
+    assert mon.plan.camera_count <= det.plan.camera_count and mon.plan.pole_count <= det.plan.pole_count
+    assert mon.sites_considered == det.sites_considered          # the longer reach never thins the candidates
+    assert mon.plan.target_ppm == PPM_MONITOR
+    # the reported share is the engine's, run with the monitor floor, over the plan's own polygon
+    roi = polygon_mask(terr, poly)
+    mv, _ = band_area(terr, mon.plan, AREA_CAM, roi, ZONE_MONITOR)
+    assert mon.engine_frac == pytest.approx(float(((mv.dori_grid >= ZONE_MONITOR) & roi).sum()) / roi.sum())
+    assert mon.engine_frac >= 0.9
+    # a Detection-floor run of the same plan has no monitor cells and the same >= Detection cells
+    mv_det, _ = band_area(terr, mon.plan, AREA_CAM, roi, ZONE_DETECT)
+    assert not np.any(mv_det.dori_grid == ZONE_MONITOR)
+    assert np.array_equal(mv_det.dori_grid >= ZONE_DETECT, mv.dori_grid >= ZONE_DETECT)
+    assert not any("analiz menzilini" in n for n in mon.notes)   # no raster was clipped below the monitor reach
+
+
+def test_area_plan_thermal_monitoring_is_still_rejected():
+    from cctv_simulator.area_planner import plan_area
+
+    terr = TerrainData(np.zeros((200, 200)), cell_size_m=2.0)
+    with pytest.raises(ValueError, match="İzleme"):
+        plan_area(terr, AREA_SQ, THERMAL, level=ZONE_MONITOR, goal_frac=0.9, mast_height_m=6.0)
+
+
+def _city_scene():
+    from cctv_simulator import city
+    from tests.test_city import located, osm
+
+    t = located()
+    lay = city.build_layer(t, osm(t))
+    cam = CameraConfig(name="S", focal_min_mm=2.8, focal_max_mm=12.0)
+    pls = [CameraPlacement(20, 150, 4.0, cam, pan_deg=90, tilt_deg=-1.5, max_range_m=600, focal_mm_override=12,
+                           label="sokak"),
+           CameraPlacement(205, 140, 4.0, cam, pan_deg=40, tilt_deg=-2, max_range_m=200, focal_mm_override=4,
+                           label="konut")]
+    return t, lay, pls
+
+
+def test_city_analysis_scores_monitoring_and_leaves_faces_and_privacy_alone():
+    from cctv_simulator import city
+
+    t, lay, pls = _city_scene()
+    det_mv = calculate_multi_camera_viewshed(t, pls)
+    mon_mv = calculate_multi_camera_viewshed(t, pls, monitor_floor=True)
+    det = city.analyse_city(t, lay, det_mv, level=ZONE_DETECT)
+    mon = city.analyse_city(t, lay, mon_mv, level=ZONE_MONITOR)
+    assert ZONE_MONITOR not in det.share_by_level and ZONE_MONITOR in mon.share_by_level
+    street = city.street_target(lay, t)
+    assert mon.share_by_level[ZONE_MONITOR] == pytest.approx(
+        float(((mon_mv.dori_grid >= ZONE_MONITOR) & street).sum()) / street.sum())
+    assert mon.share_by_level[ZONE_MONITOR] > det.share_by_level[ZONE_DETECT]
+    for lv in (ZONE_DETECT, ZONE_OBSERVE, ZONE_RECOG, ZONE_IDENT):               # the >= Detection shares do not move
+        assert mon.share_by_level[lv] == det.share_by_level[lv]
+    assert mon.face_share == det.face_share
+    assert [(c.label, c.seen_m2, c.private_m2, c.flagged) for c in mon.privacy] == \
+           [(c.label, c.seen_m2, c.private_m2, c.flagged) for c in det.privacy]
+    assert all(np.array_equal(a, b) for a, b in zip(mon.private_masks, det.private_masks))
+    # grids that were not run with the floor cannot be scored at it (they would report Detection as Monitoring)
+    with pytest.raises(ValueError, match="monitor_floor"):
+        city.analyse_city(t, lay, det_mv, level=ZONE_MONITOR)
+
+
+def test_service_city_analyse_and_area_plan_accept_monitor_and_thermal_is_rejected(monkeypatch):
+    from cctv_simulator import city
+    from tests.test_city import osm
+
+    session.reset()
+    t = TerrainData(np.zeros((150, 150), np.float32), cell_size_m=2.0, is_measured=True, lat_center=39.92,
+                    lon_center=32.85)
+    entry = session.SESSION.add(dict(bare=t, label="mahalle"))
+    monkeypatch.setattr(city, "fetch_city", lambda terrain: city.build_layer(terrain, osm(terrain)))
+    ok("city.osm", terrain_id=entry.id)
+    cam = dataclasses.asdict(AREA_CAM)
+    poly = [[100, 100], [200, 100], [200, 200], [100, 200]]
+    a = ok("area.plan", terrain_id=entry.id, camera=cam, fence=poly, level="monitor", goal_frac=0.9, mast_m=4,
+           streets_only=True)
+    assert a["level"] == "monitor" and a["monitor_floor"] is True and a["met"]
+    cov = ok("perimeter.coverage", terrain_id=entry.id, max_px=300)          # the plan's own target: 12.5 px/m
+    assert cov["monitor_floor"] is True and cov["band_share"]["monitor"] == pytest.approx(a["engine_frac"])
+    r = ok("city.analyse", terrain_id=entry.id, level="monitor", max_px=300)
+    assert r["level"] == "monitor" and r["monitor_floor"] is True
+    d = ok("city.analyse", terrain_id=entry.id, level="detect", max_px=300)
+    assert d["monitor_floor"] is False and "monitor" not in d["share_by_level"]
+    assert r["share_by_level"]["monitor"] >= d["share_by_level"]["detect"] - 1e-9
+    assert r["face_share"] == d["face_share"] and r["private_seen_m2"] == d["private_seen_m2"]
+    # a thermal plan has no Monitoring: the existing Turkish error, from both methods
+    th = dataclasses.asdict(THERMAL)
+    e1 = call("area.plan", terrain_id=entry.id, camera=th, fence=poly, level="monitor")
+    assert e1["error"]["code"] == APP_ERROR and e1["error"]["message"] == THERMAL_NO_MONITOR
+    ok("area.plan", terrain_id=entry.id, camera=th, fence=poly, level="detect", mast_m=4)
+    e2 = call("city.analyse", terrain_id=entry.id, level="monitor")
+    assert e2["error"]["code"] == APP_ERROR and e2["error"]["message"] == THERMAL_NO_MONITOR
+
+
+def test_ptz_patrol_search_scores_monitoring_with_the_sweep_engine_floor():
+    from cctv_simulator.perimeter_ptz import _patrol_added, optimize_patrols, ptz_sweeps
+    from tests.test_ptz_patrol import PTZ as PTZ_PATROL
+    from tests.test_ptz_patrol import _engine_case
+
+    terr, plan, roi = _engine_case()
+    none = np.zeros(roi.shape, bool)
+    res = optimize_patrols(terr, plan, PTZ_PATROL, roi=roi, level=ZONE_MONITOR, n_focals=5)
+    assert res.level == ZONE_MONITOR
+    # numbers are evaluate_sweep's, run with the monitor floor; nothing is ever lost
+    assert res.before_m2 == _patrol_added(terr, plan, PTZ_PATROL, roi, none, ZONE_MONITOR, monitor_floor=True)[0]
+    assert _patrol_added(terr, res.plan, PTZ_PATROL, roi, none, ZONE_MONITOR, monitor_floor=True)[0] == \
+        max(res.before_m2, res.after_m2)
+    assert res.after_m2 >= res.before_m2 > 0
+    # Monitoring holds at least what the same patrols hold at Detection; the default sweep has no such cells
+    assert res.before_m2 >= _patrol_added(terr, plan, PTZ_PATROL, roi, none, ZONE_DETECT)[0]
+    assert not any((sw.dori_grid == ZONE_MONITOR).any() for sw in ptz_sweeps(terr, plan, PTZ_PATROL))
+    assert any((sw.dori_grid == ZONE_MONITOR).any() for sw in ptz_sweeps(terr, plan, PTZ_PATROL, monitor_floor=True))
+    # the raster is sized for the monitor reach: nothing is reported clipped
+    assert not res.truncated and not any("analiz menzilini" in n for n in res.notes)
+
+
+def test_ptz_patrol_thermal_monitoring_is_rejected_and_the_service_carries_the_floor(plan_session):
+    from cctv_simulator.perimeter_ptz import optimize_patrols
+    from tests.test_ptz_patrol import _engine_case
+
+    terr, plan, roi = _engine_case()
+    with pytest.raises(ValueError, match="İzleme"):
+        optimize_patrols(terr, plan, THERMAL, roi=roi, level=ZONE_MONITOR)
+    tid = plan_session
+    ptz = dataclasses.asdict(PTZ_CAM)
+    ok("perimeter.plan", terrain_id=tid, camera=SVC_CAM, fence=FENCE, target_ppm=40, mast_m=8,
+       ptz_camera=ptz, ptz_every_n=2, ptz_patrol_span_deg=360)
+    r = ok("perimeter.ptz_patrol", terrain_id=tid, level="monitor", band_m=100, n_focals=4)
+    assert r["monitor_floor"] is True and r["after_m2"] >= r["before_m2"] and r["truncated"] is False
+    assert r["applied"] is (r["after_m2"] > r["before_m2"])
+    cov = ok("perimeter.coverage", terrain_id=tid, level="monitor", band_m=100, max_px=300)
+    assert cov["monitor_floor"] is True and r["band_area_m2"] == pytest.approx(cov["band_area_m2"])
+    # a thermal PTZ has no Monitoring level: the existing Turkish error
+    ok("perimeter.plan", terrain_id=tid, camera=SVC_CAM, fence=FENCE, target_ppm=40, mast_m=8,
+       ptz_camera=dataclasses.asdict(THERMAL), ptz_every_n=2, ptz_patrol_span_deg=360)
+    e = call("perimeter.ptz_patrol", terrain_id=tid, level="monitor")
+    assert e["error"]["code"] == APP_ERROR and e["error"]["message"] == THERMAL_NO_MONITOR

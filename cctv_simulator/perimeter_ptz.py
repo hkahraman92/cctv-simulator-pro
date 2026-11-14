@@ -17,8 +17,8 @@ by its sweep and its cue map. No Tk.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
-from typing import List, Optional
+from dataclasses import dataclass, field
+from typing import List, Optional, Sequence
 
 import numpy as np
 
@@ -56,7 +56,11 @@ def plan_placements(plan: PerimeterPlanResult, camera: CameraConfig) -> List[Cam
 
 def patrol_for(ptz: PlacedCamera, speed_deg_s: float, end_dwell_s: float):
     """The sweep a planned PTZ runs: rotation for a 360 deg patrol, else a
-    sector centred on its pan."""
+    sector centred on its pan. A PTZ carrying its own ``speed_deg_s`` (chosen by
+    ``optimize_patrols``) patrols at that speed; otherwise ``speed_deg_s`` is
+    the caller's global value."""
+    if getattr(ptz, "speed_deg_s", None) is not None:
+        speed_deg_s = float(ptz.speed_deg_s)
     if ptz.patrol_span_deg >= 359.9:
         return Rotation360(speed_deg_s=speed_deg_s, tilt_deg=ptz.tilt_deg, focal_mm=ptz.focal_mm)
     half = ptz.patrol_span_deg / 2.0
@@ -68,22 +72,33 @@ def patrol_for(ptz: PlacedCamera, speed_deg_s: float, end_dwell_s: float):
 def ptz_sweeps(terrain: TerrainData, plan: PerimeterPlanResult, ptz_camera: CameraConfig, *,
                speed_deg_s: float = 20.0, end_dwell_s: float = 2.0, min_dwell_s: float = 0.5,
                max_range_cap_m: float = 3000.0, visibility_km: float = 40.0, weather: str = "",
-               earth_curvature: bool = True) -> List[SweepResult]:
-    """Each planned PTZ's patrol, as ``evaluate_mixed_perimeter`` runs it."""
-    reach = _sweep_reach(ptz_camera, visibility_km, weather)
+               earth_curvature: bool = True, monitor_floor: bool = False) -> List[SweepResult]:
+    """Each planned PTZ's patrol, as ``evaluate_mixed_perimeter`` runs it.
+    ``monitor_floor`` (default False = unchanged): score with the Monitoring floor."""
+    reach = _sweep_reach(ptz_camera, visibility_km, weather, monitor_floor)
     return [evaluate_sweep(terrain, p.x_m, p.y_m, p.mast_height_m, ptz_camera,
                            patrol_for(p, speed_deg_s, end_dwell_s), max_range_m=_ptz_range(p, reach, max_range_cap_m),
                            min_dwell_s=min_dwell_s, earth_curvature=earth_curvature,
-                           visibility_km=visibility_km, weather=weather)
+                           visibility_km=visibility_km, weather=weather, monitor_floor=monitor_floor)
             for p in plan.ptz_cameras]
 
 
-def _sweep_reach(ptz_camera: CameraConfig, visibility_km: float, weather: str) -> float:
+def _sweep_reach(ptz_camera: CameraConfig, visibility_km: float, weather: str,
+                 monitor_floor: bool = False) -> float:
     # The patrol (wide end) can see further than the tele identification
     # reach: a thermal's engine detection floor is Johnson 1.3 px/m, so a
     # UMA T5 detects to ~1.6 km but identifies to ~75 m. One raster per mast
     # must cover the longer of the two or the sweep is silently clipped.
-    return view_limits(ptz_camera, ptz_camera.focal_min_mm, math.inf, visibility_km, weather).effective_max_range_m
+    reach = view_limits(ptz_camera, ptz_camera.focal_min_mm, math.inf, visibility_km, weather,
+                        monitor_floor).effective_max_range_m
+    if monitor_floor:
+        # The Monitoring floor (12.5 px/m) reaches about twice as far as Detection, and a
+        # zoomed patrol far further than the wide end: a raster sized for the wide end would
+        # clip the very views a monitor-level patrol is searched over.
+        tele = float(max(ptz_camera.focal_max_mm, ptz_camera.focal_min_mm))
+        reach = max(reach, view_limits(ptz_camera, tele, math.inf, visibility_km, weather,
+                                       True).effective_max_range_m)
+    return reach
 
 
 def _ptz_range(p: PlacedCamera, sweep_reach: float, cap_m: float) -> float:
@@ -196,12 +211,15 @@ class PatrolChoice:
     tilt_deg: float
     hfov_deg: float
     changed: bool
+    speed_deg_s: float = 0.0             # patrol speed the PTZ runs after the search
+    revisit_before_s: float = 0.0        # worst unwatched stretch over the cells the starting patrol sees
+    revisit_after_s: float = 0.0         # ... the chosen patrol (== before when nothing was applied)
 
 
 @dataclass
 class PatrolSearch:
-    """Per-PTZ patrol focal / tilt, chosen for the area the patrols ADD at
-    ``level`` (reliably seen, not already held by a fixed camera)."""
+    """Per-PTZ patrol focal / tilt (and optionally speed), chosen for the area the
+    patrols ADD at ``level`` (reliably seen, not already held by a fixed camera)."""
     choices: List[PatrolChoice]
     plan: PerimeterPlanResult            # the plan with the chosen patrols (== input when not applied)
     before_m2: float                     # sweep engine, starting patrols: PTZ-only area in the ROI
@@ -211,25 +229,40 @@ class PatrolSearch:
     roi_area_m2: float
     level: int
     applied: bool                        # False: the sweep engine did not find the new patrols better
+    notes: List[str] = field(default_factory=list)
+    truncated: bool = False              # some patrol sees past the analysis range (the raster cap)
+
+
+def _patrol_added_detail(terrain, plan, ptz_camera, roi, exclude, level, **kw):
+    """(m2 the patrols add in the ROI at ``level``, worst revisit there, worst revisit per PTZ,
+    any sweep truncated) through ``evaluate_sweep``."""
+    seen_any = np.zeros(terrain.z_grid.shape, bool)
+    worst = 0.0
+    per: List[float] = []
+    truncated = False
+    for sw in ptz_sweeps(terrain, plan, ptz_camera, **kw):
+        seen = np.isfinite(sw.revisit_grid) & (sw.dori_grid >= level) & roi & ~exclude
+        w = float(sw.revisit_grid[seen].max()) if seen.any() else 0.0
+        per.append(w)
+        worst = max(worst, w)
+        seen_any |= seen
+        truncated = truncated or bool(sw.truncated)
+    return float(seen_any.sum()) * terrain.cell_size_m ** 2, worst, per, truncated
 
 
 def _patrol_added(terrain, plan, ptz_camera, roi, exclude, level, **kw):
     """(m2 the patrols add in the ROI at ``level``, worst revisit there) through ``evaluate_sweep``."""
-    seen_any = np.zeros(terrain.z_grid.shape, bool)
-    worst = 0.0
-    for sw in ptz_sweeps(terrain, plan, ptz_camera, **kw):
-        seen = np.isfinite(sw.revisit_grid) & (sw.dori_grid >= level) & roi & ~exclude
-        if seen.any():
-            worst = max(worst, float(sw.revisit_grid[seen].max()))
-        seen_any |= seen
-    return float(seen_any.sum()) * terrain.cell_size_m ** 2, worst
+    area, worst, _per, _trunc = _patrol_added_detail(terrain, plan, ptz_camera, roi, exclude, level, **kw)
+    return area, worst
 
 
 def optimize_patrols(terrain: TerrainData, plan: PerimeterPlanResult, ptz_camera: CameraConfig, *,
                      roi: Optional[np.ndarray] = None, exclude: Optional[np.ndarray] = None,
                      level: int = ZONE_DETECT, speed_deg_s: float = 20.0, end_dwell_s: float = 2.0,
                      min_dwell_s: float = 0.5, n_focals: int = 6, max_range_cap_m: float = 3000.0,
-                     visibility_km: float = 40.0, weather: str = "", progress=None) -> PatrolSearch:
+                     visibility_km: float = 40.0, weather: str = "", progress=None,
+                     speeds_deg_s: Optional[Sequence[float]] = None,
+                     max_revisit_s: Optional[float] = None) -> PatrolSearch:
     """Search each planned PTZ's patrol focal and tilt instead of taking the
     planner's fixed wide end.
 
@@ -243,59 +276,114 @@ def optimize_patrols(terrain: TerrainData, plan: PerimeterPlanResult, ptz_camera
     not in ``exclude`` (held by fixed cameras) nor taken by an earlier PTZ.
     The current patrol is candidate 0 and wins ties.
 
+    ``level=ZONE_MONITOR`` (visible cameras) scores with the Monitoring floor
+    (12.5 px/m): every view and every sweep is built with ``monitor_floor`` and
+    the mount raster is sized for the monitor reach (about twice Detection's).
+
+    ``speeds_deg_s`` (opt-in; None = every PTZ keeps its own current speed, the
+    results are bit-identical): speed becomes a third searched dimension. A
+    slower patrol holds each look longer (more cells reach ``min_dwell_s``) but
+    leaves a cell unwatched longer (revisit). Each (focal, tilt, speed) is scored
+    with the same blocks; the current speed is always a candidate.
+    ``max_revisit_s`` (opt-in): a candidate is eligible only if the worst revisit
+    over every target cell (ROI, not held by the fixed cameras) it reliably sees
+    stays within it; among eligible candidates the area decides and a tie goes to
+    the shorter revisit. When even the current patrol is over the limit and no
+    candidate fits, the PTZ keeps its patrol and a note says so.
+
     The chosen patrols are then run through ``evaluate_sweep`` next to the
     starting ones; if they do not add more area the plan is returned unchanged
-    (``applied=False``)."""
+    (``applied=False``). The one exception is a revisit limit the starting
+    patrols break: equal area with every PTZ inside the limit is applied."""
     from dataclasses import replace
 
     from .calculations import camera_optics
     from .focal_optimizer import auto_tilts, focal_steps
-    from .viewshed_3d import reject_monitor_level
-
-    reject_monitor_level(level, "PTZ devriye araması")
     from .mount_visibility import mount_visibility, view_layers
     from .perimeter_planner import dead_zone_for
     from .ptz_schedule import sweep_timing
+    from .viewshed_3d import THERMAL_NO_MONITOR, ZONE_MONITOR, is_thermal_camera
+
+    monitor = level == ZONE_MONITOR
+    if monitor and is_thermal_camera(ptz_camera):
+        raise ValueError(THERMAL_NO_MONITOR)
+    extra_speeds: List[float] = []
+    for s in speeds_deg_s or ():
+        s = float(s)
+        if not math.isfinite(s) or s <= 0.0:
+            raise ValueError("Devriye hızları sıfırdan büyük sayılar olmalı.")
+        extra_speeds.append(s)
+    if max_revisit_s is not None and not (math.isfinite(float(max_revisit_s)) and float(max_revisit_s) > 0.0):
+        raise ValueError("En uzun izlenmeyen süre sınırı sıfırdan büyük olmalı.")
+    search_revisit = speeds_deg_s is not None or max_revisit_s is not None
 
     shape = terrain.z_grid.shape
     roi = np.ones(shape, bool) if roi is None else roi
     exclude = np.zeros(shape, bool) if exclude is None else exclude
     kw = dict(speed_deg_s=speed_deg_s, end_dwell_s=end_dwell_s, min_dwell_s=min_dwell_s,
-              max_range_cap_m=max_range_cap_m, visibility_km=visibility_km, weather=weather)
-    reach = _sweep_reach(ptz_camera, visibility_km, weather)
+              max_range_cap_m=max_range_cap_m, visibility_km=visibility_km, weather=weather,
+              monitor_floor=monitor)
+    reach = _sweep_reach(ptz_camera, visibility_km, weather, monitor)
     taken = exclude.copy()
     choices: List[PatrolChoice] = []
     new_ptz: List[PlacedCamera] = []
+    notes: List[str] = []
     for i, p in enumerate(plan.ptz_cameras):
         rng = _ptz_range(p, reach, max_range_cap_m)
         mv = mount_visibility(terrain, p.x_m, p.y_m, p.mast_height_m, max_range_m=rng)
         free = (roi & ~taken)[mv.window]
+        target_w = (roi & ~exclude)[mv.window]
         start_f = p.focal_mm or ptz_camera.focal_min_mm
+        base = patrol_for(p, speed_deg_s, end_dwell_s)
+        start_speed = float(base.speed_deg_s)
+        speeds = [start_speed] + [s for s in extra_speeds if abs(s - start_speed) > 1e-9]
         cands = [(start_f, p.tilt_deg)]
         for f in focal_steps(ptz_camera, n_focals):
             for lv in {ZONE_DETECT, level}:
                 cands += [(f, t) for t in auto_tilts(ptz_camera, f, p.mast_height_m, lv, rng)]
-        best, best_n, best_seen, best_hfov = cands[0], -1, None, 0.0
-        for f, tilt in cands:
+        best = None                     # (f, tilt, speed, n, worst, seen, hfov) among the eligible
+        current = None                  # candidate 0: the patrol the PTZ runs now
+        for ci, (f, tilt) in enumerate(cands):
             lay = view_layers(mv, ptz_camera, tilt_deg=tilt, focal_mm=f, max_range_m=math.inf,
-                              visibility_km=visibility_km, weather=weather)
-            sweep = replace(patrol_for(p, speed_deg_s, end_dwell_s), tilt_deg=tilt, focal_mm=f)
-            swept, _revisit, look, _period = sweep_timing(np.degrees(lay.center_az_rad), lay.hfov_deg, sweep)
-            seen = lay.visible & swept & (look >= min_dwell_s) & (lay.zone >= level)
-            n = int((seen & free).sum())
-            if n > best_n:                      # strict: the current patrol (first) wins ties
-                best, best_n, best_seen, best_hfov = (f, tilt), n, seen, lay.hfov_deg
-        f, tilt = best
-        changed = abs(f - start_f) > 1e-6 or abs(tilt - p.tilt_deg) > 1e-6
-        if changed:
+                              visibility_km=visibility_km, weather=weather, monitor_floor=monitor)
+            az = np.degrees(lay.center_az_rad)
+            for si, sp in enumerate(speeds):
+                sweep = replace(base, tilt_deg=tilt, focal_mm=f, speed_deg_s=sp)
+                swept, revisit, look, _period = sweep_timing(az, lay.hfov_deg, sweep)
+                seen = lay.visible & swept & (look >= min_dwell_s) & (lay.zone >= level)
+                n = int((seen & free).sum())
+                worst = 0.0
+                if search_revisit:
+                    on_target = seen & target_w
+                    worst = float(revisit[on_target].max()) if on_target.any() else 0.0
+                cand = (f, tilt, sp, n, worst, seen, lay.hfov_deg)
+                if ci == 0 and si == 0:
+                    current = cand
+                if max_revisit_s is not None and worst > float(max_revisit_s) + 1e-9:
+                    continue
+                # strict: the current patrol (first) wins ties -- except on revisit when it is searched
+                if best is None or n > best[3] or (search_revisit and n == best[3] and worst < best[4] - 1e-9):
+                    best = cand
+        if best is None or best[3] <= 0:    # nothing fits the revisit limit / nothing to gain: keep the patrol
+            best = current
+        if best is current and max_revisit_s is not None and current[4] > float(max_revisit_s) + 1e-9:
+            notes.append(f"PTZ {p.pole_id}: hiçbir devriye {float(max_revisit_s):g} sn en uzun izlenmeyen süre "
+                         f"sınırını tutmadı; mevcut devriye bırakıldı.")
+        f, tilt, sp, _n, _worst, best_seen, best_hfov = best
+        moved = abs(f - start_f) > 1e-6 or abs(tilt - p.tilt_deg) > 1e-6
+        faster = abs(sp - start_speed) > 1e-9
+        changed = moved or faster
+        q = p
+        if moved:
             optics = camera_optics(ptz_camera, f)
-            new_ptz.append(replace(p, focal_mm=round(f, 2), tilt_deg=round(tilt, 1),
-                                   hfov_deg=round(optics.hfov_deg, 1), vfov_deg=round(optics.vfov_deg, 1),
-                                   dead_zone_m=round(dead_zone_for(p.mast_height_m, -tilt, optics.vfov_deg), 1)))
-        else:
-            new_ptz.append(p)
-        choices.append(PatrolChoice(p.pole_id, new_ptz[-1].focal_mm or start_f, new_ptz[-1].tilt_deg,
-                                    best_hfov, changed))
+            q = replace(q, focal_mm=round(f, 2), tilt_deg=round(tilt, 1),
+                        hfov_deg=round(optics.hfov_deg, 1), vfov_deg=round(optics.vfov_deg, 1),
+                        dead_zone_m=round(dead_zone_for(p.mast_height_m, -tilt, optics.vfov_deg), 1))
+        if faster:
+            q = replace(q, speed_deg_s=float(sp))
+        new_ptz.append(q)
+        choices.append(PatrolChoice(p.pole_id, q.focal_mm or start_f, q.tilt_deg, best_hfov, changed,
+                                    speed_deg_s=float(sp)))
         full = np.zeros(shape, bool)
         full[mv.window] = best_seen
         taken |= full
@@ -303,12 +391,25 @@ def optimize_patrols(terrain: TerrainData, plan: PerimeterPlanResult, ptz_camera
             progress(i + 1, len(plan.ptz_cameras))
 
     new_plan = replace(plan, ptz_cameras=new_ptz)
-    before, rev0 = _patrol_added(terrain, plan, ptz_camera, roi, exclude, level, **kw)
-    after, rev1 = _patrol_added(terrain, new_plan, ptz_camera, roi, exclude, level, **kw)
+    before, rev0, per0, trunc0 = _patrol_added_detail(terrain, plan, ptz_camera, roi, exclude, level, **kw)
+    after, rev1, per1, trunc1 = _patrol_added_detail(terrain, new_plan, ptz_camera, roi, exclude, level, **kw)
     applied = after > before
-    if not applied:                         # report what the plan still carries
-        choices = [PatrolChoice(p.pole_id, p.focal_mm or ptz_camera.focal_min_mm, p.tilt_deg, p.hfov_deg, False)
-                   for p in plan.ptz_cameras]
+    if (not applied and max_revisit_s is not None and after >= before and rev0 > float(max_revisit_s) + 1e-9
+            and rev1 <= float(max_revisit_s) + 1e-9 and any(c.changed for c in choices)):
+        applied = True                  # same area, but the starting patrols broke the revisit limit
+    if applied:
+        for c, a, b in zip(choices, per0, per1):
+            c.revisit_before_s, c.revisit_after_s = a, b
+    else:                               # report what the plan still carries
+        choices = [PatrolChoice(p.pole_id, p.focal_mm or ptz_camera.focal_min_mm, p.tilt_deg, p.hfov_deg, False,
+                                speed_deg_s=float(patrol_for(p, speed_deg_s, end_dwell_s).speed_deg_s),
+                                revisit_before_s=a, revisit_after_s=a)
+                   for p, a in zip(plan.ptz_cameras, per0)]
+    truncated = trunc1 if applied else trunc0
+    if truncated and monitor:           # the monitor reach is the one a default-sized raster silently clipped
+        notes.append(f"Bir devriyenin görüşü analiz menzilini ({max_range_cap_m:g} m) aşıyor: "
+                     "ötesindeki alan sayılmadı.")
     return PatrolSearch(choices=choices, plan=new_plan if applied else plan, before_m2=before, after_m2=after,
                         worst_revisit_before_s=rev0, worst_revisit_after_s=rev1,
-                        roi_area_m2=float(roi.sum()) * terrain.cell_size_m ** 2, level=level, applied=applied)
+                        roi_area_m2=float(roi.sum()) * terrain.cell_size_m ** 2, level=level, applied=applied,
+                        notes=notes, truncated=truncated)

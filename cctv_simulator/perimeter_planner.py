@@ -44,6 +44,10 @@ class PlacedCamera:
     # PTZ rows only: pan_deg is the patrol centre, patrol_span_deg the swept
     # width (360 = continuous rotation); 0 for a fixed camera.
     patrol_span_deg: float = 0.0
+    # PTZ rows only: this camera's own patrol speed (deg/s). None = the caller's
+    # global speed (coverage, mixed evaluation, live playback), i.e. today's
+    # behaviour; ``perimeter_ptz.optimize_patrols`` sets it when it searches speed.
+    speed_deg_s: Optional[float] = None
 
     @property
     def total_z_m(self) -> float:
