@@ -7,6 +7,7 @@ import { ProjectProvider, useProject } from "./core/project";
 import { DialogHost } from "./components/dialogs";
 import SettingsDialog from "./components/SettingsDialog";
 import { ActiveTerrainProvider } from "./core/activeTerrain";
+import { WeatherProvider } from "./core/weather";
 import ProjectBar from "./components/ProjectBar";
 import { PageActive } from "./core/pageActive";
 import Workspace from "./pages/Workspace";
@@ -140,7 +141,9 @@ export default function App() {
     <CoreProvider>
       <ProjectProvider>
         <ActiveTerrainProvider>
-          <Shell />
+          <WeatherProvider>
+            <Shell />
+          </WeatherProvider>
         </ActiveTerrainProvider>
       </ProjectProvider>
     </CoreProvider>

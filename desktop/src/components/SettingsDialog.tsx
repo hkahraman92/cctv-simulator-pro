@@ -35,7 +35,7 @@ export default function SettingsDialog({ onClose }: { onClose: () => void }) {
         <div className="mt-1 grid grid-cols-2 gap-1">
           {([["dark", "Konsol (koyu)"], ["light", "Ofis (açık)"]] as const).map(([k, l]) => (
             <button key={k} type="button" onClick={() => setPref("theme", k)} aria-pressed={prefs.theme === k}
-              className={`h-8 rounded text-[12px] font-semibold ${prefs.theme === k ? "bg-bg-6 text-primary" : "bg-bg-5 text-text-2"}`}>{l}</button>
+              className={`h-8 rounded text-[12px] font-semibold ${prefs.theme === k ? "bg-secondary text-on-secondary" : "bg-bg-5 text-text-2"}`}>{l}</button>
           ))}
         </div>
         <p className="mt-1 text-[11px] text-text-3">Harita, kapsama katmanları ve 3B görüntü çekirdekten gelir; tema onları değiştirmez.</p>

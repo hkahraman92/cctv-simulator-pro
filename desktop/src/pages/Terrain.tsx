@@ -25,6 +25,7 @@ import { NightPanel, ScenarioPanel } from "../components/DeliveryPanels";
 import { ApproachPanel, type ApproachMarks } from "../components/ApproachPanel";
 import { CityPanel } from "../components/CityPanel";
 import { Button, Panel, Slider, Tile, fmt } from "../components/ui";
+import { DISPLAY_TILT_MAX, DISPLAY_TILT_MIN, fromDisplayTilt, toDisplayTilt } from "./terrainTilt";
 
 const ha = (m2: number) => `${fmt(m2 / 1e4, 2)} ha`;
 const pct = (f: number) => `%${fmt(f * 100, 1)}`;
@@ -144,9 +145,13 @@ export default function Terrain() {
   const replacePlan = useCallback((p: PlanResult | null) => {
     setPlanVer((v) => v + 1);
     setPlanRes(p); setCoverage(null); setNetwork(null); setNight(null); setMixedLayer(null); setApproachMarks(null); setPlay(null);
-    setOptRes(null);
+    setOptRes(null); setPoleRes(null);
     if (!p) setAreaRes(null);
   }, []);
+  // Every plan-replacing action goes through replacePlan, which clears: coverage, network, night, mixed/approach layers,
+  // live playback, layout-optimisation result, min-poles result (and the area result when the plan is dropped); the
+  // remounted panels (planVer) drop their own results (mixed PTZ, assist, night, approach, city, network, compare).
+  // An action that produces a result of its own sets it AFTER calling replacePlan.
 
   useEffect(() => {
     if (state !== "ready") return;
@@ -158,12 +163,12 @@ export default function Terrain() {
   const adopt = useCallback((t: TerrainInfo) => {
     setInfo(t);
     setMount((m) => ({ ...m, x: t.width_m / 2, y: t.height_m / 2 }));
-    setFence([]); setPlanRes(null); setCoverage(null); setNetwork(null); setNight(null); setPoleRes(null); setSweep(null); setAreaRes(null);
+    setFence([]); replacePlan(null); setSweep(null);
     setCity(null);
     const notes: string[] = [];
     if (t.save_error) notes.push(`Bölge kaydedilemedi: ${t.save_error}`);
     setNotice(notes.join(" "));
-  }, []);
+  }, [replacePlan]);
 
   // base picture follows terrain, mode and obstacle switch
   useEffect(() => {
@@ -211,7 +216,7 @@ export default function Terrain() {
 
   const pick = (x: number, y: number) => {
     if (tab === "single") { setMount((m) => ({ ...m, x, y })); setPtzLayer(null); }
-    else if (drawing) setFence((f) => [...f, [x, y]]);
+    else if (drawing) { setFence((f) => [...f, [x, y]]); if (planRes) replacePlan(null); }
   };
 
   const startPlayback = async (args: Record<string, unknown>) => {
@@ -228,7 +233,7 @@ export default function Terrain() {
   const runPlan = async () => {
     if (!info || fence.length < 2) return;
     const r = await job.run("Çit planı", () => T.plan({ terrain_id: info.terrain_id, use_obstacles: useObstacles, camera, ...planParams() }));
-    if (r) { replacePlan(r); setPoleRes(null); setAreaRes(null); warn(r.warnings); }
+    if (r) { replacePlan(r); setAreaRes(null); warn(r.warnings); }
   };
   const runArea = async () => {
     if (!info || fence.length < 3) return;
@@ -236,7 +241,7 @@ export default function Terrain() {
       fence, level: areaLevel, goal_frac: goal / 100, mast_m: plan.mast_m, interior: area.interior, max_per_pole: area.perPole, weather,
       streets_only: area.streetsOnly && !!city, ...(area.maxHole > 0 ? { max_hole_m2: area.maxHole } : {}),
       min_cameras: area.minCams, max_cameras: area.maxCams, ...ptzArgs() }, o));
-    if (r) { replacePlan(r.plan); setAreaRes(r); setPoleRes(null); warn(r.warnings); }
+    if (r) { replacePlan(r.plan); setAreaRes(r); warn(r.warnings); }
   };
   const runCoverage = async (layer: CoverageLayer = covLayer, level: "plan" | TerrainLevel = covLevel) => {
     if (!info) return;
@@ -249,7 +254,7 @@ export default function Terrain() {
     if (!info || fence.length < 2) return;
     const r = await job.run("En az direk araması", (o) => T.minimizePoles(
       { terrain_id: info.terrain_id, use_obstacles: useObstacles, camera, ...planParams(), goal_frac: goal / 100, level: reqLevel, position_steps: slide ? 2 : 0 }, o));
-    if (r) { setPoleRes(r); if (r.plan) replacePlan(r.plan); }
+    if (r) { if (r.plan) replacePlan(r.plan); setPoleRes(r); }
   };
   const runSweep = async () => {
     if (!info) return;
@@ -395,8 +400,11 @@ export default function Terrain() {
   const overlay = extra ? extra.overlay : tab === "single" ? single?.overlay.data : coverage?.overlay.data;
   const legend: LegendRow[] | undefined = extra ? extra.legend : tab === "single" ? single?.legend : coverage?.legend;
 
+  // Width arithmetic (content area = window - 210 nav): 12 + 300 (sources) + 12 + 420 (map min) + 12 + 340 (analysis) + 12 = 1120 px
+  // for one row. Below that the analysis column wraps under the others; at 790 px (1024 window) row 1 = 12 + 300 + 12 + 420 = 744 fits
+  // and the 340 px column is row 2. The container scrolls vertically so a wrapped column is reachable, never cut off.
   return (
-    <div className="flex h-full min-h-0 flex-wrap gap-3 p-3 [&>*]:max-h-full">
+    <div className="flex h-full min-h-0 flex-wrap gap-3 overflow-y-auto p-3 [&>*]:max-h-full">
       {/* sources */}
       <div className="flex w-[300px] shrink-0 flex-col gap-3 overflow-y-auto pr-1">
         <SourcePanel catalog={catalog} regions={regions} busy={job.running}
@@ -429,14 +437,14 @@ export default function Terrain() {
       </div>
 
       {/* map */}
-      <div className="flex min-w-[420px] flex-1 flex-col gap-2">
+      <div className="flex min-h-[520px] min-w-[420px] flex-1 flex-col gap-2">
         <div className="flex flex-wrap items-center gap-2">
           {[["hybrid", "Hibrit"], ["satellite", "Uydu"], ["elevation", "Yükselti"]].map(([id, label]) => (
             <button key={id} type="button" onClick={() => setMapMode(id)}
               className={`h-7 rounded-full px-3 text-[11px] font-semibold ${mapMode === id ? "bg-secondary text-on-secondary" : "bg-bg-5 text-text-2"}`}>{label}</button>
           ))}
           <div className="flex-1" />
-          {info && <span className="font-mono text-[10px] text-text-3">{info.label} · {fmt(info.cell_size_m)} m hücre · {info.is_measured ? "● ölçülmüş DEM" : "▲ prosedürel"}</span>}
+          {info && <span className="font-mono text-[11px] text-text-3">{info.label} · {fmt(info.cell_size_m)} m hücre · {info.is_measured ? "● ölçülmüş DEM" : "▲ prosedürel"}</span>}
         </div>
         {info && !info.is_measured && (
           <div className="flex items-start gap-2 rounded bg-warn-bg px-3 py-1.5 text-[12px] text-warn">
@@ -521,7 +529,7 @@ export default function Terrain() {
             <option value="">{camera.model_name}</option>
             {models.map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
           </select>
-          <div className="mt-1 font-mono text-[10px] text-text-3">{camera.sensor_name} · {camera.resolution_name} · {fmt(camera.focal_min_mm)}–{fmt(camera.focal_max_mm)} mm</div>
+          <div className="mt-1 font-mono text-[11px] text-text-3">{camera.sensor_name} · {camera.resolution_name} · {fmt(camera.focal_min_mm)}–{fmt(camera.focal_max_mm)} mm</div>
           {/* the CAD page's cameras: same lens, sensor and mast here, instead of setting them up twice */}
           <select className="mt-2 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" aria-label="Proje kamerasını kullan" value=""
             onChange={(e) => { if (e.target.value !== "") void adoptProjectCamera(Number(e.target.value)); }}>
@@ -538,7 +546,7 @@ export default function Terrain() {
           </label>
           <div className="mt-2">
             <Slider label="Hedef boyu (insan)" unit="m" value={targetH} min={0} max={2.5} step={0.1} onChange={setTargetH} />
-            <p className="mt-1 text-[10px] text-text-3">{targetH > 0
+            <p className="mt-1 text-[11px] text-text-3">{targetH > 0
               ? "Görüş hattı ve kadraj başa göre: baş kadrajda değilse hücre sayılmaz, alçak duvar arkasındaki kişi görülür."
               : "0 = zemin noktası (insan boyu modellenmez)."}</p>
           </div>
@@ -546,12 +554,13 @@ export default function Terrain() {
 
         {tab === "single" && info && (
           <>
-            <Panel title="Yerleşim" right={<span className="font-mono text-[10px] text-text-3">haritaya tıkla: konum</span>}>
+            <Panel title="Yerleşim" right={<span className="font-mono text-[11px] text-text-3">haritaya tıkla: konum</span>}>
               <div className="mb-2 font-mono text-[11px] text-text-2">x {fmt(mount.x, 0)} · y {fmt(mount.y, 0)} m</div>
               <div className="flex flex-col gap-3">
                 <Slider label="Direk" unit="m" value={mount.mast} min={1} max={40} step={0.5} onChange={(v) => setMount((m) => ({ ...m, mast: v }))} />
                 <Slider label="Yön (pan)" unit="°" value={mount.pan} min={0} max={359} step={1} onChange={(v) => setMount((m) => ({ ...m, pan: v }))} />
-                <Slider label="Eğim (tilt)" unit="°" value={mount.tilt} min={-45} max={10} step={0.5} onChange={(v) => setMount((m) => ({ ...m, tilt: v }))} />
+                <Slider label="Eğim (aşağı)" unit="°" value={toDisplayTilt(mount.tilt)} min={DISPLAY_TILT_MIN} max={DISPLAY_TILT_MAX} step={0.5}
+                  onChange={(v) => setMount((m) => ({ ...m, tilt: fromDisplayTilt(v) }))} />
                 <Slider label="Analiz menzili" unit="m" value={mount.range} min={50} max={Math.max(info.width_m, info.height_m)} step={10} onChange={(v) => setMount((m) => ({ ...m, range: v }))} />
                 {camera.focal_max_mm > camera.focal_min_mm && (
                   <Slider label="Odak" unit="mm" value={mount.focal ?? (mount.lens === "max" ? camera.focal_max_mm : camera.focal_min_mm)}
@@ -561,7 +570,7 @@ export default function Terrain() {
               </div>
             </Panel>
             {single && (
-              <Panel title="Sonuç" right={<span className="font-mono text-[10px] text-text-3">{vs.busy ? "hesaplanıyor…" : vs.ms !== undefined ? `${fmt(vs.ms, 0)} ms` : ""}</span>}>
+              <Panel title="Sonuç" right={<span className="font-mono text-[11px] text-text-3">{vs.busy ? "hesaplanıyor…" : vs.ms !== undefined ? `${fmt(vs.ms, 0)} ms` : ""}</span>}>
                 <div className="grid grid-cols-2 gap-1.5">
                   <Tile label="Görünür alan" value={ha(single.visible_area_m2)} />
                   <Tile label="Arazi gölgesi" value={ha(single.occluded_area_m2)} tone="text-warn" />
@@ -573,7 +582,7 @@ export default function Terrain() {
                   {(single.thermal ? THERMAL_LEVELS : LEVELS).filter(([k]) => k !== "monitor" || single.zone_areas_m2.monitor !== undefined)
                     .map(([k, l]) => (<div key={k} className="flex justify-between"><span className="text-text-3">{l}</span><span>{ha(single.zone_areas_m2[k] ?? 0)}</span></div>))}
                 </div>
-                <div className="mt-2 font-mono text-[10px] text-text-3">
+                <div className="mt-2 font-mono text-[11px] text-text-3">
                   optik sınır {fmt(single.optical_limit_m, 0)} m{single.atmospheric_limit_m > 0 && single.atmospheric_limit_m < single.optical_limit_m ? ` · atmosfer ${fmt(single.atmospheric_limit_m, 0)} m` : ""}
                 </div>
                 {single.notes.map((n) => <div key={n} className="mt-1 text-[11px] text-text-3">◆ {n}</div>)}
@@ -593,13 +602,13 @@ export default function Terrain() {
                   onChange={(e) => { setSweepLevel(e.target.value as TerrainLevel); setSweep(null); }}>
                   {levelsFor(isThermal).map(([k, l]) => <option key={k} value={k}>En geniş {l} alanı</option>)}
                 </select>
-                <p className="mt-1 text-[10px] text-text-3">Optimum, seçilen seviyede EN GENİŞ alanı verir; daha düşük seviyelerin alanı küçülebilir.</p>
+                <p className="mt-1 text-[11px] text-text-3">Optimum, seçilen seviyede EN GENİŞ alanı verir; daha düşük seviyelerin alanı küçülebilir.</p>
                 <Button className="mt-2 w-full" disabled={job.running} onClick={runSweep}><Play size={14} /> Odakları Tara</Button>
                 {sweep && (
                   <div className="mt-2">
                     <FocalCurve curve={sweep.curve} best={sweep.best} level={sweep.level} />
                     <div className="mt-1 font-mono text-[11px]">
-                      en iyi {fmt(sweep.best.focal_mm)} mm · eğim {fmt(sweep.best.tilt_deg)}° · {levelName(sweepLevel, isThermal)} {ha(sweep.verified.area_m2)}
+                      en iyi {fmt(sweep.best.focal_mm)} mm · eğim (aşağı) {fmt(toDisplayTilt(sweep.best.tilt_deg))}° · {levelName(sweepLevel, isThermal)} {ha(sweep.verified.area_m2)}
                       {sweep.current && <span className="text-text-3"> (şimdi {ha(sweep.current.area_m2)})</span>}
                       <span className="text-text-3"> · motor</span>
                     </div>
@@ -632,10 +641,10 @@ export default function Terrain() {
 
             {/* ── 1. Tanımla: what is protected, and to which requirement ── */}
             <div className={step === "define" ? "flex flex-col gap-3" : "hidden"}>
-              <Panel title={isArea ? "Alan" : "Çit hattı"} right={<span className="font-mono text-[10px] text-text-3">{fence.length} nokta</span>}>
+              <Panel title={isArea ? "Alan" : "Çit hattı"} right={<span className="font-mono text-[11px] text-text-3">{fence.length} nokta</span>}>
               <div className="flex flex-wrap gap-1.5">
                 <Button onClick={() => setDrawing((d) => !d)} className={drawing ? "!bg-ok-bg !text-primary" : ""}><PencilLine size={14} /> {drawing ? "Çizim açık" : "Çiz"}</Button>
-                <Button disabled={!fence.length} onClick={() => setFence((f) => f.slice(0, -1))}><Undo2 size={14} /> Geri al</Button>
+                <Button disabled={!fence.length} onClick={() => { setFence((f) => f.slice(0, -1)); if (planRes) replacePlan(null); }}><Undo2 size={14} /> Geri al</Button>
                 <Button disabled={!fence.length} onClick={() => { setFence([]); replacePlan(null); }}><Trash2 size={14} /> Temizle</Button>
               </div>
               {!isArea && <label className="mt-2 flex items-center gap-2 text-[12px]"><input type="checkbox" checked={plan.closed} onChange={(e) => setPlan((p) => ({ ...p, closed: e.target.checked }))} /> Kapalı halka</label>}
@@ -660,7 +669,7 @@ export default function Terrain() {
                 {fence.length > 0 && <p className="mt-2 text-[11px] text-text-3">◆ Haritada köşeyi sürükle: taşı · çift tık: sil · kenar ortasındaki kutu: köşe ekle.</p>}
                 {isArea && <p className="mt-2 text-[11px] text-text-3">Alanın köşelerini haritaya tıklayarak çizin. Hedef, alanın kendisidir (otopark, avlu, meydan); kameralar alanın kenarına ve içine dizilir.</p>}
               </Panel>
-              <Panel title="İster" right={<span className="font-mono text-[10px] text-text-3">her adım bunu okur</span>}>
+              <Panel title="İster" right={<span className="font-mono text-[11px] text-text-3">her adım bunu okur</span>}>
                 <div className="flex flex-col gap-3">
                   {isArea ? (
                     <label><span className="label">Hedef seviye</span>
@@ -795,7 +804,7 @@ export default function Terrain() {
                     {areaRes.notes.map((n) => <div key={n} className="mt-1 text-[11px] text-text-3">◆ {n}</div>)}
                   </div>
                 )}
-                <div className="mt-2 font-mono text-[10px] text-text-3">{planRes.line_mode === "area" ? "direkler arası ort." : "ort. aralık"} {fmt(planRes.avg_spacing_m)} m · {fmt(planRes.estimated_bandwidth_mbps, 0)} Mbps · 30 gün {fmt(planRes.estimated_storage_30days_tb, 1)} TB</div>
+                <div className="mt-2 font-mono text-[11px] text-text-3">{planRes.line_mode === "area" ? "direkler arası ort." : "ort. aralık"} {fmt(planRes.avg_spacing_m)} m · {fmt(planRes.estimated_bandwidth_mbps, 0)} Mbps · 30 gün {fmt(planRes.estimated_storage_30days_tb, 1)} TB</div>
                 {planRes.line_mode === "border" && (
                   <div className="mt-2 text-[11px] text-text-3">◆ Sınır modunda kameralar hatta dik bakar; çizginin kendisi değil izlenen şerit puanlanır{coverage ? "" : " (Birleşik Kapsamayı hesaplayın)"}.</div>
                 )}

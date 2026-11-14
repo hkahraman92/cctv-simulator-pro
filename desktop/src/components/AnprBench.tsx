@@ -60,7 +60,7 @@ export default function AnprBench({ camera, active }: { camera: CameraConfig; ac
       </Panel>
 
       <div className="flex min-w-[420px] flex-[3_1_480px] flex-col gap-3">
-        <Panel title="Yol (kuş bakışı)" right={<span className="font-mono text-[10px] text-text-3">{r ? `yatay ${fmt(r.pan_deg)}° · aşağı ${fmt(r.tilt_deg)}° · FOV ${fmt(r.hfov_deg)}°` : ""}</span>}>
+        <Panel title="Yol (kuş bakışı)" right={<span className="font-mono text-[11px] text-text-3">{r ? `yatay ${fmt(r.pan_deg)}° · aşağı ${fmt(r.tilt_deg)}° · FOV ${fmt(r.hfov_deg)}°` : ""}</span>}>
           {r ? <RoadView r={r} /> : <div className="flex h-[220px] items-center justify-center text-text-3">{res.error ?? "Hesaplanıyor…"}</div>}
         </Panel>
         {r && (
@@ -84,7 +84,7 @@ export default function AnprBench({ camera, active }: { camera: CameraConfig; ac
               </tbody>
             </table>
             {r.lanes.flatMap((ln) => ln.reasons.map((m) => <div key={`${ln.lane}${m}`} className="mt-1 text-[11px] text-warn">▲ {ln.lane}. şerit: {m}</div>))}
-            <p className="mt-2 text-[10px] text-text-3">◆ Düz yol, düz zemin. Plaka {fmt(s.target_ppm, 0)} px/m = plaka genişliğinde {fmt(s.target_ppm * 0.52, 0)} px. Yan şeritteki aracın plakayı örtmesi hesaba katılmaz.</p>
+            <p className="mt-2 text-[11px] text-text-3">◆ Düz yol, düz zemin. Plaka {fmt(s.target_ppm, 0)} px/m = plaka genişliğinde {fmt(s.target_ppm * 0.52, 0)} px. Yan şeritteki aracın plakayı örtmesi hesaba katılmaz.</p>
           </Panel>
         )}
       </div>
@@ -179,7 +179,7 @@ function RoadView({ r }: { r: AnprResult }) {
       ))}
       <circle cx={sx(0)} cy={sy(s.pole_x_m)} r={6} fill="var(--color-primary)" stroke="var(--color-bg-0)" strokeWidth={2} />
       {ticks.map((d) => (
-        <text key={d} x={sx(d)} y={H - 4} fontSize={10} textAnchor="middle" fill="var(--color-text-3)">{d} m</text>
+        <text key={d} x={sx(d)} y={H - 4} fontSize={11} textAnchor="middle" fill="var(--color-text-3)">{d} m</text>
       ))}
     </svg>
   );

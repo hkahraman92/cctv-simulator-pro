@@ -100,7 +100,7 @@ export function CityPanel({ T, job, terrainId, useObstacles, hasLatLon, hasPlan,
             </div>
           ) : <div className="text-[11px] text-primary">● Hiçbir kamera ağırlıklı olarak konut binasına bakmıyor.</div>}
           {res.notes.map((n) => <div key={n} className="mt-1 text-[11px] text-text-3">◆ {n}</div>)}
-          <div className="mt-1 text-[10px] text-text-3">Yüz: Teşhis (≥250 px/m) ve yüze en çok 15° yukarıdan bakış. Konut: OSM bina etiketi (residential, apartments, house…). {city?.attribution}</div>
+          <div className="mt-1 text-[11px] text-text-3">Yüz: Teşhis (≥250 px/m) ve yüze en çok 15° yukarıdan bakış. Konut: OSM bina etiketi (residential, apartments, house…). {city?.attribution}</div>
         </div>
       )}
     </Panel>

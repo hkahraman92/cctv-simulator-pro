@@ -4,6 +4,7 @@ import type { CameraConfig } from "../core/api";
 import type { NightCoverage, NightTimeline, Scenario, TerrainApi } from "../core/terrainApi";
 import type { useJob } from "../core/useJob";
 import type { Layer } from "./PtzPanels";
+import { confirmDialog } from "./dialogs";
 import { Button, Panel, fmt } from "./ui";
 
 type Job = ReturnType<typeof useJob>;
@@ -33,8 +34,9 @@ export function NightPanel({ T, job, terrainId, useObstacles, camera, hasLatLon,
   const [cfg, setCfg] = useState({ cloud: 0, glow: 0, ir_on: true, white: 0, ir: camera.ir_range_m, min_lux: camera.min_lux });
   const [res, setRes] = useState<NightCoverage | null>(null);
   const [tl, setTl] = useState<NightTimeline | null>(null);
+  const [used, setUsed] = useState<{ lat: number; lon: number } | null>(null);
   useEffect(() => { setCfg((c) => ({ ...c, ir: camera.ir_range_m, min_lux: camera.min_lux })); }, [camera.ir_range_m, camera.min_lux]);
-  useEffect(() => { setRes(null); setTl(null); onResult(null); }, [terrainId, resetKey, onResult]);
+  useEffect(() => { setRes(null); setTl(null); setUsed(null); onResult(null); }, [terrainId, resetKey, onResult]);
 
   const cam = { ...camera, ir_range_m: cfg.ir, min_lux: cfg.min_lux };
   const common = {
@@ -44,6 +46,8 @@ export function NightPanel({ T, job, terrainId, useObstacles, camera, hasLatLon,
   const run = () => void job.run("Gece kapsaması", (o) => T.nightCoverage({ terrain_id: terrainId, use_obstacles: useObstacles, datetime: when, max_px: 1200, ...common, ...band }, o))
     .then((r) => {
       if (!r) return;
+      // remember the position this run was sent with: a terrain without a location uses the typed (assumed) one
+      setUsed(hasLatLon ? null : { ...pos });
       setRes(r); onResult(r);
       onLayer(r.overlay ? { overlay: r.overlay.data, legend: r.legend, title: `Gece · ${r.mode.text}` } : null);
       void T.nightTimeline({ terrain_id: terrainId, date: when.slice(0, 10), step_min: 60, ...common }).then(setTl).catch(() => undefined);
@@ -51,7 +55,7 @@ export function NightPanel({ T, job, terrainId, useObstacles, camera, hasLatLon,
   const c = res?.condition;
   return (
     <Panel title="Gece senaryosu" icon={<Moon size={16} className="text-secondary" />}>
-      <label className="block text-[12px]"><span className="label">Yerel tarih / saat</span>
+      <label className="block text-[12px]"><span className="label">Yerel tarih / saat (varsayılan: bugün 23:00, bilgisayar saati)</span>
         <input type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)}
           className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 font-mono text-[12px]" /></label>
       {!hasLatLon && (
@@ -88,6 +92,11 @@ export function NightPanel({ T, job, terrainId, useObstacles, camera, hasLatLon,
         <div className="mt-2 text-[12px]">
           <div className={res.mode.mode === "yok" ? "text-danger" : res.mode.range_cap_m != null ? "text-warn" : "text-primary"}>● {res.mode.text}</div>
           <div className="mt-1 font-mono text-[11px] text-text-2">
+            Kullanılan: {c.when.replace("T", " ")} (yerel)
+            {used ? ` · enlem ${fmt(used.lat, 2)}, boylam ${fmt(used.lon, 2)}` : tl ? ` · enlem ${fmt(tl.lat, 2)}, boylam ${fmt(tl.lon, 2)}` : ""}
+          </div>
+          {used && <div className="mt-0.5 text-[11px] text-warn">▲ Arazinin konumu yok: güneş / ay için bu enlem / boylam varsayımdır, gerçek konum değildir.</div>}
+          <div className="mt-1 font-mono text-[11px] text-text-2">
             {c.period} · {fmt(c.lux, c.lux < 1 ? 4 : 0)} lux · güneş {fmt(c.sun_el_deg, 0)}° · ay {fmt(c.moon_el_deg, 0)}° (%{fmt(c.moon_fraction * 100, 0)} aydınlık)
           </div>
           <table className="mt-2 w-full font-mono text-[11px]">
@@ -107,12 +116,12 @@ export function NightPanel({ T, job, terrainId, useObstacles, camera, hasLatLon,
                   <div key={s.when} className={`flex-1 ${MODE_TONE[s.mode ?? "pasif"]}`} title={`${s.when.slice(11)} · ${MODE_TEXT[s.mode ?? "pasif"]} · ${fmt(s.lux, s.lux < 1 ? 4 : 0)} lux`} />
                 ))}
               </div>
-              <div className="mt-1 flex flex-wrap gap-x-3 text-[10px] text-text-3">
+              <div className="mt-1 flex flex-wrap gap-x-3 text-[11px] text-text-3">
                 {[...new Set(tl.steps.map((s) => s.mode ?? "pasif"))].map((m) => <span key={m}><i className={`mr-1 inline-block h-2 w-2 rounded-sm ${MODE_TONE[m]}`} />{MODE_TEXT[m]}</span>)}
               </div>
             </div>
           )}
-          <p className="mt-2 text-[10px] text-text-3">Aydınlatma menzili motorun kamera başına menzilini sınırlar; IR huzme açısı ve hedef yansıtıcılığı modellenmez.</p>
+          <p className="mt-2 text-[11px] text-text-3">Aydınlatma menzili motorun kamera başına menzilini sınırlar; IR huzme açısı ve hedef yansıtıcılığı modellenmez.</p>
         </div>
       )}
     </Panel>
@@ -144,7 +153,7 @@ export function ScenarioPanel({ T, terrainId, scenarios, onChange, canSnapshot }
     "Bant Tanıma": cmp.best.band_recognize, "Bant Teşhis": cmp.best.band_identify, "Gece bant Algılama": cmp.best.night_detect, Kayıt: cmp.best.storage_tb,
   } : {};
   return (
-    <Panel title="Senaryolar" icon={<Bookmark size={16} className="text-secondary" />} right={<span className="font-mono text-[10px] text-text-3">{scenarios.length}/12</span>}>
+    <Panel title="Senaryolar" icon={<Bookmark size={16} className="text-secondary" />} right={<span className="font-mono text-[11px] text-text-3">{scenarios.length}/12</span>}>
       <div className="flex gap-1.5">
         <input className="h-8 min-w-0 flex-1 rounded border border-line bg-bg-0 px-2 text-[12px]" placeholder={`Senaryo ${scenarios.length + 1}`}
           value={label} onChange={(e) => setLabel(e.target.value)} aria-label="Senaryo adı" />
@@ -159,7 +168,7 @@ export function ScenarioPanel({ T, terrainId, scenarios, onChange, canSnapshot }
               <tr>{cmp.rows[0].map((h, i) => (
                 <th key={i} className={`whitespace-nowrap px-1 pb-1 text-left font-sans font-semibold ${i ? "" : "text-text-3"}`}>
                   {h}{i > 0 && <button type="button" className="ml-1 text-text-3 hover:text-danger" aria-label={`${h} senaryosunu sil`}
-                    onClick={() => onChange(scenarios.filter((_, j) => j !== i - 1))}><Trash2 size={11} className="inline" /></button>}
+                    onClick={async () => { if (await confirmDialog(`"${h}" senaryosu silinsin mi? Geri alınamaz.`, { okLabel: "Sil", danger: true })) onChange(scenarios.filter((_, j) => j !== i - 1)); }}><Trash2 size={11} className="inline" /></button>}
                 </th>))}</tr>
             </thead>
             <tbody>
@@ -170,7 +179,7 @@ export function ScenarioPanel({ T, terrainId, scenarios, onChange, canSnapshot }
               ))}
             </tbody>
           </table>
-          <p className="mt-1 text-[10px] text-text-3">Yeşil: o ölçütte en iyi senaryo. "—" = o senaryoda çalıştırılmadı.</p>
+          <p className="mt-1 text-[11px] text-text-3">Yeşil: o ölçütte en iyi senaryo. "—" = o senaryoda çalıştırılmadı.</p>
         </div>
       )}
     </Panel>

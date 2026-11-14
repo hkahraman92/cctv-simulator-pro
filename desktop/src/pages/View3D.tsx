@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useCoalesced, useCore } from "../core/CoreProvider";
 import { usePageActive } from "../core/pageActive";
 import { useProject } from "../core/project";
+import { useWeather } from "../core/weather";
 import { isTauri } from "@tauri-apps/api/core";
 import { save } from "@tauri-apps/plugin-dialog";
 import { Camera } from "lucide-react";
@@ -72,7 +73,8 @@ export default function View3D() {
   const [note, setNote] = useState<{ text: string; error: boolean } | null>(null);
   const [size, setSize] = useState({ w: 960, h: 540 });
   const [weathers, setWeathers] = useState<string[]>(["Berrak hava"]);
-  const [p, setP] = useState({ target: "human", dist: 15, lateral: 0, palette: "auto", weather: "Berrak hava", dori: true, grid: true });
+  const [weather, setWeather] = useWeather();   // shared with the optics and terrain pages
+  const [p, setP] = useState({ target: "human", dist: 15, lateral: 0, palette: "auto", dori: true, grid: true });
 
   useEffect(() => {
     if (state === "ready") terrain.catalog().then((t) => setWeathers(t.weather.map((w) => w.label))).catch(() => undefined);
@@ -89,7 +91,7 @@ export default function View3D() {
     return () => ro.disconnect();
   }, []);
 
-  const input = useMemo(() => ({ c, focal: site.focal, ...p, ...size }), [c, site.focal, p, size]);
+  const input = useMemo(() => ({ c, focal: site.focal, ...p, weather, ...size }), [c, site.focal, p, weather, size]);
   const res = useCoalesced(input, (i) => bench.scene({
     camera: i.c, focal_mm: i.focal, width: i.w, height: i.h, target: i.target, target_dist_m: i.dist,
     lateral_m: i.lateral, palette: i.palette, weather: i.weather, show_dori: i.dori, max_dist_m: Math.max(100, i.dist * 1.5),
@@ -147,7 +149,7 @@ export default function View3D() {
               ))}
               {f.horizon_v > 0 && f.horizon_v < f.height && (
                 <g><line x1={0} y1={f.horizon_v} x2={f.width} y2={f.horizon_v} stroke="#b0bec5" strokeDasharray="4 4" />
-                  <text x={f.width - 54} y={Math.max(f.horizon_v - 8, 14)} fontSize="10" fill="#cfd8dc" fontFamily="var(--font-mono)">UFUK</text></g>
+                  <text x={f.width - 54} y={Math.max(f.horizon_v - 8, 14)} fontSize="11" fill="#cfd8dc" fontFamily="var(--font-mono)">UFUK</text></g>
               )}
               {targetBox && (
                 <g>
@@ -160,14 +162,14 @@ export default function View3D() {
             </svg>
           )}
           {!f && <div className="absolute inset-0 flex items-center justify-center text-text-3">{res.error ?? "Kare üretiliyor…"}</div>}
-          {res.busy && <div className="absolute top-2 right-2 rounded bg-bg-1/80 px-2 py-0.5 font-mono text-[10px] text-text-3">işleniyor…</div>}
+          {res.busy && <div className="absolute top-2 right-2 rounded bg-bg-1/80 px-2 py-0.5 font-mono text-[11px] text-text-3">işleniyor…</div>}
         </div>
         {f && (
           <div className="flex flex-wrap items-center gap-3 rounded-md bg-bg-4 px-3 py-2 font-mono text-[12px]">
             <span className={`rounded px-2 py-0.5 font-bold ${atmAlarm ? "bg-danger-bg text-danger" : "bg-info-bg text-dori-identify"}`}>
               {atmAlarm ? `▲ ATMOSFER · ${f.dori_name}` : f.dori_name}
             </span>
-            <span>{f.is_thermal ? `${fmt(f.target_px, 1)} px (%${fmt(f.target_pct_h, 2)}) · ${fmt(f.ppm, 2)} PPM` : `${fmt(f.ppm, 1)} PPM`}</span>
+            <span>{f.is_thermal ? `${fmt(f.target_px, 1)} px (%${fmt(f.target_pct_h, 2)}) · ${fmt(f.ppm, 2)} px/m` : `${fmt(f.ppm, 1)} px/m`}</span>
             <span className="text-text-3">HFOV {fmt(f.hfov_deg)}° · lens {fmt(site.focal)} mm · direk {fmt(c.pole_height_m)} m</span>
             {f.visibility_km < 20 && <span className={f.transmittance < 0.5 ? "text-warn" : "text-text-3"}>hava: {f.weather} · iletim %{fmt(f.transmittance * 100, 0)}</span>}
             <span className="ml-auto"><Button disabled={!isTauri()} onClick={() => void snapshot()}><Camera size={14} /> Anlık görüntü</Button></span>
@@ -205,7 +207,8 @@ export default function View3D() {
               {PALETTES.map(([id, l]) => <option key={id} value={id}>{l}</option>)}
             </select></label>
           <label className="mt-2 block"><span className="label">Hava</span>
-            <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={p.weather} onChange={(e) => setP((s) => ({ ...s, weather: e.target.value }))}>
+            <select className="mt-1 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" value={weather} onChange={(e) => setWeather(e.target.value)}>
+              {!weathers.includes(weather) && <option value={weather}>{weather}</option>}
               {weathers.map((w) => <option key={w} value={w}>{w}</option>)}
             </select></label>
           <label className="mt-2 flex items-center gap-2 text-[12px]"><input type="checkbox" checked={p.dori} onChange={(e) => setP((s) => ({ ...s, dori: e.target.checked }))} /> DORI bantları zeminde</label>

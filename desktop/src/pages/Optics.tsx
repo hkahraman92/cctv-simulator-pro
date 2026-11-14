@@ -6,6 +6,8 @@ import type { Catalog, OpticResult } from "../core/api";
 import { useCoalesced, useCore } from "../core/CoreProvider";
 import { usePageActive } from "../core/pageActive";
 import { useProject } from "../core/project";
+import { useWeather } from "../core/weather";
+import { levelLabel } from "../core/levelLabel";
 import type { BenchResult, EdgeMeasure } from "../core/benchApi";
 import PlanView from "../components/PlanView";
 import AnprBench from "../components/AnprBench";
@@ -29,7 +31,7 @@ export default function Optics() {
   // The project's own levels (strongest first); EN defaults when the project has none.
   const TASKS = useMemo<[string, number][]>(() => {
     const own = (levels ?? []).filter((l) => l.ppm > 0).sort((a, b) => b.ppm - a.ppm);
-    return own.length ? own.map((l) => [`${l.name} (${fmt(l.ppm, l.ppm % 1 ? 1 : 0)} px/m)`, l.ppm] as [string, number]) : EN_TASKS;
+    return own.length ? own.map((l) => [levelLabel(l.name, l.ppm, fmt(l.ppm, l.ppm % 1 ? 1 : 0)), l.ppm] as [string, number]) : EN_TASKS;
   }, [levels]);
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [weathers, setWeathers] = useState<{ label: string; visibility_km: number }[]>([]);
@@ -39,7 +41,7 @@ export default function Optics() {
   const touched = useRef(false);
   const seeded = useRef(false);
   const [dist, setDist] = useState(20);
-  const [weather, setWeather] = useState("Berrak hava");
+  const [weather, setWeather] = useWeather();
   const [edge, setEdge] = useState<EdgeMeasure | null>(null);
   const [edgeErr, setEdgeErr] = useState("");
   const [view, setView] = useState<"dori" | "anpr">("dori");

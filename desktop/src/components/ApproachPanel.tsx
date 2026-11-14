@@ -98,7 +98,7 @@ export function ApproachPanel({ T, job, terrainId, useObstacles, onLayer, onMark
           )}
           <div className="mt-1 text-[11px] text-text-3">Görünmeden ilerlenebilen alan: {fmt(res.covert_area_m2 / 1e4, 1)} ha (±{fmt(res.depth_m, 0)} m)</div>
           {res.notes.map((n) => <div key={n} className="mt-1 text-[11px] text-text-3">◆ {n}</div>)}
-          <div className="mt-1 text-[10px] text-text-3">Yalnız sabit kameralar, geometrik algılama (≥25 px/m); kamuflaj ve algılama olasılığı modellenmez.{res.measured ? "" : " Prosedürel arazi — ölçüm değil."}</div>
+          <div className="mt-1 text-[11px] text-text-3">Yalnız sabit kameralar, geometrik algılama (≥25 px/m); kamuflaj ve algılama olasılığı modellenmez.{res.measured ? "" : " Prosedürel arazi — ölçüm değil."}</div>
         </div>
       )}
     </Panel>

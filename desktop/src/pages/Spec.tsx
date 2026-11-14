@@ -5,6 +5,7 @@ import { BrainCircuit, ClipboardCheck, FileDown, FolderOpen, Play, Save, Trash2 
 import { useCore } from "../core/CoreProvider";
 import { useProject } from "../core/project";
 import { useJob } from "../core/useJob";
+import { uniqueQuestions } from "../core/clarify";
 import { publishSpecResult } from "../core/activeTerrain";
 import type { Analysis, ComplianceResult, MatrixRow, Status } from "../core/specApi";
 import JobBar from "../components/JobBar";
@@ -128,6 +129,9 @@ export default function Spec() {
     });
   };
 
+  // A question that an ambiguity entry already shows is not listed a second time.
+  const extraQuestions = useMemo(() => (result ? uniqueQuestions(result.ambiguities, result.clarification_questions) : []), [result]);
+
   const makeStatement = async (pdf: boolean) => {
     if (!result) return;
     let path: string | undefined;
@@ -159,7 +163,7 @@ export default function Spec() {
           <textarea value={text} onChange={(e) => setText(e.target.value)} rows={14} aria-label="Şartname metni"
             placeholder="Şartname metnini yapıştırın ya da PDF / metin dosyası açın…"
             className="w-full resize-y rounded border border-line bg-bg-0 p-2 font-mono text-[11px] leading-relaxed" />
-          <div className="mt-1 font-mono text-[10px] text-text-3">{fmt(text.length, 0)} karakter{pdfPath ? " · PDF Gemini'ye de gönderilebilir" : ""}</div>
+          <div className="mt-1 font-mono text-[11px] text-text-3">{fmt(text.length, 0)} karakter{pdfPath ? " · PDF Gemini'ye de gönderilebilir" : ""}</div>
         </Panel>
         <Panel title="Analiz yolu">
           <div className="grid grid-cols-3 gap-1">
@@ -216,7 +220,7 @@ export default function Spec() {
           <section className="overflow-hidden rounded-md bg-bg-4">
             <div className="flex flex-wrap items-center gap-2 p-3">
               <h2 className="text-[13px] font-semibold">Uyum matrisi</h2>
-              <span className="font-mono text-[10px] text-text-3">{SOURCE[analysis!.source]} · {result.requirements.length} ister</span>
+              <span className="font-mono text-[11px] text-text-3">{SOURCE[analysis!.source]} · {result.requirements.length} ister</span>
               <div className="flex-1" />
               <select className="h-8 max-w-[360px] rounded border border-line bg-bg-0 px-2 text-[12px]" value={shownCamera} onChange={(e) => setCamera(e.target.value)} aria-label="Kamera">
                 {cameras.map((c) => <option key={c} value={c}>{c}</option>)}
@@ -230,17 +234,17 @@ export default function Spec() {
                     const st = r.user_status ?? r.status;
                     return (
                       <tr key={`${r.requirement_id}-${i}`} className="border-b border-line-soft align-top">
-                        <td className="px-2 py-2 font-mono text-[10px] whitespace-nowrap text-text-3">{r.requirement_id}<br />{r.standard_clause}</td>
-                        <td className="px-2 py-2">{r.requirement}{r.spec_quote ? <div className="mt-0.5 text-[10px] text-text-3">“{r.spec_quote}”</div> : null}</td>
+                        <td className="px-2 py-2 font-mono text-[11px] whitespace-nowrap text-text-3">{r.requirement_id}<br />{r.standard_clause}</td>
+                        <td className="px-2 py-2">{r.requirement}{r.spec_quote ? <div className="mt-0.5 text-[11px] text-text-3">“{r.spec_quote}”</div> : null}</td>
                         <td className="px-2 py-2 whitespace-nowrap">
                           <select value={st} onChange={(e) => void overrideRow(r, e.target.value as Status)} aria-label="Durum (elle düzelt)"
                             className={`h-7 rounded px-1.5 font-mono text-[11px] font-semibold ${STATUS_STYLE[st] ?? ""}`}>
                             {STATUSES.map((s) => <option key={s} value={s}>{MARK[s]} {s}</option>)}
                           </select>
-                          {typeof r.confidence === "number" && <div className="mt-0.5 font-mono text-[10px] text-text-3">güven %{fmt(r.confidence * 100, 0)}</div>}
-                          {r.user_status && <div className="mt-0.5 text-[10px] text-secondary">elle: {r.user_note}</div>}
+                          {typeof r.confidence === "number" && <div className="mt-0.5 font-mono text-[11px] text-text-3">güven %{fmt(r.confidence * 100, 0)}</div>}
+                          {r.user_status && <div className="mt-0.5 text-[11px] text-secondary">elle: {r.user_note}</div>}
                         </td>
-                        <td className="px-2 py-2 text-text-2">{r.evidence}{r.evidence_kind && <span className="ml-1 font-mono text-[10px] text-text-3">({r.evidence_kind})</span>}</td>
+                        <td className="px-2 py-2 text-text-2">{r.evidence}{r.evidence_kind && <span className="ml-1 font-mono text-[11px] text-text-3">({r.evidence_kind})</span>}</td>
                       </tr>
                     );
                   })}
@@ -268,7 +272,7 @@ export default function Spec() {
             ))}
             <p className="mt-2 text-[11px] text-text-2">{result.recommendation}</p>
           </Panel>
-          {(result.ambiguities.length > 0 || result.clarification_questions.length > 0) && (
+          {(result.ambiguities.length > 0 || extraQuestions.length > 0) && (
             <details open className="rounded-md bg-bg-4">
               <summary className="cursor-pointer select-none px-3 py-2 text-[13px] font-semibold">
                 Belirsiz ifadeler <span className="font-mono text-[11px] text-warn">({result.ambiguities.length})</span>
@@ -280,10 +284,10 @@ export default function Spec() {
                     <div className="text-warn"><span className="font-semibold">{a.term}</span> — {a.clarification}</div>
                   </div>
                 ))}
-                {result.clarification_questions.length > 0 && (
+                {extraQuestions.length > 0 && (
                   <>
-                    <div className="label mt-2 mb-1">Netleştirme soruları ({result.clarification_questions.length})</div>
-                    <ul className="list-disc pl-4 text-[11px] text-text-2">{result.clarification_questions.map((q) => <li key={q} className="mb-1">{q}</li>)}</ul>
+                    <div className="label mt-2 mb-1">Netleştirme soruları ({extraQuestions.length})</div>
+                    <ul className="list-disc pl-4 text-[11px] text-text-2">{extraQuestions.map((q) => <li key={q} className="mb-1">{q}</li>)}</ul>
                   </>
                 )}
               </div>

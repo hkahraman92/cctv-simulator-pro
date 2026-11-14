@@ -3,6 +3,7 @@ import { Maximize, Minus, Plus } from "lucide-react";
 import type { FenceGap, PlacedCamera } from "../core/terrainApi";
 import type { ApproachMarks } from "./ApproachPanel";
 import { fmt } from "./ui";
+import { toDisplayTilt } from "../pages/terrainTilt";
 
 export interface CameraMark {
   x: number;
@@ -278,8 +279,8 @@ function camTitle(c: PlacedCamera) {
     `Direk ${c.pole_id}${ptz ? " · PTZ" : ""} — ${c.camera_model}`,
     ptz ? `devriye ${fmt(c.patrol_span_deg, 0)}° · merkez ${fmt(c.pan_deg, 0)}° · teşhis erişimi ${fmt(c.effective_range_m, 0)} m`
       : `odak ${fmt(c.focal_mm, 1)} mm · yatay FOV ${fmt(c.hfov_deg, 1)}° · yön ${fmt(c.pan_deg, 0)}°`,
-    ptz ? `geniş uç ${fmt(c.focal_mm, 1)} mm · eğim ${fmt(c.tilt_deg, 1)}°`
-      : `menzil ${fmt(c.effective_range_m, 0)} m · eğim ${fmt(c.tilt_deg, 1)}° · kör nokta ${fmt(c.dead_zone_m, 1)} m`,
+    ptz ? `geniş uç ${fmt(c.focal_mm, 1)} mm · eğim (aşağı) ${fmt(toDisplayTilt(c.tilt_deg), 1)}°`
+      : `menzil ${fmt(c.effective_range_m, 0)} m · eğim (aşağı) ${fmt(toDisplayTilt(c.tilt_deg), 1)}° · kör nokta ${fmt(c.dead_zone_m, 1)} m`,
     `direk ${fmt(c.mast_height_m, 1)} m`,
   ].join("\n");
 }

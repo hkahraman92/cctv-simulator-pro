@@ -4,6 +4,8 @@ import type { CameraConfig, ModelSummary } from "../core/api";
 import type { CueResult, LegendRow, MixedResult, PatrolResult, PlanResult, SweepResult, TerrainApi, TourResult } from "../core/terrainApi";
 import type { useJob } from "../core/useJob";
 import { Button, Panel, Slider, Tile, fmt } from "./ui";
+import { modelOptionLabel } from "./PlanningPanels";
+import { toDisplayTilt } from "../pages/terrainTilt";
 
 export interface Layer {
   overlay: string;
@@ -89,13 +91,13 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, thermal, mou
         {mode === "tour" && (
           <div>
             <Button className="w-full" onClick={() => setPresets((ps) => [...ps, { name: `P${ps.length + 1}`, pan_deg: mount.pan, tilt_deg: mount.tilt, focal_mm: mount.focal, dwell_s: 5 }])}>
-              <Plus size={14} /> Bu bakışı preset ekle (yön {fmt(mount.pan, 0)}°, eğim {fmt(mount.tilt)}°)
+              <Plus size={14} /> Bu bakışı preset ekle (yön {fmt(mount.pan, 0)}°, eğim (aşağı) {fmt(toDisplayTilt(mount.tilt))}°)
             </Button>
             <ul className="mt-2 flex flex-col gap-1 font-mono text-[11px]">
               {presets.map((p, i) => (
                 <li key={i} className="flex items-center gap-1.5 rounded bg-bg-1 px-2 py-1">
                   <span className="w-7 text-text-2">{p.name}</span>
-                  <span className="flex-1">{fmt(p.pan_deg, 0)}° · {fmt(p.tilt_deg)}° · {p.focal_mm ? `${fmt(p.focal_mm)} mm` : "dar uç"}</span>
+                  <span className="flex-1">{fmt(p.pan_deg, 0)}° · {fmt(toDisplayTilt(p.tilt_deg))}° aşağı · {p.focal_mm ? `${fmt(p.focal_mm)} mm` : "dar uç"}</span>
                   <input type="number" min={0.5} step={0.5} value={p.dwell_s} aria-label={`${p.name} bekleme (sn)`}
                     onChange={(e) => { const v = Number(e.target.value); if (v > 0) setPresets((ps) => ps.map((q, j) => (j === i ? { ...q, dwell_s: v } : q))); }}
                     className="h-6 w-14 rounded border border-line bg-bg-0 px-1 text-right" />
@@ -193,7 +195,7 @@ export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onC
       <select className="h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" aria-label="PTZ modeli"
         value={value.camera?.model_name ?? ""} onChange={async (e) => onChange({ ...value, camera: e.target.value ? await ptzModelFor(e.target.value) : null })}>
         <option value="">— PTZ yok —</option>
-        {ptzModels.map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
+        {ptzModels.map((m) => <option key={m.name} value={m.name} title={m.name}>{modelOptionLabel(m)}</option>)}
       </select>
       {value.camera && (
         <>

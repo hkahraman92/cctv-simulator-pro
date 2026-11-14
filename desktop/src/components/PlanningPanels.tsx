@@ -5,6 +5,16 @@ import type { AssistedPlan, PlanResult, TerrainApi } from "../core/terrainApi";
 import type { useJob } from "../core/useJob";
 import { Button, Panel, fmt } from "./ui";
 
+/** "<name> · <min>–<max> mm" for a model selector; library names taken from brochure titles are cut at 40 characters
+ *  (the option's title carries the full name; selection always uses m.name). */
+export function modelOptionLabel(m: ModelSummary): string {
+  const name = m.name.length > 40 ? `${m.name.slice(0, 39).trimEnd()}…` : m.name;
+  const lo = m.focal_min_mm, hi = m.focal_max_mm;
+  if (lo == null && hi == null) return name;
+  const f = lo != null && hi != null && Math.abs(hi - lo) > 1e-6 ? `${fmt(lo)}–${fmt(hi)} mm` : `${fmt((lo ?? hi) as number)} mm`;
+  return `${name} · ${f}`;
+}
+
 type Job = ReturnType<typeof useJob>;
 
 export interface PriceBook {
@@ -148,7 +158,7 @@ export function AssistPanel({ T, job, terrainId, useObstacles, models, camera, p
       <select className="mt-2 h-8 w-full rounded border border-line bg-bg-0 px-2 text-[12px]" aria-label="PTZ modeli (destekli hedef)"
         value={ptz?.model_name ?? ""} onChange={async (e) => setPtz(e.target.value ? await ptzModelFor(e.target.value) : null)}>
         <option value="">— PTZ modeli seçin —</option>
-        {ptzModels.map((m) => <option key={m.name} value={m.name}>{m.name}</option>)}
+        {ptzModels.map((m) => <option key={m.name} value={m.name} title={m.name}>{modelOptionLabel(m)}</option>)}
       </select>
       <div className="mt-2 grid grid-cols-2 gap-1.5 text-[12px]">
         <label className="flex flex-col gap-0.5 text-text-3">Seviye

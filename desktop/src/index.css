@@ -38,11 +38,11 @@
   --color-ptz: #b18cff;
 
   /* DORI: cold ramp, best level brightest. Warm colours mean attention only. */
-  --color-dori-identify: #acedff;
-  --color-dori-recognize: #4cd7f6;
-  --color-dori-observe: #2b8fb8;
-  --color-dori-detect: #1f5f86;
-  --color-dori-monitor: #17435f;
+  --color-dori-identify: #9ad6ec;
+  --color-dori-recognize: #5db5d9;
+  --color-dori-observe: #3a93c2;
+  --color-dori-detect: #2f6e9e;
+  --color-dori-monitor: #2c4a6e;
 }
 
 /* "Ofis" (light) theme: the same token names, the classic app's light values (design_tokens.py). */
@@ -75,7 +75,7 @@
   --color-dori-recognize: #2467a6;
   --color-dori-observe: #4f8fc7;
   --color-dori-detect: #8db9e0;
-  --color-dori-monitor: #c4dbef;
+  --color-dori-monitor: #c9ddf0;
 }
 
 /* Markers drawn on satellite / relief pictures keep the dark theme's bright values in both
@@ -119,8 +119,8 @@ textarea {
 }
 
 .label {
-  font: 600 10px var(--font-mono);
-  letter-spacing: 0.08em;
+  font: 600 11px var(--font-mono);
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--color-text-3);
 }

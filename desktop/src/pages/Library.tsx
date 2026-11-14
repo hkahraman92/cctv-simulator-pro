@@ -100,7 +100,7 @@ export default function Library() {
     <div className="flex min-h-full flex-wrap content-start gap-3 p-3">
       <div className="flex min-w-0 flex-[7_1_560px] flex-col gap-3">
         <Panel title="Kamera Kütüphanesi" icon={<Database size={18} className="text-primary" />}
-          right={<span className="font-mono text-[10px] text-text-3">{models.length} model</span>}>
+          right={<span className="font-mono text-[11px] text-text-3">{models.length} model</span>}>
           <label className="relative block">
             <Search size={16} className="absolute top-2.5 left-2.5 text-text-3" aria-hidden />
             <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Model, sensör, çözünürlük ara…"
@@ -110,7 +110,7 @@ export default function Library() {
             {chips.map(([id, label]) => (
               <button key={id} type="button" onClick={() => setFilter(id)}
                 className={`h-7 rounded-full px-3 text-[11px] font-semibold ${filter === id ? "bg-secondary text-on-secondary" : "bg-bg-5 text-text-2"}`}>
-                {label} <span className="font-mono text-[10px] opacity-70">{counts[id]}</span>
+                {label} <span className="font-mono text-[11px] opacity-70">{counts[id]}</span>
               </button>
             ))}
           </div>
@@ -163,10 +163,10 @@ export default function Library() {
             <div className="grid grid-cols-2 gap-1.5 font-mono">
               {DORI.map((d) => (
                 <div key={d.key} className="rounded bg-bg-1 p-2">
-                  <div className="text-[10px] text-text-3">{d.label} ≥{fmt(d.ppm, d.ppm % 1 ? 1 : 0)} px/m</div>
+                  <div className="text-[11px] text-text-3">{d.label} ≥{fmt(d.ppm, d.ppm % 1 ? 1 : 0)} px/m</div>
                   <div className="text-[16px] font-bold">
                     {fmt(ends.wide.ground_distances[d.key])}
-                    {ends.tele.focal_mm !== ends.wide.focal_mm && <> <span className="text-[10px] text-text-3">→</span> {fmt(ends.tele.ground_distances[d.key])}</>} m
+                    {ends.tele.focal_mm !== ends.wide.focal_mm && <> <span className="text-[11px] text-text-3">→</span> {fmt(ends.tele.ground_distances[d.key])}</>} m
                   </div>
                 </div>
               ))}
@@ -191,5 +191,5 @@ function Kind({ m }: { m: ModelSummary }) {
   const [cls, label] = isThermal(m)
     ? ["bg-info-bg text-dori-identify", m.is_ptz ? "PTZ Termal" : "Termal"]   // warm colours are for alarms only
     : m.is_ptz ? ["bg-bg-6 text-ptz", "PTZ"] : ["bg-bg-5 text-text-2", "Sabit"];
-  return <span className={`rounded px-1.5 py-0.5 font-mono text-[10px] ${cls}`}>{label}</span>;
+  return <span className={`rounded px-1.5 py-0.5 font-mono text-[11px] ${cls}`}>{label}</span>;
 }

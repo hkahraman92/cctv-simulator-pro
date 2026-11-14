@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Gauge, Plus, RotateCcw, X } from "lucide-react";
 import type { PPMLevel } from "../core/api";
 import { Button, Panel, fmt } from "./ui";
+import { splitLevelName } from "../core/levelLabel";
 
 /**
  * The project's PPM levels (classic app's level table). Engine defaults stay;
@@ -32,7 +33,7 @@ export default function LevelEditor({ levels, defaults, custom, onChange, onRese
   };
 
   return (
-    <Panel title="PPM seviyeleri" icon={<Gauge size={16} className="text-secondary" />} className="w-full min-w-0 self-start"
+    <Panel title="px/m seviyeleri" icon={<Gauge size={16} className="text-secondary" />} className="w-full min-w-0 self-start"
       right={<button type="button" className="inline-flex h-7 items-center whitespace-nowrap px-1 text-[11px] text-text-2 underline" aria-expanded={open} onClick={() => setOpen((o) => !o)}>{open ? "kapat" : `${levels.length} seviye`}</button>}>
       {!open ? (
         <p className="text-[11px] text-text-3">{custom ? "● Projeye özel seviyeler var." : "Motorun varsayılan seviyeleri (EN 62676-4 DORI, Johnson, plaka…)."} Mesafe tablosu, kontrol noktası ve raporlar bu listeyi kullanır.</p>
@@ -42,7 +43,9 @@ export default function LevelEditor({ levels, defaults, custom, onChange, onRese
             {sorted.map((l) => (
               <li key={l.key} className="flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-bg-5">
                 <span className="w-12 shrink-0 text-right">{fmt(l.ppm, l.ppm % 1 ? 1 : 0)}</span>
-                <span className="min-w-0 flex-1 truncate font-sans" title={l.name}>{l.name}</span>
+                <span className="min-w-0 flex-1 truncate font-sans" title={l.name}>
+                  {splitLevelName(l.name).group && <span className="text-text-3">{splitLevelName(l.name).group}: </span>}{splitLevelName(l.name).short}
+                </span>
                 {!builtin.has(l.key) && (
                   <button type="button" aria-label={`${l.name} sil`} className="flex h-7 w-7 shrink-0 items-center justify-center rounded text-text-3 hover:text-danger"
                     onClick={() => onChange(levels.filter((x) => x.key !== l.key))}><X size={12} /></button>

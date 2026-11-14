@@ -30,10 +30,10 @@ export function Tile({ label, value, unit, tone = "text-text" }: {
 }) {
   return (
     <div className="rounded bg-bg-1 p-2">
-      <div className="font-mono text-[10px] text-text-3">{label}</div>
+      <div className="font-mono text-[11px] text-text-3">{label}</div>
       <div className={`font-mono text-[17px] font-bold ${tone}`}>
         {value}
-        {unit && <span className="ml-1 text-[10px] font-normal text-text-3">{unit}</span>}
+        {unit && <span className="ml-1 text-[11px] font-normal text-text-3">{unit}</span>}
       </div>
     </div>
   );
