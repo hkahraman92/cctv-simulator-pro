@@ -1142,8 +1142,9 @@ Modu" satırı.
   planlayıcılar aynı değeri okur. Servis değeri arazi oturumunda tutar
   (`terrain.settings`, `_terrain_of` her istekte etkinleştirir; değişince
   plandan türeyenler düşer); masaüstü 1,8 m gönderir; rapor tanımı yazar.
-  Raster ↔ motor uyumu h > 0'da %96 (kadrajın üst kenarı koninin ortasından
-  geçer, bir hücre sınırı farkı).
+  Raster ↔ motor uyumu: h > 0'da %100, h = 0'da %99,1 (iki ışın arasında
+  enterpole ufuk; 19 290 hücre, 64 bakış) — düğüm-konum kuralından önce %96 / %90
+  idi (bkz. "Görüş alanı motorunun doğrulaması").
 - **Termal Johnson'la sınıflanır** (`zone_codes(thermal=)`): algılama 1,3 /
   tanıma 6,67 / teşhis 13,33 px/m → DETECT / OBSERVE / RECOG kodları, asla
   IDENT (yüz). Lejant `dori_thermal`.
@@ -1319,10 +1320,30 @@ Modu" satırı.
   ayrı görüş hattı, bilinear yüzeye sık örnekleme + düğüm çizgisi kesişimleri;
   optik yine motorun yapı taşlarından (`camera_optics`, `view_limits`,
   `zone_codes`). `tests/test_viewshed_reference.py` motoru tohumlu tekil
-  bakışlarda ve tesis / sınır / alan planlarında bununla karşılaştırır. Fark
-  yalnız sınıf kenarlarındadır (ışın örneklemesi ↔ düğüm görüş hattı; kenardan
-  ≤ 2 hücre); 60 tekil bakışta motor referanstan %0,94 az hücre görür. Eşikler
-  ölçülen değerlerin biraz üstündedir — gevşetmeden önce nedeni bul.
+  bakışlarda ve tesis / sınır / alan planlarında bununla karşılaştırır. Motor
+  hücreyi **düğümünde** sınıflar (aşağıdaki kural): tekil bakışlarda en kötü
+  uyum %98,97 (eskiden %74), planlarda %99,61 (eskiden %83), toplam görünür
+  alan farkı +%0,09 (eskiden −%0,94 / tekil %92,9 uyum); kalan fark, başı ufku
+  1e-3 hücre-yüksekliği düzeyinde ancak aşan sıyırma düğümleridir, sınıf
+  sınırına ≤ 1 hücre (eskiden 2–3). Eşikler ölçülen değerlerin hemen üstündedir
+  — gevşetmeden önce nedeni bul; kötüleşirse gevşetme, dur ve raporla.
+- **Hücre düğümünde karar verilir** (`viewshed_3d._viewshed_core`): eğik
+  mesafe, px/m, çerçeve (yatay koni, dikey kadraj — baş/zemin tanımları eskisi
+  gibi), menzil ve DORI sınıfı düğümün KENDİ konumundan (`view_limits`,
+  `zone_codes`, `camera_optics`); `ppm_grid` / `slant_dist_grid` yatay koni +
+  menzil içinde düğümün kendi değeri, dışında 0. Işınlar yalnız görüş hattı
+  verir (`_node_los`): düğümü saran iki ışının, düğüm uzaklığında, o noktaya
+  kadarki ufku (`fan_horizons`: son örnek + düğüme dek düğüm-çizgisi
+  kesişimleri); baş iki ufkun da üstünden ışınların açıklığı + 0,015 hücre
+  yüksekliği kadar geçiyorsa görünür, ikisinin de altındaysa gizli; geri kalan
+  (gölge kenarı) ya da ışın demetinin ulaşmadığı düğüm **kendi tam ışınını**
+  alır (`_exact_horizon`: düğüme tam bitecek örneklerle `march_rays`, adım
+  0,2 hücre — `march_rays` `step_dists`'i (R, S) kabul eder). Eski kural düğümü
+  ışın ÖRNEĞİNİN kestiği (`astype(intp)`) hücreye yazıyordu, son (en uzak, en
+  düşük sınıf) örnek kazanıyordu: sınıf kenarları ~yarım hücre kayıyor, paylar
+  hücre başına metre ~0,6 puan düşük çıkıyordu. Ölçüm: ulaşılmayan düğüm 0
+  (tüm test senaryolarında), kenar düğümü ~%30 (tam ışın). Maliyet: tekil
+  görüş 1,0–1,7×, 148 kameralı koşu 1,1× (800² ızgarada 0,95×).
 - **Dondurulmuş sonuçlar** (`tests/data/viewshed_golden.npz`, 14 senaryo):
   motoru bilerek değiştirdiysen `py -3.13 -m tests.gen_viewshed_golden`, farkı
   aynı commit'te incele (optik golden ile aynı kural).
@@ -1577,13 +1598,13 @@ değerin altına indirir, `effective_max_range` bununla kapanır. İkisi de art�
 **Viewshed vektörel.** Eski `for ray: for step:` çift döngüsü (200×200 grid'de
 ~50–150 ms) tek (R,S) numpy bloğuna çevrildi (~4 ms). Ufuk açısı
 `np.maximum.accumulate` ile kümülatif; ışın grid'den çıkınca
-`np.logical_and.accumulate` durdurur; hücreye scatter ray-major sırada
-(son yazan kazanır — eski döngüyle aynı). PPM/slant `math.hypot` → `np.hypot`
-yüzünden ~1 ULP oynar.
+`np.logical_and.accumulate` durdurur. (Eskiden hücreye scatter ray-major
+sırada, son yazan kazanırdı; artık hücre düğümünde karara bağlanır, ışınlar
+yalnız görüş hattı verir — bkz. "Hücre düğümünde karar verilir".)
 
 **Işın yüksekliği bilinear.** `march_rays` örnek noktasının yüksekliğini
 `z_grid`'den **bilinear** okur (düğüm kuralı, `get_elevation_at` ile aynı);
-hücre ataması (`rr/cc`) değişmedi. En yakın hücre okuması her yamacı basamağa
+ufuk, düğümün kendi yüksekliğiyle karşılaştırılır. En yakın hücre okuması her yamacı basamağa
 çeviriyordu: kameradan uzaklaşan inişte her basamağın uzak ucu bir sonrakinin
 başını örtüyor, kusursuz %8 düzlemsel yamacın %18–45'i "arazi engeli"
 çıkıyordu (düzlem üstünden bakana kendini asla örtmez). Analitik referans:

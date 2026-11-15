@@ -231,6 +231,7 @@ class RayMarch:
     tan_angle: np.ndarray    # (terrain - eye) / ground distance, curvature-corrected
     slant: np.ndarray        # 3D lens-to-sample distance
     los_clear: np.ndarray    # no earlier terrain sample on the ray rises above it
+    horizon: Optional[np.ndarray] = None   # running horizon (tan) of the samples BEFORE each one, crossings included
 
 
 _CHUNK_ELEMS = 32_000
@@ -285,8 +286,12 @@ def march_rays(terrain: TerrainData, cam_x_m: float, cam_y_m: float, cam_z: floa
     # off the map). Cut there; results are bit-identical. The box is one cell
     # wider on the low side: astype(intp) truncates toward zero, so samples in
     # (origin - cell, origin) still land in column / row 0.
-    step_dists = step_dists[:_steps_inside(terrain, cam_x_m, cam_y_m, ray_angles, step_dists)]
-    d = step_dists[None, :]                                       # (1,S)
+    # ``step_dists`` is (S,) shared by every ray, or (R, S) -- each ray its own distances (an exact
+    # line of sight that must END on its target); only the shared form is cut at the grid exit.
+    if step_dists.ndim == 1:
+        step_dists = step_dists[:_steps_inside(terrain, cam_x_m, cam_y_m, ray_angles, step_dists)]
+    sd = np.atleast_2d(step_dists)                                # (1,S) or (R,S)
+    d = sd
     cur_xs = cam_x_m + d * np.sin(ray_angles)[:, None]            # (R,S)
     cur_ys = cam_y_m + d * np.cos(ray_angles)[:, None]
     cc = ((cur_xs - terrain.origin_x) / cell_size).astype(np.intp)
@@ -317,7 +322,7 @@ def march_rays(terrain: TerrainData, cam_x_m: float, cam_y_m: float, cam_z: floa
     z00, z01 = zf.take(i00), zf.take(i00 + dc)
     z10, z11 = zf.take(i00 + dr), zf.take(i00 + dr + dc)
     elev = (z00 + (z01 - z00) * fx) * (1.0 - fy) + (z10 + (z11 - z10) * fx) * fy
-    curv_drop = (step_dists * step_dists) / (2.0 * _R_EARTH) * (1.0 - _K_REFRACT) if earth_curvature else 0.0
+    curv_drop = (sd * sd) / (2.0 * _R_EARTH) * (1.0 - _K_REFRACT) if earth_curvature else 0.0
     dz = (elev - curv_drop) - cam_z
     tan_angle = dz / d
     slant = np.hypot(d, dz)
@@ -339,11 +344,11 @@ def march_rays(terrain: TerrainData, cam_x_m: float, cam_y_m: float, cam_z: floa
         cm = _cell_max(terrain)
         cmax = cm.ravel().take(r0 * cm.shape[1] + c0) if cm.size else elev
         bound = np.maximum(cmax[:, 1:], cmax[:, :-1]) - _CROSSING_TOL_M
-        drop_prev = curv_drop[:-1] if earth_curvature else 0.0
+        drop_prev = curv_drop[:, :-1] if earth_curvature else 0.0
         num = (bound - drop_prev) - cam_z
         # the crossing sits between the two samples: below the eye the larger
         # distance gives the larger angle, above it the smaller one
-        tan_ub = num / np.where(num < 0, step_dists[None, 1:], step_dists[None, :-1])
+        tan_ub = num / np.where(num < 0, sd[:, 1:], sd[:, :-1])
         horizon_incl = np.maximum(horizon_before[:, 1:], tan_for_max[:, 1:])
         need = np.zeros(valid.shape, bool)
         need[:, 1:] = (tan_ub > horizon_incl) & valid[:, 1:]
@@ -352,19 +357,20 @@ def march_rays(terrain: TerrainData, cam_x_m: float, cam_y_m: float, cam_z: floa
         if n_need:
             if n_need > 0.25 * need.size:                 # dense: cheaper than gathering
                 cross[:, 1:] = _node_line_crossings(terrain, fc[:, :-1], fc[:, 1:], fr[:, :-1], fr[:, 1:],
-                                                    step_dists[None, :-1], step_dists[None, 1:], cam_z,
+                                                    sd[:, :-1], sd[:, 1:], cam_z,
                                                     earth_curvature)
                 cross[~need] = -1e18
             else:
                 ri, si = np.nonzero(need)
+                sdb = np.broadcast_to(sd, valid.shape)
                 cross[ri, si] = _node_line_crossings(terrain, fc[ri, si - 1], fc[ri, si], fr[ri, si - 1], fr[ri, si],
-                                                     step_dists[si - 1], step_dists[si], cam_z, earth_curvature)
+                                                     sdb[ri, si - 1], sdb[ri, si], cam_z, earth_curvature)
         # a crossing between samples i-1 and i lies before sample i
         horizon_before[:, 1:] = np.maximum(horizon_before[:, 1:], np.maximum.accumulate(cross, axis=1)[:, 1:])
     # the target's head (target_h above the sample) against the horizon of the
     # ground before it; tan_angle itself stays the ground's (it builds the horizon)
     los = (tan_angle + target_h / d) >= horizon_before if target_h > 0 else tan_angle >= horizon_before
-    return RayMarch(valid, rr, cc, tan_angle, slant, los)
+    return RayMarch(valid, rr, cc, tan_angle, slant, los, horizon_before)
 
 
 _CELL_MAX_CACHE: Dict[Tuple[int, Tuple[int, int]], Tuple[np.ndarray, np.ndarray]] = {}
@@ -574,9 +580,8 @@ def calculate_3d_viewshed(terrain: TerrainData,
     the default run EXTENDED, never a different classification: every cell the
     default run codes (Detection and up, or blocked at >= 25 px/m) keeps that
     code, so the ``>= ZONE_DETECT`` set is identical to a default run's. (One
-    scatter pass could not promise that: the last ray sample to land in a cell
-    decides its class, and a longer range appends samples past the 25 px/m
-    distance that flip the cells sitting on it.) A thermal camera has no
+    pass could not promise that: the monitor floor lengthens the range and
+    the cells at the old edge must keep their Detection codes.) A thermal camera has no
     monitoring level and ignores the flag.
     """
     kw = dict(terrain=terrain, cam_x_m=cam_x_m, cam_y_m=cam_y_m, mast_height_m=mast_height_m, camera=camera,
@@ -613,6 +618,123 @@ def _merge_monitor_extension(terrain: TerrainData, base: ViewshedResult, ext: Vi
         occluded_area_m2=int(np.count_nonzero(dori == ZONE_OCCLUDED)) * cell_a,
         coverage_pct=(vis_cells * cell_a / max(fov_area, 1.0)) * 100.0,
         max_los_reach_m=reach)
+
+
+# How a node's line of sight is decided (see _node_los): "bracket" = from the two fan rays either side,
+# a node they leave open (a shadow edge) gets its own exact ray; "exact" = every framed node gets one
+# (the slow, reference-like ceiling, for measurement).
+_LOS_MODE = "bracket"
+_EXACT_STEP_CELLS = 0.2          # step of a node's own exact ray, in cells
+_LOS_MARGIN = 1.0               # how many ray-horizon spreads a head must clear before the rays are trusted
+_LOS_FLOOR_CELLS = 0.015         # height (in cells) a head must clear the fan's horizon by, on top of the rays' spread
+_LOS_TOL = 1e-9                  # tan units: absorbs float rounding on a plane that grazes itself
+LOS_STATS = {"nodes": 0, "open": 0, "unreached": 0, "exact": 0}
+
+
+def _exact_horizon(terrain: TerrainData, cam_x_m: float, cam_y_m: float, cam_z: float, az: np.ndarray,
+                   d: np.ndarray, step_size: float, earth_curvature: bool, target_h: float) -> np.ndarray:
+    """Running horizon (tan) of the surface strictly before each node along the node's OWN line of
+    sight: one ray per node at its exact azimuth, sampled <= ``step_size`` apart with the LAST sample
+    on the node itself (march_rays with per-ray distances, crossings included)."""
+    out = np.empty(len(az), np.float64)
+    order = np.argsort(d)
+    pos = 0
+    while pos < len(order):
+        n_here = max(8, 4 * _CHUNK_ELEMS // max(int(math.ceil(d[order[min(len(order) - 1, pos)]] / step_size)), 1))
+        idx = order[pos:pos + n_here]
+        pos += n_here
+        S = max(int(math.ceil(d[idx].max() / step_size)), 2)
+        frac = np.arange(1, S + 1, dtype=np.float64) / S
+        for a in range(0, len(idx), ray_chunk(S)):
+            sel = idx[a:a + ray_chunk(S)]
+            steps = d[sel][:, None] * frac[None, :]
+            m = march_rays(terrain, cam_x_m, cam_y_m, cam_z, az[sel], steps, earth_curvature, True, target_h)
+            out[sel] = m.horizon[:, S - 1]
+    return out
+
+
+def build_fan(terrain: TerrainData, cam_x_m: float, cam_y_m: float, cam_z: float, ray_angles: np.ndarray,
+              step_dists: np.ndarray, earth_curvature: bool, target_h: float) -> np.ndarray:
+    """(rays, steps): the running horizon (tan) of the surface up to AND including each ray sample,
+    crossings included; nan where the ray has left the grid."""
+    fan = np.full((len(ray_angles), len(step_dists)), np.nan)
+    chunk = ray_chunk(len(step_dists))
+    for start in range(0, len(ray_angles), chunk):
+        m = march_rays(terrain, cam_x_m, cam_y_m, cam_z, ray_angles[start:start + chunk], step_dists,
+                       earth_curvature, True, target_h)
+        n, r = m.valid.shape[1], m.valid.shape[0]
+        incl = np.maximum(m.horizon, np.where(m.valid, m.tan_angle, -1e18))
+        fan[start:start + r, :n] = np.where(m.valid, incl, np.nan)
+    return fan
+
+
+def fan_horizons(terrain: TerrainData, cam_x_m: float, cam_y_m: float, cam_z: float, fan: np.ndarray,
+                 ray_angles: np.ndarray, step_size: float, ray_ix: np.ndarray, d: np.ndarray,
+                 earth_curvature: bool) -> Tuple[np.ndarray, np.ndarray]:
+    """Horizon (tan) of the surface strictly before nodes at ground distance ``d`` along fan rays
+    ``ray_ix``: the last sample before the node plus the node-line crossings between it and the node
+    (a crossing beyond the node cannot hide it). Returns (horizon, off_grid) -- ``off_grid`` where the
+    ray had left the grid before the node."""
+    num_steps = fan.shape[1]
+    m_last = np.ceil(d / step_size).astype(np.intp) - 2           # last sample strictly before the node
+    m_ix = np.clip(m_last, 0, num_steps - 1)
+    d_from = np.where(m_last >= 0, (m_ix + 1) * step_size, 0.0)
+    base = np.where(m_last >= 0, fan[ray_ix, m_ix], -1e18)
+    off = np.isnan(base)
+    sa, ca = np.sin(ray_angles[ray_ix]), np.cos(ray_angles[ray_ix])
+    cell, cols, rows = terrain.cell_size_m, terrain.cols, terrain.rows
+    fc0 = np.clip((cam_x_m + d_from * sa - terrain.origin_x) / cell, 0.0, cols - 1.0)
+    fr0 = np.clip((cam_y_m + d_from * ca - terrain.origin_y) / cell, 0.0, rows - 1.0)
+    fc1 = np.clip((cam_x_m + d * sa - terrain.origin_x) / cell, 0.0, cols - 1.0)
+    fr1 = np.clip((cam_y_m + d * ca - terrain.origin_y) / cell, 0.0, rows - 1.0)
+    cross = _node_line_crossings(terrain, fc0, fc1, fr0, fr1, d_from, d, cam_z, earth_curvature)
+    return np.maximum(np.nan_to_num(base, nan=-1e18), cross), off
+
+
+def _node_los(terrain: TerrainData, cam_x_m: float, cam_y_m: float, cam_z: float, d: np.ndarray,
+              az: np.ndarray, head_tan: np.ndarray, pan_rad: float, half_hfov_rad: float, max_range_m: float,
+              step_size: float, earth_curvature: bool, target_h: float, hfov_deg: float,
+              cell_size: float) -> np.ndarray:
+    """Line-of-sight verdict of framed nodes: the node's head against the horizon of the surface BEFORE it.
+
+    A fan of rays (<~0.6 cell apart at the far edge, steps <= half a cell) gives each node a horizon
+    from the two rays either side of it (``fan_horizons``). A head clear of both horizons by more than
+    they differ from each other is visible, one below both by as much is hidden; anything else is a
+    shadow edge and gets the node's own exact ray, as does a node no ray reaches (the fan left the
+    grid first) -- it never silently turns visible or out of frame."""
+    LOS_STATS["nodes"] += len(d)
+    exact_step = min(step_size, _EXACT_STEP_CELLS * cell_size)
+    if _LOS_MODE == "exact":
+        LOS_STATS["exact"] += len(d)
+        return head_tan >= _exact_horizon(terrain, cam_x_m, cam_y_m, cam_z, az, d, exact_step,
+                                          earth_curvature, target_h) - _LOS_TOL
+    span_need = half_hfov_rad * 2.0 * max_range_m / max(cell_size * 0.6, 0.5)
+    num_rays = int(min(2200, max(180, hfov_deg * 4, span_need)))
+    ray_angles = np.linspace(pan_rad - half_hfov_rad, pan_rad + half_hfov_rad, num_rays)
+    num_steps = max(int(max_range_m / step_size), 1)
+    fan = build_fan(terrain, cam_x_m, cam_y_m, cam_z, ray_angles, np.arange(1, num_steps + 1) * step_size,
+                    earth_curvature, target_h)
+
+    diff = np.arctan2(np.sin(az - pan_rad), np.cos(az - pan_rad))
+    kf = np.clip((diff + half_hfov_rad) / (2.0 * half_hfov_rad) * (num_rays - 1), 0.0, num_rays - 1.0)
+    i0 = np.minimum(kf.astype(np.intp), num_rays - 2)
+    h_a, off_a = fan_horizons(terrain, cam_x_m, cam_y_m, cam_z, fan, ray_angles, step_size, i0, d, earth_curvature)
+    h_b, off_b = fan_horizons(terrain, cam_x_m, cam_y_m, cam_z, fan, ray_angles, step_size, i0 + 1, d, earth_curvature)
+    unknown = off_a | off_b
+    h_hi, h_lo = np.maximum(h_a, h_b), np.minimum(h_a, h_b)
+    width = np.minimum(h_hi - h_lo, 1.0) * _LOS_MARGIN + _LOS_FLOOR_CELLS * cell_size / d
+    sure_vis = head_tan >= h_hi + width - _LOS_TOL
+    sure_hid = head_tan < h_lo - width - _LOS_TOL
+    visible = sure_vis.copy()
+    redo = unknown | ~(sure_vis | sure_hid)
+    LOS_STATS["unreached"] += int(unknown.sum())
+    LOS_STATS["open"] += int((redo & ~unknown).sum())
+    if redo.any():
+        idx = np.nonzero(redo)[0]
+        hor = _exact_horizon(terrain, cam_x_m, cam_y_m, cam_z, az[idx], d[idx], exact_step, earth_curvature, target_h)
+        visible[idx] = head_tan[idx] >= hor - _LOS_TOL
+        LOS_STATS["exact"] += len(idx)
+    return visible
 
 
 def _viewshed_core(terrain: TerrainData,
@@ -688,14 +810,6 @@ def _viewshed_core(terrain: TerrainData,
     ppm_grid = np.zeros((rows, cols), dtype=np.float32)
     slant_dist_grid = np.zeros((rows, cols), dtype=np.float32)
 
-    # 5. Raymarching Radial Scan
-    # Ray count so that even at the far edge the angular spacing lands < ~0.6
-    # cell apart — otherwise diverging rays skip grid cells inside the cone and
-    # coverage_pct reads low. Capped so the (R x S) work stays bounded.
-    span_need = half_hfov_rad * 2.0 * effective_max_range / max(cell_size * 0.6, 0.5)
-    num_rays = int(min(2200, max(180, hfov_deg * 4, span_need)))
-    ray_angles = np.linspace(pan_rad - half_hfov_rad, pan_rad + half_hfov_rad, num_rays)
-
     R_EARTH = _R_EARTH
     K_REFRACT = _K_REFRACT
 
@@ -705,52 +819,43 @@ def _viewshed_core(terrain: TerrainData,
     v_lo = math.radians(tilt_deg - vfov_deg / 2.0)     # bottom ray (steeper down)
     v_hi = math.radians(tilt_deg + vfov_deg / 2.0)     # top ray
 
-    step_size = ray_step_size(cell_size, ray_step_m)
-    num_steps = max(int(effective_max_range / step_size), 1)
-    step_dists = np.arange(1, num_steps + 1) * step_size          # (S,)
-
-    # Blocks of rays (ray_chunk), each marched, classified and scattered in
-    # ray order: ray-major then step-ascending -> last write wins, matching
-    # the old loop's ordering.
-    chunk = ray_chunk(len(step_dists))
-    for start in range(0, len(ray_angles), chunk):
-        march = march_rays(terrain, cam_x_m, cam_y_m, cam_z, ray_angles[start:start + chunk],
-                           step_dists, earth_curvature, target_h=target_h)
-        valid, rr, cc = march.valid, march.rr, march.cc
-        tan_angle, slant = march.tan_angle, march.slant
-        ppm = optics.ppm_at(np.maximum(slant, 1.0))
-        ppm_ok = ppm >= min_detect_ppm
-
-        # framed = the head inside the vertical frame (the ground when target_h = 0)
-        elev_angle = np.arctan(tan_angle + target_h / step_dists[None, :tan_angle.shape[1]]
-                               if target_h > 0 else tan_angle)    # (-pi/2, pi/2)
-        in_vfov = (elev_angle >= v_lo) & (elev_angle <= v_hi)
-        framed = valid & ppm_ok & in_vfov
-        visible = framed & march.los_clear
-
-        zone = zone_codes(visible, framed, ppm, lim.thermal, lim.monitor)
-
-        m = valid
-        vr, vc = rr[m], cc[m]
-        slant_dist_grid[vr, vc] = slant[m].astype(np.float32)
-        ppm_grid[vr, vc] = ppm[m].astype(np.float32)
-        dori_grid[vr, vc] = zone[m]
-        vis_mask[vr, vc] = visible[m]
-
-    # Narrow the analytic cone to what the camera can actually FRAME (bottom/top
-    # ray), so coverage_pct is "of the frameable area" rather than of the whole
-    # horizontal wedge including the near dead zone and the far sky.
+    # 5. A cell is decided AT ITS NODE. Its slant, px/m, framing and zone come
+    # from the node's own position (the ground point, the head for the vertical
+    # frame); the rays supply only the line-of-sight verdict (see _node_los).
+    # (Until now a ray SAMPLE classified the node it truncated to -- up to a
+    # cell away, the last and farthest sample winning -- so every class edge
+    # sat a fraction of a cell off and shares drifted ~0.6 pt per metre of cell.)
     cell_dz = terrain.z_grid[win].astype(np.float64) - cam_z
     if earth_curvature:
         cell_dz -= (ground_dist ** 2) / (2.0 * R_EARTH) * (1.0 - K_REFRACT)
     cell_elev_angle = np.arctan2(cell_dz, np.maximum(ground_dist, 0.1))
-    in_cone_w &= (cell_elev_angle >= v_lo) & (cell_elev_angle <= v_hi)
-    in_fov_cone = np.zeros((rows, cols), dtype=bool)
-    in_fov_cone[win] = in_cone_w
+    in_fov_w = in_cone_w & (cell_elev_angle >= v_lo) & (cell_elev_angle <= v_hi)
 
-    # Mask out anything not in the (now vertically-bounded) FOV cone
-    dori_grid[~in_fov_cone] = ZONE_OUT_OF_FOV
-    vis_mask[~in_fov_cone] = False
+    node_slant = np.hypot(ground_dist, cell_dz)
+    node_ppm = optics.ppm_at(np.maximum(node_slant, 1.0))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        node_tan = cell_dz / ground_dist
+        head_tan = node_tan + target_h / ground_dist if target_h > 0 else node_tan
+    head_elev = np.arctan(head_tan)
+    framed_w = in_fov_w & (node_ppm >= min_detect_ppm) & (head_elev >= v_lo) & (head_elev <= v_hi)
+
+    visible_w = np.zeros(framed_w.shape, bool)
+    fr_, fc_ = np.nonzero(framed_w)
+    if fr_.size:
+        step_size = ray_step_size(cell_size, ray_step_m)
+        visible_w[fr_, fc_] = _node_los(
+            terrain, cam_x_m, cam_y_m, cam_z, ground_dist[fr_, fc_], cell_azimuth_rad[fr_, fc_],
+            head_tan[fr_, fc_], pan_rad, half_hfov_rad, effective_max_range, step_size, earth_curvature,
+            target_h, hfov_deg, cell_size)
+
+    zone_w = zone_codes(visible_w, framed_w, node_ppm, lim.thermal, lim.monitor)
+    dori_grid[win] = np.where(in_fov_w, zone_w, ZONE_OUT_OF_FOV)
+    vis_mask[win] = visible_w
+    # px/m and slant: the node's own, over the whole horizontal wedge in range (framed or not)
+    ppm_grid[win] = np.where(in_cone_w, node_ppm, 0.0)
+    slant_dist_grid[win] = np.where(in_cone_w, node_slant, 0.0)
+    in_fov_cone = np.zeros((rows, cols), dtype=bool)
+    in_fov_cone[win] = in_fov_w
 
     # 6. Elevation profile along the central optical axis (skipped in batch runs
     # that never read the per-camera cross-section).

@@ -110,7 +110,7 @@ def test_visible_cells_never_below_min_detect():
     vis = res.visibility_mask
     # floor is now the EN 62676-4 Detection threshold (25 px/m)
     assert np.all(res.ppm_grid[vis] >= 25.0 - 1e-3)
-    assert set(np.unique(res.dori_grid[vis]).tolist()) <= {ZONE_DETECT, 3, 4, ZONE_IDENT}
+    assert set(np.unique(res.dori_grid[vis]).tolist()) <= {ZONE_DETECT, 4, 5, ZONE_IDENT}   # Detect, Observe, Recognise, Identify (5 was missing: no cell landed there while a ray sample classified it)
 
 
 def test_vertical_fov_gates_the_grid():

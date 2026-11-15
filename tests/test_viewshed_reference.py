@@ -1,16 +1,18 @@
 """Differential test: the vectorised viewshed engine against an independent
 per-cell reference (tests/reference_viewshed.py).
 
-The engine marches radial rays and lets the last ray sample landing in a cell
-decide its class; the reference casts one dense, crossing-exact line of sight
-to every cell node. They define the same model, so away from class boundaries
-they must agree exactly; ON a boundary the engine's ray-sample discretisation
-(a sample lands anywhere inside the cell's square, the reference uses the
-node) may flip a cell. The assertions therefore pin: overall agreement, the
-signed visible-area difference, per-zone area differences, and that no
-disagreeing cell lies more than ``MAX_BOUNDARY_CELLS`` from a class boundary
-of the reference -- a real occlusion / framing / curvature regression shows up
-as disagreement in the interior of a region, not on its rim.
+The engine decides every cell AT ITS NODE (slant, px/m, framing and zone from the node's own
+position) and takes only the line-of-sight verdict from a fan of rays (a node on a shadow edge,
+or one the fan does not reach, gets its own exact ray); the reference casts one dense,
+crossing-exact line of sight to every cell node. They define the same model, so away from
+class boundaries they must agree exactly; the few cells that still differ are shadow-edge nodes
+whose head clears the horizon by a hair (sampling, not a model difference). The assertions
+therefore pin: overall agreement, the signed visible-area difference, per-zone area differences,
+and that no disagreeing cell lies more than ``MAX_BOUNDARY_CELLS`` from a class boundary of the
+reference -- a real occlusion / framing / curvature regression shows up as disagreement in the
+interior of a region, not on its rim. Before the node-position rule (a ray SAMPLE classified the
+node it truncated to, the last and farthest winning) single views agreed 92.9 % and a cell could
+sit 2-3 cells from a boundary; now 99.5 % and 1.
 
 Run with ``-s`` to print the measured table.
 """
@@ -53,9 +55,8 @@ TELE = CameraConfig(name="T", sensor_name='1/2.8"', resolution_name="8 MP (4K - 
 THERMAL = CameraConfig(name="Th", model_name="Test Termal", sensor_name="LWIR 640x512 (12µm)",
                        resolution_name="LWIR (640x512)", focal_min_mm=25.0, focal_max_mm=75.0)
 
-# Class boundaries may flip by the sample-in-cell discretisation: that is the
-# only disagreement tolerated, and only this close to a boundary.
-MAX_BOUNDARY_CELLS = 2
+# The only disagreement tolerated is a grazing shadow-edge node, and only this close to a boundary.
+MAX_BOUNDARY_CELLS = 1
 
 ZONES = {"occ": ZONE_OCCLUDED, "mon": ZONE_MONITOR, "det": ZONE_DETECT, "obs": ZONE_OBSERVE,
          "rec": ZONE_RECOG, "idn": ZONE_IDENT}
@@ -256,15 +257,16 @@ SINGLE: List[Tuple[str, callable, float, dict]] = [
 ]
 
 
-# Thresholds: measured over the scenarios below, then set a small margin above
-# the worst one. ``scale`` loosens the area gates for 25 m cells, where one
-# ray sample may sit 25 m from the node it is attributed to.
-GATES = dict(min_agree_pct=70.0, max_dis_of_bnd=0.5, max_vis_cone_pct=7.0, max_zone_pct=7.0, max_bd=MAX_BOUNDARY_CELLS)
-MULTI_GATES = dict(min_agree_pct=78.0, max_dis_of_bnd=0.4, max_vis_cone_pct=5.0, max_zone_pct=3.5, max_bd=MAX_BOUNDARY_CELLS)
+# Thresholds: measured over the scenarios below (single: worst agreement 98.97 %, boundary share 0.011,
+# area 1.03 %; plans: 99.61 %, 0.007, 0.39 %), then set just beyond the worst one. They were 70 / 0.5 /
+# 7 % and 78 / 0.4 / 5 % / 3.5 % while a ray sample decided the cell. ``scale`` loosens the area gates
+# for 25 m cells (a one-cell shadow edge is a bigger share of a small view).
+GATES = dict(min_agree_pct=98.5, max_dis_of_bnd=0.02, max_vis_cone_pct=1.3, max_zone_pct=1.3, max_bd=MAX_BOUNDARY_CELLS)
+MULTI_GATES = dict(min_agree_pct=99.3, max_dis_of_bnd=0.01, max_vis_cone_pct=0.5, max_zone_pct=0.5, max_bd=MAX_BOUNDARY_CELLS)
 
 # One camera of a plan frames a few hundred cells at most, most of them near a class edge: its gates are
-# looser, and one isolated cell may sit 3 cells from an edge (a grazing sample on a 0.25 m terrain wobble).
-PER_CAMERA_GATES = dict(min_agree_pct=60.0, max_dis_of_bnd=0.5, max_vis_cone_pct=15.0, max_zone_pct=15.0, max_bd=3)
+# a little looser (measured worst: 98.88 %, 0.020, 1.12 %; they were 60 / 0.5 / 15 % with max_bd 3).
+PER_CAMERA_GATES = dict(min_agree_pct=98.5, max_dis_of_bnd=0.03, max_vis_cone_pct=1.4, max_zone_pct=1.4, max_bd=1)
 
 
 def violations(c: Cmp, gates: dict, scale: float = 1.0) -> List[str]:
@@ -343,15 +345,15 @@ def test_single_camera_matches_reference(name, factory, th, kw):
 
 
 def test_single_camera_bias_is_small_in_aggregate():
-    """The engine's ray scatter may flip boundary cells either way; summed over
-    every scenario its visible area must stay within a few percent of the
-    reference's (a systematic leak or over-occlusion would not cancel)."""
+    """Summed over every scenario the engine's visible area must stay within a fraction of a percent
+    of the reference's (a systematic leak or over-occlusion would not cancel); measured +0.09 %,
+    it was within 2 % while the ray scatter decided the cells."""
     if len(_SINGLE_RESULTS) < len(SINGLE) + len(RANDOM_SEEDS):
         pytest.skip("needs the single-camera scenarios to have run")
     d = sum(c.d_vis_cells for c in _SINGLE_RESULTS.values())
     cone = sum(c.n_cells for c in _SINGLE_RESULTS.values())
     print(f"aggregate visible-cell difference {d:+d} of {cone} active cells ({100.0 * d / cone:+.2f}%)")
-    assert abs(100.0 * d / cone) <= 2.0
+    assert abs(100.0 * d / cone) <= 0.15
 
 
 def test_the_comparison_catches_a_wrong_target_height():

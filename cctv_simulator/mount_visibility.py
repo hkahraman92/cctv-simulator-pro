@@ -13,14 +13,16 @@ circle, and every view becomes a few array comparisons on the cached result.
 
 The same building blocks as the authoritative engine are used --
 march_rays (occlusion), view_limits (px/m floor, optical/atmospheric caps),
-zone_codes (DORI classes), camera_optics (Kural 1) -- so the two differ only
-in ray sampling: the engine casts rays inside one FOV, the raster round the
-whole circle, and a cell keeps whichever ray sample lands in it last. On
-flat ground they agree on >= 97 % of cells. On hills they disagree along
-shadow edges, where BOTH are uncertain: against an exact eye -> cell-centre
-sightline over the bilinear surface the raster was right on 89.5 % of framed
-cells and the engine on 87.3 % (6 views, 400x400 @ 3 m). The test pins
-"no less accurate than the engine" against that reference.
+zone_codes (DORI classes), camera_optics (Kural 1) -- and a cell is decided
+AT ITS NODE the way the engine decides it: slant, head elevation and range are
+the node's own, the full-circle ray fan only gives the line of sight (the
+horizon before the node, interpolated between the two rays either side of it;
+with a target height also a node on a shadow edge gets its own exact ray, see
+``_RASTER_EXACT_OPEN``). Against the engine the raster agrees on 100 % of the
+cells at a 1.8 m target and 99.1 % at a ground target (64 views, 19 290 cells;
+it was 96 % / 90 % when a ray sample classified the cell it truncated into).
+The test pins "no less accurate than the engine" against an exact eye ->
+cell-centre sightline over the bilinear surface.
 
 Measured (400x400 @ 3 m, 1 km range): raster ~200 ms once per mast, cache
 hit ~10 us, ~10 ms per view vs ~20 ms for a full engine run.
@@ -44,8 +46,12 @@ from .viewshed_3d import (
     _R_EARTH,
     ZONE_DETECT,
     current_target_height,
-    march_rays,
-    ray_chunk,
+    _EXACT_STEP_CELLS,
+    _LOS_FLOOR_CELLS,
+    _LOS_TOL,
+    _exact_horizon,
+    build_fan,
+    fan_horizons,
     ray_step_size,
     view_focal_mm,
     view_limits,
@@ -54,6 +60,13 @@ from .viewshed_3d import (
 
 
 _MAX_RAYS = 16384
+_RASTER_MARGIN = 1.0
+# Shadow-edge nodes (the two fan rays either side disagree or are not clear of the node) get their
+# own exact ray, as in the engine. None = only when the target has a height: a head clears the
+# horizon by a margin and few nodes are open (+0-20 % time, 99.9 % agreement with the engine); a
+# GROUND target grazes the surface everywhere, a third of the nodes are open and the raster would
+# cost 4x (10 m cells) to 40x (2.5 m) -- it keeps the horizon interpolated between the two rays (99.1 %).
+_RASTER_EXACT_OPEN = None
 
 
 @dataclass
@@ -70,16 +83,16 @@ class MountVisibility:
     grid_shape: Tuple[int, int]               # full terrain (rows, cols)
     window: Tuple[slice, slice]               # rows, cols of the arrays below
     num_rays: int
-    # sample recorded per cell (last write wins, ray-major / step-ascending,
-    # exactly like calculate_3d_viewshed's scatter)
-    written: np.ndarray                       # some in-range ray sample landed here
-    los_clear: np.ndarray                     # ...and nothing earlier on its ray rose above it
-    sample_elev_rad: np.ndarray               # elevation angle of that sample from the lens
-    sample_slant_m: np.ndarray                # lens-to-sample 3D distance
+    # per node, exactly like calculate_3d_viewshed decides a cell
+    written: np.ndarray                       # the node is inside range (and > 1 m from the mast)
+    los_clear: np.ndarray                     # nothing before it on its line of sight rises above its head
+    sample_elev_rad: np.ndarray               # elevation angle of the node's head from the lens
+    sample_slant_m: np.ndarray                # lens-to-node (ground point) 3D distance
     # cell-centre geometry (the engine's analytic FOV cone uses these)
     center_dist_m: np.ndarray
     center_az_rad: np.ndarray                 # 0 = +Y (north), clockwise
-    center_elev_rad: np.ndarray
+    center_elev_rad: np.ndarray               # the head's (ground + target height)
+    ground_elev_rad: Optional[np.ndarray] = None   # the ground point's: the engine's cone frames it too
 
 
 @dataclass
@@ -121,39 +134,63 @@ def compute_mount_visibility(terrain: TerrainData, x_m: float, y_m: float, mast_
     c1 = int(np.clip(math.ceil((x_m + max_range_m - terrain.origin_x) / cell) + 1, 0, cols))
     h, w = max(r1 - r0, 0), max(c1 - c0, 0)
 
-    written = np.zeros((h, w), bool)
-    los = np.zeros((h, w), bool)
-    tan_g = np.zeros((h, w), np.float64)
-    slant_g = np.zeros((h, w), np.float64)
-    chunk = ray_chunk(len(step_dists))
-    for start in range(0, num_rays, chunk):
-        m = march_rays(terrain, x_m, y_m, cam_z, angles[start:start + chunk],
-                       step_dists, earth_curvature, target_h=th)
-        v = m.valid
-        rr, cc = m.rr[v] - r0, m.cc[v] - c0
-        written[rr, cc] = True
-        los[rr, cc] = m.los_clear[v]
-        tan = m.tan_angle + th / step_dists[None, :m.tan_angle.shape[1]] if th > 0 else m.tan_angle
-        tan_g[rr, cc] = tan[v]
-        slant_g[rr, cc] = m.slant[v]
-
+    # Every cell is decided AT ITS NODE, as calculate_3d_viewshed does: slant, head elevation and range
+    # are the node's own, the rays only give the line of sight (the horizon of the surface before the
+    # node, from the nearer of the two rays either side of it plus the node-line crossings up to the
+    # node; a node the fan never reached gets its own exact ray). It used to keep whichever ray SAMPLE
+    # truncated into the cell last -- a fraction of a cell off, class edges drifting with the cell.
     gx = terrain.origin_x + np.arange(c0, c1) * cell
     gy = terrain.origin_y + np.arange(r0, r1) * cell
     mx, my = np.meshgrid(gx, gy)
     dx, dy = mx - x_m, my - y_m
     dist = np.hypot(dx, dy)
-    cell_dz = terrain.z_grid[r0:r1, c0:c1].astype(np.float64) + th - cam_z
+    gdz = terrain.z_grid[r0:r1, c0:c1].astype(np.float64) - cam_z
     if earth_curvature:
-        cell_dz -= (dist ** 2) / (2.0 * _R_EARTH) * (1.0 - _K_REFRACT)
+        gdz -= (dist ** 2) / (2.0 * _R_EARTH) * (1.0 - _K_REFRACT)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        head_tan = gdz / dist + th / dist
+    az = np.arctan2(dx, dy)
+    written = (dist <= max_range_m) & (dist > 1.0)
+    los = np.zeros((h, w), bool)
+    if written.any():
+        fan = build_fan(terrain, x_m, y_m, cam_z, angles, step_dists, earth_curvature, th)
+        ri, ci = np.nonzero(written)
+        two_pi = 2.0 * math.pi
+        for lo_ in range(0, len(ri), 200_000):
+            sel = (ri[lo_:lo_ + 200_000], ci[lo_:lo_ + 200_000])
+            d_n, az_n, ht_n = dist[sel], az[sel], head_tan[sel]
+            kf = (az_n % two_pi) / two_pi * num_rays
+            i0 = np.minimum(kf.astype(np.intp), num_rays - 1)
+            i1 = (i0 + 1) % num_rays
+            h_a, off_a = fan_horizons(terrain, x_m, y_m, cam_z, fan, angles, step, i0, d_n, earth_curvature)
+            h_b, off_b = fan_horizons(terrain, x_m, y_m, cam_z, fan, angles, step, i1, d_n, earth_curvature)
+            # the node lies between its two rays: the horizon is interpolated across them
+            frac = kf - i0
+            h_mid = (np.where(h_a < -1e17, h_b, h_a) * (1.0 - frac) + np.where(h_b < -1e17, h_a, h_b) * frac)
+            ok = ht_n >= h_mid - _LOS_TOL
+            redo = off_a | off_b
+            if th > 0 if _RASTER_EXACT_OPEN is None else _RASTER_EXACT_OPEN:
+                width = np.minimum(np.abs(h_a - h_b), 1.0) * _RASTER_MARGIN + _LOS_FLOOR_CELLS * cell / d_n
+                hi_, lo_h = np.maximum(h_a, h_b), np.minimum(h_a, h_b)
+                redo |= ~((ht_n >= hi_ + width - _LOS_TOL) | (ht_n < lo_h - width - _LOS_TOL))
+            if redo.any():
+                oi = np.nonzero(redo)[0]
+                hx = _exact_horizon(terrain, x_m, y_m, cam_z, az_n[oi], d_n[oi],
+                                    min(step, _EXACT_STEP_CELLS * cell), earth_curvature, th)
+                ok[oi] = ht_n[oi] >= hx - _LOS_TOL
+            los[sel] = ok
+    with np.errstate(invalid="ignore"):
+        elev = np.arctan(head_tan)
 
     return MountVisibility(
         x_m=x_m, y_m=y_m, mast_height_m=mast_height_m, cam_z_m=cam_z,
         max_range_m=max_range_m, earth_curvature=earth_curvature,
         grid_shape=(rows, cols), window=(slice(r0, r1), slice(c0, c1)), num_rays=num_rays,
         written=written, los_clear=los,
-        sample_elev_rad=np.arctan(tan_g), sample_slant_m=slant_g,
-        center_dist_m=dist, center_az_rad=np.arctan2(dx, dy),
-        center_elev_rad=np.arctan2(cell_dz, np.maximum(dist, 0.1)),
+        sample_elev_rad=np.where(written, elev, 0.0), sample_slant_m=np.where(written, np.hypot(dist, gdz), 0.0),
+        center_dist_m=dist, center_az_rad=az,
+        center_elev_rad=np.arctan2(gdz + th, np.maximum(dist, 0.1)),
+        ground_elev_rad=np.arctan2(gdz, np.maximum(dist, 0.1)),
     )
 
 
@@ -233,6 +270,8 @@ def view_layers(mv: MountVisibility, camera: CameraConfig, *, tilt_deg: float,
     zone = zone_codes(visible, framed, ppm, lim.thermal, lim.monitor)
     in_frame = ((mv.center_dist_m <= eff) & (mv.center_dist_m > 1.0)
                 & (mv.center_elev_rad >= v_lo) & (mv.center_elev_rad <= v_hi))
+    if mv.ground_elev_rad is not None:       # the engine's cone frames the ground cell as well as the head
+        in_frame &= (mv.ground_elev_rad >= v_lo) & (mv.ground_elev_rad <= v_hi)
     visible = visible & in_frame
     zone = np.where(in_frame, zone, 0)
     if lim.monitor:
