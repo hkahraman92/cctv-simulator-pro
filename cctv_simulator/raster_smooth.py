@@ -22,6 +22,7 @@ resize, nothing is invented. No Tk.
 """
 from __future__ import annotations
 
+import math
 from typing import Tuple
 
 import numpy as np
@@ -33,10 +34,30 @@ def _smoothstep(e0: float, e1: float, x: np.ndarray) -> np.ndarray:
     return t * t * (3.0 - 2.0 * t)
 
 
+def _blur(a: np.ndarray, sigma: float) -> np.ndarray:
+    """Separable Gaussian blur of a float32 plane (edge-replicated)."""
+    r = max(1, int(math.ceil(3.0 * sigma)))
+    k = np.exp(-0.5 * (np.arange(-r, r + 1) / sigma) ** 2).astype(np.float32)
+    k /= k.sum()
+    for axis in (0, 1):
+        pad = np.pad(a, [(r, r) if i == axis else (0, 0) for i in range(2)], mode="edge")
+        n = a.shape[axis]
+        out = np.zeros_like(a)
+        for i, w in enumerate(k):
+            out += w * (pad[i:i + n, :] if axis == 0 else pad[:, i:i + n])
+        a = out
+    return a
+
+
 def smooth_overlay(ov: np.ndarray, out_size: Tuple[int, int], *, supersample: int = 6,
-                   max_side: int = 1600, max_classes: int = 12) -> Image.Image:
+                   max_side: int = 1600, max_classes: int = 12, blur_px: float = 0.0) -> Image.Image:
     """RGBA class overlay (rows, cols, 4 uint8, image orientation: row 0 =
-    top) -> smoothed RGBA PIL image of ``out_size`` (width, height)."""
+    top) -> smoothed RGBA PIL image of ``out_size`` (width, height).
+
+    ``blur_px`` (default 0 = unchanged): Gaussian sigma, in INPUT pixels, applied to every class
+    indicator before the bilinear upsample. For overlays whose class pixels are themselves a rasterised
+    analytic shape (the multi-camera picture): the bilinear 0.5 contour alone follows the pixel
+    staircase of a diagonal edge, the blur turns it into a straight line."""
     ov = np.ascontiguousarray(ov, dtype=np.uint8)
     h, w = ov.shape[:2]
     out_w, out_h = max(int(out_size[0]), 1), max(int(out_size[1]), 1)
@@ -56,14 +77,15 @@ def smooth_overlay(ov: np.ndarray, out_size: Tuple[int, int], *, supersample: in
     # map, and smoothing the whole map-sized image for it cost ~70 ms.
     rows = np.flatnonzero((keys != 0).any(axis=1))
     cols = np.flatnonzero((keys != 0).any(axis=0))
-    r0, r1 = max(int(rows[0]) - 2, 0), min(int(rows[-1]) + 3, h)
-    c0, c1 = max(int(cols[0]) - 2, 0), min(int(cols[-1]) + 3, w)
+    pad = 2 + (int(math.ceil(3.0 * blur_px)) if blur_px > 0 else 0)
+    r0, r1 = max(int(rows[0]) - pad, 0), min(int(rows[-1]) + pad + 1, h)
+    c0, c1 = max(int(cols[0]) - pad, 0), min(int(cols[-1]) + pad + 1, w)
     if (r1 - r0) * (c1 - c0) < 0.6 * h * w:
         fx, fy = out_w / w, out_h / h
         x0, y0 = int(round(c0 * fx)), int(round(r0 * fy))
         x1, y1 = max(int(round(c1 * fx)), x0 + 1), max(int(round(r1 * fy)), y0 + 1)
         part = smooth_overlay(ov[r0:r1, c0:c1], (x1 - x0, y1 - y0), supersample=supersample,
-                              max_side=max_side, max_classes=max_classes)
+                              max_side=max_side, max_classes=max_classes, blur_px=blur_px)
         full = Image.new("RGBA", (out_w, out_h), (0, 0, 0, 0))
         full.paste(part, (x0, y0))
         return full
@@ -74,7 +96,10 @@ def smooth_overlay(ov: np.ndarray, out_size: Tuple[int, int], *, supersample: in
     sw, sh = max(1, int(round(w * s))), max(1, int(round(h * s)))
 
     def up(mask: np.ndarray) -> np.ndarray:
-        img = Image.fromarray(mask.astype(np.float32), mode="F")
+        mask = mask.astype(np.float32)
+        if blur_px > 0:
+            mask = _blur(mask, blur_px)
+        img = Image.fromarray(mask, mode="F")
         return np.asarray(img.resize((sw, sh), Image.Resampling.BILINEAR), dtype=np.float32)
 
     best_p = np.zeros((sh, sw), np.float32)
@@ -86,9 +111,11 @@ def smooth_overlay(ov: np.ndarray, out_size: Tuple[int, int], *, supersample: in
         take = p > best_p
         best_p = np.where(take, p, best_p)
         best_k = np.where(take, i, best_k)
+    # a blurred convex shape loses area at its 0.5 contour: centre the fade lower so the coloured area stays
+    lo_e = 0.3 - 0.05 * min(blur_px, 1.5) if blur_px > 0 else 0.3
     colors = np.frombuffer(colored.astype(np.uint32).tobytes(), np.uint8).reshape(-1, 4)
     out = colors[best_k].copy()
-    out[..., 3] = (out[..., 3].astype(np.float32) * _smoothstep(0.3, 0.7, np.clip(fg, 0.0, 1.0))
+    out[..., 3] = (out[..., 3].astype(np.float32) * _smoothstep(lo_e, lo_e + 0.4, np.clip(fg, 0.0, 1.0))
                    ).astype(np.uint8)
     img = Image.fromarray(out, "RGBA")
     if (sw, sh) != (out_w, out_h):

@@ -202,3 +202,38 @@ def test_windowed_slice_gives_pixel_identical_pictures(monkeypatch):
             monkeypatch.undo()
         for name in ("zone", "seen", "ppm", "visible"):
             assert np.array_equal(getattr(new, name), getattr(old, name)), name
+
+
+def test_overlay_edges_are_antialiased_and_interiors_keep_the_legend_colour():
+    t = _flat(100, 10.0)
+    p = _pl(500.0, 500.0, 0.0)
+    mv = calculate_multi_camera_viewshed(t, [p])
+    size = map_render.final_size((800, 800))
+    assert size == (1600, 1600)                                       # classes are evaluated at 2x the request
+    cl = map_render.multi_view_classes(t, mv, [p], size)
+    img = np.asarray(map_render.multi_zone_overlay(cl))
+    assert img.shape[:2] == (1600, 1600)
+    alpha = img[..., 3]
+    hard = int((cl.zone > 0).sum())
+    soft = int((alpha >= 128).sum())
+    assert abs(soft - hard) / hard < 0.01
+    # the outer arc: pixels with an intermediate alpha exist (a hard-edged picture has none)
+    edge = (alpha > 0) & (alpha < int(alpha.max()))
+    assert int(edge.sum()) > 200 and int(edge.sum()) < hard           # a one-pixel fade along the perimeter, not a blur
+    # a class interior is exactly the band-table colour (the legend)
+    bands = {tuple(int(c) for c in b[2]) for b in map_render.LAYER_BANDS["dori"][1]}
+    interior = img[alpha == alpha.max()]
+    assert {tuple(int(c) for c in px) for px in np.unique(interior, axis=0)} <= bands
+    # no gap between two coloured classes: every pixel inside the coloured area is coloured
+    coloured = alpha > 0
+    assert (alpha[coloured].min() > 0)
+
+
+def test_dim_outside_pixel_mask_is_soft_and_matches_the_final_size():
+    img = map_render.Image.new("RGBA", (200, 200), (10, 20, 30, 255))
+    m = np.zeros((50, 50), np.float32)
+    m[:, :25] = 1.0
+    out = np.asarray(map_render.dim_outside(img, m, pixel=True))
+    assert out.shape[:2] == (200, 200)
+    assert out[100, 10, 3] == 255 and out[100, 190, 3] == int(255 * 0.3)
+    assert len(set(out[100, 90:110, 3].tolist())) > 2                 # a soft edge, not a step

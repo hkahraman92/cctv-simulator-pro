@@ -277,17 +277,30 @@ def obstacle_layer(terrain: TerrainData, size: Tuple[int, int], photo: bool) -> 
     return smooth_overlay(ov, size)
 
 
-def dim_outside(img: Image.Image, mask: np.ndarray, factor: float = 0.3) -> Image.Image:
+def dim_outside(img: Image.Image, mask: np.ndarray, factor: float = 0.3, *, pixel: bool = False) -> Image.Image:
     """Fade an overlay outside ``mask`` (terrain grid, row 0 = south): what a
-    plan does not protect stays visible but no longer reads as coverage."""
-    if mask.shape == (img.height, img.width):          # already a north-up pixel mask of this picture
-        keep = mask.astype(bool)
-    else:
-        m = Image.fromarray(np.flipud(mask).astype(np.uint8) * 255).resize(img.size, Image.Resampling.NEAREST)
-        keep = np.asarray(m) > 0
+    plan does not protect stays visible but no longer reads as coverage.
+
+    ``pixel=True``: ``mask`` is a north-up pixel mask (bool) or a 0..1 weight of ANY size; it is
+    resampled bilinearly to the picture and the fade follows it softly (no stair-step edge)."""
     arr = np.array(img.convert("RGBA"))
+    if pixel:
+        m = Image.fromarray(np.asarray(mask, np.float32), mode="F")
+        if m.size != img.size:
+            m = m.resize(img.size, Image.Resampling.BILINEAR)
+        w = factor + (1.0 - factor) * _smooth01(np.asarray(m, np.float32))
+        arr[..., 3] = (arr[..., 3] * w).astype(np.uint8)
+        return Image.fromarray(arr, "RGBA")
+    m = Image.fromarray(np.flipud(mask).astype(np.uint8) * 255).resize(img.size, Image.Resampling.NEAREST)
+    keep = np.asarray(m) > 0
     arr[..., 3] = np.where(keep, arr[..., 3], (arr[..., 3] * factor).astype(np.uint8))
     return Image.fromarray(arr, "RGBA")
+
+
+def _smooth01(x: np.ndarray) -> np.ndarray:
+    """Smoothstep of a 0..1 weight around its 0.5 contour (a soft but narrow edge)."""
+    t = np.clip((x - 0.35) / 0.3, 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
 
 
 def zone_overlay(dori_grid: np.ndarray, size: Tuple[int, int], *, mode: str = "dori") -> Image.Image:
@@ -524,10 +537,43 @@ def multi_view_classes(terrain: TerrainData, mv, placements: Sequence, size: Tup
     return MultiViewClasses(zone=dori, seen=seen, ppm=best, visible=vis_any, size=(W, H), work_size=(w, h))
 
 
+_OUT_CAP_PX = 4096
+
+
+def final_size(size: Tuple[int, int], scale: float = 2.0, cap: int = _OUT_CAP_PX) -> Tuple[int, int]:
+    """Picture size the multi-camera classes are evaluated at: ``scale`` x the requested size, the long
+    side capped. Smoothness comes from resolution (the optics are exact per pixel), never from blurring."""
+    k = max(1.0, min(float(scale), cap / max(size)))
+    return max(1, round(size[0] * k)), max(1, round(size[1] * k))
+
+
 def _paint_px(arr: np.ndarray, mode: str) -> Image.Image:
+    """Class pixels -> RGBA at the same size. Class colours switch hard between two classes and the
+    interior keeps the band-table colour exactly. Only a coloured-to-background edge is anti-aliased:
+    alpha follows a [1 2 1] / 4 coverage of the coloured mask (a fade of one pixel that straddles the
+    edge, so the 0.5 contour and the geometry do not move); the faded pixels outside take the colour
+    of their nearest coloured neighbour."""
     ov = np.zeros(arr.shape + (4,), np.uint8)
     paint_bands(ov, arr, LAYER_BANDS[mode][1], mask=True)
-    return Image.fromarray(ov, "RGBA")
+    colored = ov[..., 3] > 0
+    if not colored.any():
+        return Image.fromarray(ov, "RGBA")
+    pad = np.pad(colored.astype(np.float32), 1, mode="edge")        # the picture edge is not a coloured edge
+    cov = pad[1:-1, 1:-1]
+    for axis in (0, 1):                                              # separable [1 2 1] / 4
+        pad = np.pad(cov, 1, mode="edge")
+        cov = (0.5 * pad[1:-1, 1:-1] + 0.25 * (pad[:-2, 1:-1] + pad[2:, 1:-1])) if axis == 0 else               (0.5 * pad[1:-1, 1:-1] + 0.25 * (pad[1:-1, :-2] + pad[1:-1, 2:]))
+    out = ov.copy()
+    rim = ~colored & (cov > 0)
+    if rim.any():
+        for dr, dc in ((0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)):
+            src = np.roll(np.roll(ov, dr, axis=0), dc, axis=1)
+            ok = np.roll(np.roll(colored, dr, axis=0), dc, axis=1)
+            take = rim & ok & (out[..., 3] == 0)
+            out[take] = src[take]
+    # alpha: full inside (cov == 1), fading across the edge pixel pair
+    out[..., 3] = (out[..., 3].astype(np.float32) * np.clip(cov, 0.0, 1.0)).astype(np.uint8)
+    return Image.fromarray(out, "RGBA")
 
 
 def multi_zone_overlay(cl: MultiViewClasses, *, mode: str = "dori") -> Image.Image:
@@ -540,14 +586,17 @@ def multi_seen_overlay(cl: MultiViewClasses) -> Image.Image:
     return _paint_px(cl.seen, "overlap")
 
 
-def terrain_mask_px(terrain: TerrainData, mask: np.ndarray, size: Tuple[int, int]) -> np.ndarray:
+def terrain_mask_px(terrain: TerrainData, mask: np.ndarray, size: Tuple[int, int], *,
+                    soft: bool = False) -> np.ndarray:
     """A terrain-grid bool mask (row 0 = south) as a north-up pixel mask of ``size``: the 0.5
-    contour of its bilinear surface, so the edge is smooth rather than a staircase of cells."""
+    contour of its bilinear surface, so the edge is smooth rather than a staircase of cells.
+    ``soft=True`` returns the 0..1 bilinear weight itself (for ``dim_outside(pixel=True)``)."""
     W, H = size
     xs = terrain.origin_x + (np.arange(W) + 0.5) * (terrain.width_m / W)
     ys = terrain.origin_y + terrain.height_m - (np.arange(H) + 0.5) * (terrain.height_m / H)
     gx, gy = np.meshgrid(xs, ys)
-    return _sample_grid(mask.astype(np.float64), terrain, gx.ravel(), gy.ravel()).reshape(H, W) > 0.5
+    w = _sample_grid(mask.astype(np.float64), terrain, gx.ravel(), gy.ravel()).reshape(H, W)
+    return w.astype(np.float32) if soft else w > 0.5
 
 
 def multi_target_overlay(terrain: TerrainData, cl: MultiViewClasses, *, target_ppm: float, roi: np.ndarray,

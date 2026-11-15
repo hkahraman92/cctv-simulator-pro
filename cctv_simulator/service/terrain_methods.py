@@ -763,7 +763,7 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         "target": target, "fence_line": fence_line,
         "roi_kind": "area" if is_area else "side" if kw.get("line_mode") == "border" else "band",
         "watch_side": kw.get("watch_side"),
-        "overlay": _image(overlay, max_px=max_px), "legend": legend,
+        "overlay": _image(overlay, max_px=min(4096, 2 * max_px)), "legend": legend,    # smoothed picture: up to 2x
         "measured": bool(t.is_measured), "monitor_floor": monitor_run,
         "grid_note": grid_note, "grid_suggest": grid_suggest,
     }
@@ -962,17 +962,17 @@ def _coverage_overlay(t, plan, cam, kw, mv, layer, size, roi, monitor_run, cls, 
         grid = mv.dori_grid if layer == "dori" else mv.seen_count_grid
         return map_render.dim_outside(map_render.zone_overlay(
             grid, size, mode="dori_monitor" if layer == "dori" and monitor_run else layer), roi)
+    size = map_render.final_size(size)           # classes at the final (2x) size: smoothness from resolution
     cl = map_render.multi_view_classes(t, mv, placements, size, visibility_km=kw["visibility_km"],
                                        weather=kw["weather"], monitor_floor=monitor_run)
     if layer == "target":
         return map_render.multi_target_overlay(
             t, cl, target_ppm=ppm, roi=roi, ptz_ok=(ptz_zone >= zone) if ptz_zone.any() else None,
             ptz_seen=(ptz_zone >= ZONE_DETECT) if ptz_zone.any() else None)
-    roi_px = map_render.terrain_mask_px(t, roi, size)
-    if layer == "overlap":
-        return map_render.dim_outside(map_render.multi_seen_overlay(cl), roi_px)
-    mode = "dori_monitor" if monitor_run else "dori"            # the bands the grid picture used
-    return map_render.dim_outside(map_render.multi_zone_overlay(cl, mode=mode), roi_px)
+    # the protected-area weight at the picture's final (2x) size: a soft, narrow edge instead of cell stairs
+    img = (map_render.multi_seen_overlay(cl) if layer == "overlap"
+           else map_render.multi_zone_overlay(cl, mode="dori_monitor" if monitor_run else "dori"))
+    return map_render.dim_outside(img, map_render.terrain_mask_px(t, roi, (img.width // 2, img.height // 2), soft=True), pixel=True)
 
 
 def perimeter_minimize_poles(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:

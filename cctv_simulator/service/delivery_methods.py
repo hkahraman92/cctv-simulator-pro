@@ -183,12 +183,12 @@ def night_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         size = _overlay_size(t, max_px)
         night_pls = capped_placements(full_reach_placements(plan, cam, ZONE_DETECT), mode)
         if len(night_pls) == len(night_mv.per_camera):       # the picture: analytic optics, engine occlusion
-            cl = map_render.multi_view_classes(t, night_mv, night_pls, size, visibility_km=kw["visibility_km"],
+            cl = map_render.multi_view_classes(t, night_mv, night_pls, map_render.final_size(size), visibility_km=kw["visibility_km"],
                                                weather=kw["weather"])
             img = map_render.multi_zone_overlay(cl)
         else:
             img = map_render.zone_overlay(night_mv.dori_grid, size)
-        out["overlay"] = _image(img, max_px=max_px)
+        out["overlay"] = _image(img, max_px=min(4096, 2 * max_px))
     return out
 
 
