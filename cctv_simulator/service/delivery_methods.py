@@ -179,7 +179,16 @@ def night_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
            "day_band_share": day, "night_band_share": night,
            "legend": map_render.legend("dori", keys=True)[1], "measured": bool(t.is_measured)}
     if night_mv is not None:
-        out["overlay"] = _image(map_render.zone_overlay(night_mv.dori_grid, _overlay_size(t, max_px)), max_px=max_px)
+        from ..focal_optimizer import full_reach_placements
+        size = _overlay_size(t, max_px)
+        night_pls = capped_placements(full_reach_placements(plan, cam, ZONE_DETECT), mode)
+        if len(night_pls) == len(night_mv.per_camera):       # the picture: analytic optics, engine occlusion
+            cl = map_render.multi_view_classes(t, night_mv, night_pls, size, visibility_km=kw["visibility_km"],
+                                               weather=kw["weather"])
+            img = map_render.multi_zone_overlay(cl)
+        else:
+            img = map_render.zone_overlay(night_mv.dori_grid, size)
+        out["overlay"] = _image(img, max_px=max_px)
     return out
 
 

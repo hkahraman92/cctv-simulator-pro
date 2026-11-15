@@ -157,3 +157,70 @@ def test_combined_dori_is_best_of_cameras():
         m = r.visibility_mask
         assert np.all(res.ppm_grid[m] >= r.ppm_grid[m] - 1e-3)
     assert not np.any(res.dori_grid[~res.visibility_mask & (res.dori_grid > ZONE_OUT_OF_FOV)] == 99)
+
+
+# ── merge keeps each camera's own classification (thermal = Johnson) ─────────
+def _thermal_cam():
+    from cctv_simulator.config import DEFAULT_CAMERA_LIBRARY
+    m = DEFAULT_CAMERA_LIBRARY["ASELSAN UMA Fix 55mm Termal Kamera"]
+    return CameraConfig(name="T", model_name="ASELSAN UMA Fix 55mm Termal Kamera", sensor_name=m["sensor_name"],
+                        resolution_name=m["resolution_name"], focal_min_mm=m["focal_min_mm"],
+                        focal_max_mm=m["focal_max_mm"])
+
+
+def _per_camera_max(mv):
+    out = np.zeros_like(mv.dori_grid)
+    for r in mv.per_camera:
+        out = np.maximum(out, np.where(r.visibility_mask, r.dori_grid, 0))
+    return out
+
+
+def test_thermal_multi_merge_is_the_per_camera_maximum():
+    """BUGFIX guard: the merge re-thresholded px/m with EN constants and lost every Johnson
+    recognition / identification class of a thermal camera."""
+    from cctv_simulator.viewshed_3d import ZONE_OBSERVE, ZONE_OCCLUDED, ZONE_RECOG
+    terr = _flat(100, 10.0)
+    cam = _thermal_cam()
+    pls = [CameraPlacement(x_m=300, y_m=500, mast_height_m=8, camera=cam, pan_deg=90, tilt_deg=-1, max_range_m=700),
+           CameraPlacement(x_m=700, y_m=500, mast_height_m=8, camera=cam, pan_deg=270, tilt_deg=-1, max_range_m=700)]
+    mv = calculate_multi_camera_viewshed(terr, pls)
+    per = np.concatenate([np.unique(r.dori_grid) for r in mv.per_camera])
+    assert (per == ZONE_RECOG).any() or (per == ZONE_OBSERVE).any()        # the cameras do reach Johnson classes
+    expect = _per_camera_max(mv)
+    vis = mv.visibility_mask
+    assert np.array_equal(mv.dori_grid[vis], expect[vis])
+    assert (mv.dori_grid[vis] >= ZONE_OBSERVE).any()
+    assert ((mv.dori_grid == ZONE_OCCLUDED) == (~vis & (mv.dori_grid != 0))).all()
+
+
+def test_mixed_fleet_takes_each_cameras_own_classes():
+    from cctv_simulator.viewshed_3d import ZONE_DETECT
+    terr = _flat(100, 10.0)
+    th, vis_cam = _thermal_cam(), CAM
+    pls = [CameraPlacement(x_m=300, y_m=500, mast_height_m=8, camera=th, pan_deg=90, tilt_deg=-1, max_range_m=700),
+           CameraPlacement(x_m=420, y_m=500, mast_height_m=8, camera=vis_cam, pan_deg=90, tilt_deg=-3, max_range_m=300)]
+    mv = calculate_multi_camera_viewshed(terr, pls)
+    vis = mv.visibility_mask
+    assert np.array_equal(mv.dori_grid[vis], _per_camera_max(mv)[vis])
+    # where only the thermal sees a cell its Johnson class survives (EN px/m alone would say Detection)
+    only_th = mv.per_camera[0].visibility_mask & ~mv.per_camera[1].visibility_mask
+    assert (mv.dori_grid[only_th] > ZONE_DETECT).any()
+
+
+def test_non_thermal_merge_is_unchanged_by_the_zone_code_merge():
+    """The old rule (re-threshold the merged best px/m) and the per-camera max agree for visible cameras,
+    with and without the monitor floor."""
+    from cctv_simulator.viewshed_3d import PPM_DETECT, PPM_IDENT, PPM_OBSERVE, PPM_RECOG, ZONE_DETECT, ZONE_IDENT, \
+        ZONE_MONITOR, ZONE_OBSERVE, ZONE_RECOG
+    terr = generate_procedural_terrain("ridge_and_valley", 120, 10.0)
+    pls = [CameraPlacement(x_m=400 + 150 * i, y_m=500, mast_height_m=8, camera=CAM, pan_deg=40 * i, tilt_deg=-4,
+                           max_range_m=400) for i in range(4)]
+    for mon in (False, True):
+        mv = calculate_multi_camera_viewshed(terr, pls, monitor_floor=mon)
+        vis, ppm = mv.visibility_mask, mv.ppm_grid
+        old = np.where(vis, ZONE_DETECT, 0)
+        if mon:
+            old = np.where(vis & (ppm < PPM_DETECT), ZONE_MONITOR, old)
+        for z, th in ((ZONE_OBSERVE, PPM_OBSERVE), (ZONE_RECOG, PPM_RECOG), (ZONE_IDENT, PPM_IDENT)):
+            old = np.where(vis & (ppm >= th), z, old)
+        assert np.array_equal(mv.dori_grid[vis], old[vis])

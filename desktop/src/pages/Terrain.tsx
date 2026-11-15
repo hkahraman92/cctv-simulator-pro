@@ -1062,6 +1062,7 @@ function CoverageSummary({ c, thermal }: { c: CoverageResult; thermal: boolean }
         ? `${pct(c.band_share[k] ?? 0)} + ${pct(c.band_share_ptz[k] ?? 0)}${c.band_share_reach ? ` + ${pct(c.band_share_reach[k] ?? 0)}` : ""}` : pct(c.band_share[k] ?? 0)))}
       {c.band_share_reach && <div className="mt-1 text-3">{t("◆ Talep üzerine: PTZ çevrilirse ulaşır; kendiliğinden izlenmez.")}</div>}
       {c.ptz_count > 0 && <div className="mt-1 text-text-3">{tn(c.ptz_count, "◆ {n} PTZ devriyesi; en uzun izlenmeyen süre {v} sn", { v: fmt(c.ptz_worst_revisit_s, 0) })}</div>}
+      {c.grid_note && <div className="mt-1 text-warn">▲ {c.grid_note}</div>}
       {!c.measured && <div className="mt-1 text-warn">{t("▲ prosedürel arazi — ölçüm değil")}</div>}
     </div>
   );

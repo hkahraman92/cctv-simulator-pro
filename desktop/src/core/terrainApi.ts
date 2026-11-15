@@ -180,6 +180,8 @@ export interface CoverageResult {
   measured: boolean;
   /** the engine ran with the Monitoring floor (12.5 px/m): band_share.monitor and the İzleme band exist */
   monitor_floor?: boolean;
+  /** core text (Turkish, shown as-is): the analysis cell is coarse against the shortest camera reach, so the shares are rough; null when fine */
+  grid_note?: string | null;
 }
 
 /** The four levels every planner understands. */

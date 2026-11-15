@@ -1313,6 +1313,34 @@ Modu" satırı.
   Yerel depolama gerçek kullanıcı profilindedir: denemede değiştirilen tema
   geri alınır.
 
+## Görüş alanı motorunun doğrulaması
+
+- **Referans motor** (`tests/reference_viewshed.py`, yalnız test): her hücre için
+  ayrı görüş hattı, bilinear yüzeye sık örnekleme + düğüm çizgisi kesişimleri;
+  optik yine motorun yapı taşlarından (`camera_optics`, `view_limits`,
+  `zone_codes`). `tests/test_viewshed_reference.py` motoru tohumlu tekil
+  bakışlarda ve tesis / sınır / alan planlarında bununla karşılaştırır. Fark
+  yalnız sınıf kenarlarındadır (ışın örneklemesi ↔ düğüm görüş hattı; kenardan
+  ≤ 2 hücre); 60 tekil bakışta motor referanstan %0,94 az hücre görür. Eşikler
+  ölçülen değerlerin biraz üstündedir — gevşetmeden önce nedeni bul.
+- **Dondurulmuş sonuçlar** (`tests/data/viewshed_golden.npz`, 14 senaryo):
+  motoru bilerek değiştirdiysen `py -3.13 -m tests.gen_viewshed_golden`, farkı
+  aynı commit'te incele (optik golden ile aynı kural).
+- Bu altyapının ilk iki bulgusu, ikisi de düzeltildi: (1) çok kameralı
+  birleştirme en iyi px/m'yi EN eşikleriyle yeniden sınıflıyordu → termal
+  kameraların Johnson sınıfları kayboluyordu; artık her kameranın kendi sınıf
+  kodunun en iyisi alınır (görünür kamerada bit-aynı). (2) `_cell_max`
+  önbelleği yalnız `id(z_grid)` ile anahtarlıydı → serbest bırakılan bir
+  ızgaranın adresine gelen yeni arazi eskisinin maksimumlarını okuyordu, sonuç
+  önceki koşulara bağlıydı; giriş artık hesaplandığı diziyi tutar.
+- **Çok kameralı kapsama resmi** (`map_render.multi_view_classes`): koni,
+  dikey çerçeve, px/m, menzil ve sınıf resim pikseli başına motorun yapı
+  taşlarından; yalnız engelleme kararı motorun kamera ızgarasından (yumuşak
+  0,5 eşdeğeri). Yalnız GÖRÜNTÜ — hiçbir sayı buradan okunmaz. Hücre en kısa
+  kamera menzilinin 1/12'sinden kabaysa `perimeter.coverage` `grid_note` ile
+  uyarır (yüzdeler hücre sayar). `compute_coverage_grid.pct_by_level` termalde
+  hâlâ EN eşikleri kullanır (açık).
+
 ## Açık işler
 
 - İzleme (12,5 px/m) yalnız `perimeter.plan_assisted`'da yok (Türkçe hatayla reddedilir);

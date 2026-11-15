@@ -735,12 +735,7 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     if layer not in ("target", "dori", "overlap"):
         raise RpcError(INVALID_PARAMS, "'layer' target, dori ya da overlap olmalı.")
     size = _overlay_size(t, max_px)
-    if layer == "target":
-        overlay = map_render.zone_overlay(cls, size, mode="target")
-    else:
-        grid = mv.dori_grid if layer == "dori" else mv.seen_count_grid
-        overlay = map_render.dim_outside(map_render.zone_overlay(
-            grid, size, mode="dori_monitor" if layer == "dori" and monitor_run else layer), roi)
+    overlay = _coverage_overlay(t, plan, cam, kw, mv, layer, size, roi, monitor_run, cls, ptz_zone, ppm, zone)
     # the Monitoring row only where this layer can hold it (a monitor-floor run)
     legend = map_render.legend("dori_thermal" if layer == "dori" and is_thermal_camera(cam)
                                else "dori_monitor" if layer == "dori" and monitor_run else layer, keys=True)[1]
@@ -760,7 +755,51 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         "watch_side": kw.get("watch_side"),
         "overlay": _image(overlay, max_px=max_px), "legend": legend,
         "measured": bool(t.is_measured), "monitor_floor": monitor_run,
+        "grid_note": _grid_note(t, plan),
     }
+
+
+def _grid_note(t, plan) -> Optional[str]:
+    """Warn when the analysis cell is coarse against the shortest fixed-camera reach: the
+    shares are counted in cells, so a 3-cell wedge makes them rough (the picture is not)."""
+    ranges = [float(c.effective_range_m) for c in plan.placed_cameras if c.effective_range_m > 0]
+    if not ranges:
+        return None
+    short, cell = min(ranges), float(t.cell_size_m)
+    if cell <= short / 12.0:
+        return None
+    return (f"Analiz hücresi {cell:g} m, en kısa kamera menzili {short:.0f} m: kapsama yüzdeleri kaba "
+            f"(menzil boyunca {max(1, round(short / cell))} hücre). Daha ince analiz ızgarası seçin.")
+
+
+def _coverage_overlay(t, plan, cam, kw, mv, layer, size, roi, monitor_run, cls, ptz_zone, ppm, zone):
+    """The coverage picture. Cone, frame, px/m and range are evaluated per picture pixel from
+    the engine's own optics, occlusion comes from the engine grid (``map_render.multi_view_classes``);
+    DISPLAY only -- every number of the result comes from the grids."""
+    from .. import map_render
+    from ..focal_optimizer import full_reach_placements
+    from ..viewshed_3d import ZONE_DETECT, ZONE_MONITOR
+
+    placements = full_reach_placements(plan, cam, ZONE_MONITOR if monitor_run else ZONE_DETECT)
+    if len(placements) != len(mv.per_camera):               # not the run the plan was scored with: grid picture
+        placements = None
+    if placements is None:
+        if layer == "target":
+            return map_render.zone_overlay(cls, size, mode="target")
+        grid = mv.dori_grid if layer == "dori" else mv.seen_count_grid
+        return map_render.dim_outside(map_render.zone_overlay(
+            grid, size, mode="dori_monitor" if layer == "dori" and monitor_run else layer), roi)
+    cl = map_render.multi_view_classes(t, mv, placements, size, visibility_km=kw["visibility_km"],
+                                       weather=kw["weather"], monitor_floor=monitor_run)
+    if layer == "target":
+        return map_render.multi_target_overlay(
+            t, cl, target_ppm=ppm, roi=roi, ptz_ok=(ptz_zone >= zone) if ptz_zone.any() else None,
+            ptz_seen=(ptz_zone >= ZONE_DETECT) if ptz_zone.any() else None)
+    roi_px = map_render.terrain_mask_px(t, roi, size)
+    if layer == "overlap":
+        return map_render.dim_outside(map_render.multi_seen_overlay(cl), roi_px)
+    mode = "dori_monitor" if monitor_run else "dori"            # the bands the grid picture used
+    return map_render.dim_outside(map_render.multi_zone_overlay(cl, mode=mode), roi_px)
 
 
 def perimeter_minimize_poles(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:

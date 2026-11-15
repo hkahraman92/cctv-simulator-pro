@@ -275,7 +275,7 @@ def march_rays(terrain: TerrainData, cam_x_m: float, cam_y_m: float, cam_z: floa
     return RayMarch(valid, rr, cc, tan_angle, slant, los)
 
 
-_CELL_MAX_CACHE: Dict[Tuple[int, Tuple[int, int]], np.ndarray] = {}
+_CELL_MAX_CACHE: Dict[Tuple[int, Tuple[int, int]], Tuple[np.ndarray, np.ndarray]] = {}
 # A crossing must rise this much above the sightline it could block to count:
 # far below any DEM's accuracy, it stops every gently curved cell from
 # triggering the exact (slower) crossing evaluation.
@@ -286,16 +286,20 @@ def _cell_max(terrain: TerrainData) -> np.ndarray:
     """Highest of each cell's four corner nodes, (rows-1, cols-1); cached per grid."""
     z = terrain.z_grid
     key = (id(z), z.shape)
+    # BUGFIX: the entry keeps the grid it was computed from and is used only for that
+    # very object. Keyed on id() alone, a NEW terrain allocated at a freed grid's address
+    # read the old terrain's maxima and the crossing pre-filter dropped real occluders:
+    # a viewshed depended on what had run before (48 of 60 same-shape terrains differed).
     hit = _CELL_MAX_CACHE.get(key)
-    if hit is not None:
-        return hit
+    if isinstance(hit, tuple) and hit[0] is z:
+        return hit[1]
     if z.shape[0] < 2 or z.shape[1] < 2:
         cm = np.asarray(z, float)
     else:
         cm = np.maximum(np.maximum(z[:-1, :-1], z[:-1, 1:]), np.maximum(z[1:, :-1], z[1:, 1:]))
     if len(_CELL_MAX_CACHE) > 8:
         _CELL_MAX_CACHE.clear()
-    _CELL_MAX_CACHE[key] = cm
+    _CELL_MAX_CACHE[key] = (z, cm)
     return cm
 
 
@@ -823,7 +827,6 @@ def calculate_multi_camera_viewshed(terrain: TerrainData,
     best_cam = np.zeros((rows, cols), np.int32)
     vis = np.zeros((rows, cols), bool)
     union_cone = np.zeros((rows, cols), bool)
-    monitor_cells = np.zeros((rows, cols), bool)     # some visible camera sees it in the monitor band
     # BUGFIX: redundancy used to count VIEWS, so a PTZ whose 4 presets all
     # frame a cell read as "4 cameras" there -- inflating overlap and hiding
     # that the cell is unwatched whenever the PTZ looks elsewhere. Views of
@@ -842,22 +845,22 @@ def calculate_multi_camera_viewshed(terrain: TerrainData,
         else:
             cam_vis_by_id[key] = cam_vis.copy()
         union_cone |= (r.dori_grid != ZONE_OUT_OF_FOV)
-        if monitor_floor:
-            monitor_cells |= (r.dori_grid == ZONE_MONITOR)
 
     seen = np.zeros((rows, cols), np.int32)
     for cam_vis in cam_vis_by_id.values():
         seen += cam_vis.astype(np.int32)
 
     occ = union_cone & ~vis
+    # BUGFIX: the merge used to re-threshold the merged best px/m with the EN 62676-4
+    # constants, which erased every Johnson class of a thermal camera (recognition /
+    # identification read as Detection). Each camera already classed its own cells
+    # (zone_codes: EN or Johnson, monitor floor); zone codes rise with px/m inside one
+    # classification, so the merged class is the best code of any camera that SEES the
+    # cell. Bit-identical for visible cameras (the thresholds are the same ones).
     dori = np.zeros((rows, cols), np.int32)
     dori = np.where(occ, ZONE_OCCLUDED, dori)
-    dori = np.where(vis, ZONE_DETECT, dori)
-    if monitor_floor:       # best px/m of the cell under Detection and a visible camera put it there
-        dori = np.where(vis & monitor_cells & (ppm < PPM_DETECT), ZONE_MONITOR, dori)
-    dori = np.where(vis & (ppm >= PPM_OBSERVE), ZONE_OBSERVE, dori)
-    dori = np.where(vis & (ppm >= PPM_RECOG), ZONE_RECOG, dori)
-    dori = np.where(vis & (ppm >= PPM_IDENT), ZONE_IDENT, dori)
+    for r in per:
+        dori = np.maximum(dori, np.where(r.visibility_mask, r.dori_grid, 0)).astype(np.int32)
 
     cell_a = terrain.cell_size_m ** 2
     union_cells = int(np.count_nonzero(union_cone))
