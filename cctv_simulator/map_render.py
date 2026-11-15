@@ -382,6 +382,21 @@ def _fill_unknown(val: np.ndarray, known: np.ndarray, passes: int = 3) -> np.nda
     return val
 
 
+def _dori_slice(r, rw0: int, rw1: int, cw0: int, cw1: int) -> np.ndarray:
+    """``r.dori_grid[rw0:rw1, cw0:cw1]`` without building the full grid of a windowed result
+    (cells outside its window are zero)."""
+    win = getattr(r, "window", None)
+    dw = getattr(r, "dori_window", None)
+    if win is None or dw is None:
+        return r.dori_grid[rw0:rw1, cw0:cw1]
+    r0, r1, c0, c1 = win
+    out = np.zeros((max(rw1 - rw0, 0), max(cw1 - cw0, 0)), dw.dtype)
+    a0, a1, b0, b1 = max(rw0, r0), min(rw1, r1), max(cw0, c0), min(cw1, c1)
+    if a1 > a0 and b1 > b0:
+        out[a0 - rw0:a1 - rw0, b0 - cw0:b1 - cw0] = dw[a0 - r0:a1 - r0, b0 - c0:b1 - c0]
+    return out
+
+
 def _bbox_px(terrain: TerrainData, cx: float, cy: float, reach: float, w: int, h: int) -> Tuple[int, int, int, int]:
     """(row0, row1, col0, col1) of the picture pixels within ``reach`` of a point."""
     sx, sy = w / terrain.width_m, h / terrain.height_m
@@ -449,7 +464,7 @@ def multi_view_classes(terrain: TerrainData, mv, placements: Sequence, size: Tup
             rw1 = int(np.clip(math.ceil((p.y_m + reach - terrain.origin_y) / cell) + pad, 0, terrain.rows))
             cw0 = int(np.clip(math.floor((p.x_m - reach - terrain.origin_x) / cell) - pad, 0, terrain.cols))
             cw1 = int(np.clip(math.ceil((p.x_m + reach - terrain.origin_x) / cell) + pad, 0, terrain.cols))
-            dg = r.dori_grid[rw0:rw1, cw0:cw1]
+            dg = _dori_slice(r, rw0, rw1, cw0, cw1)
             occ_field = _fill_unknown((dg == ZONE_OCCLUDED).astype(np.float64), dg != 0) if dg.size else dg
             i0, i1, j0, j1 = _bbox_px(terrain, p.x_m, p.y_m, reach, w, h)
             if i1 <= i0 or j1 <= j0:

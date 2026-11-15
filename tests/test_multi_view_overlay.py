@@ -177,3 +177,28 @@ def test_thermal_pixels_keep_their_johnson_classes():
     cl = map_render.multi_view_classes(t, mv, pls, (500, 500))
     assert set(np.unique(mv.dori_grid)) - {0, 1} >= {int(z) for z in np.unique(cl.zone)} - {0, 1}
     assert int((cl.zone > ZONE_DETECT).sum()) > 0
+
+
+def _old_slice(r, rw0, rw1, cw0, cw1):
+    return r.dori_grid[rw0:rw1, cw0:cw1]
+
+
+def test_windowed_slice_gives_pixel_identical_pictures(monkeypatch):
+    """``multi_view_classes`` reads each camera's window without materialising the full grid."""
+    t = _flat(120, 1.0)
+    pls = [_pl(30.0, 60.0, 90.0), _pl(60.0, 30.0, 0.0)]
+    t2 = _flat(100, 2.0)
+    z = t2.z_grid.copy()
+    z[30:85, 45:47] = 15.0
+    t2 = TerrainData(z_grid=z, cell_size_m=2.0)
+    cases = [(t, pls, (480, 480)), (t2, [_pl(60.0, 100.0, 90.0, mast=4.0, tilt=-3.0, rng=60.0)], (800, 800))]
+    for terr, pl, size in cases:
+        with target_height(1.8):
+            mv = calculate_multi_camera_viewshed(terr, pl)
+            assert hasattr(mv.per_camera[0], "window")
+            new = map_render.multi_view_classes(terr, mv, pl, size)
+            monkeypatch.setattr(map_render, "_dori_slice", _old_slice)
+            old = map_render.multi_view_classes(terr, mv, pl, size)
+            monkeypatch.undo()
+        for name in ("zone", "seen", "ppm", "visible"):
+            assert np.array_equal(getattr(new, name), getattr(old, name)), name

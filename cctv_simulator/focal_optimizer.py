@@ -451,6 +451,83 @@ def optimize_layout(terrain: TerrainData, mounts: Sequence[Mount], *, roi: Optio
     )
 
 
+# A node exactly ``band`` from the line (a fence on grid lines: 40 m is 16 nodes of 2.5 m) used to count
+# on BOTH sides (``<=``), so an aligned band was 2 * band + cell wide: +3.0 % area at 2.5 m, +11.9 % at 10 m,
+# and the Detection share read -2.9 points low at 2.5 m (the cameras' picture does not reach the extra
+# row of nodes). A tie belongs to the band on ONE side only: the half-open interval.
+_TIE_M = 1e-6          # |distance - band| within this is "exactly the band" (rounding of grid * cell)
+
+
+def _near_line(mx: np.ndarray, my: np.ndarray, pts: Sequence[Tuple[float, float]]):
+    """(squared distance, north) of each node: its squared distance to the polyline (the arithmetic of
+    ``perimeter_planner._fence_band_mask``) and whether the offset from a NEAREST line point points north
+    (due east/west: east). Where two segments are equally near (a node level with a corner) any of them
+    pointing north counts, so the answer does not depend on the vertex order."""
+    segs = []
+    d2 = np.full(mx.shape, np.inf, dtype=np.float64)
+    for (x0, y0), (x1, y1) in zip(pts[:-1], pts[1:]):
+        vx, vy = x1 - x0, y1 - y0
+        seg2 = vx * vx + vy * vy
+        if seg2 < 1e-6:
+            continue
+        t = np.clip(((mx - x0) * vx + (my - y0) * vy) / seg2, 0.0, 1.0)
+        px, py = x0 + t * vx, y0 + t * vy
+        dd = (mx - px) ** 2 + (my - py) ** 2
+        d2 = np.minimum(d2, dd)
+        segs.append((dd, mx - px, my - py))
+    d = np.sqrt(d2)
+    north = np.zeros(mx.shape, bool)
+    for dd, ox, oy in segs:
+        near = np.sqrt(dd) <= d + _TIE_M
+        north |= near & ((oy > _TIE_M) | ((np.abs(oy) <= _TIE_M) & (ox > 0.0)))
+    return d2, north
+
+
+def _tie(d2: np.ndarray, band_m: float) -> np.ndarray:
+    return np.abs(np.sqrt(d2) - band_m) <= _TIE_M
+
+
+def band_mask(terrain: TerrainData, mx: np.ndarray, my: np.ndarray, pts: Sequence[Tuple[float, float]],
+              band_m: float) -> Optional[np.ndarray]:
+    """Nodes within ``band_m`` of the polyline, area-unbiased on grid lines.
+
+    A node strictly closer than ``band_m`` is in, one farther is out -- exactly the old ``d <= band``
+    rule. Only a node AT ``band_m`` (within ``_TIE_M``) is decided by its side: in when its offset from
+    the nearest line point points north (or, due east/west, east), out otherwise. A band of width W on
+    grid lines is then W / cell nodes across on each axis-parallel edge (the line itself counted once),
+    whatever the vertex order. A band thinner than 1.5 cells is a LINE (``perimeter.coverage``'s fence
+    line, ``max(0.75 * cell, 1)``), not an area: it stays inclusive."""
+    if not pts or len(pts) < 2:
+        return None
+    d2, north = _near_line(mx, my, pts)
+    inside = d2 <= band_m * band_m
+    if band_m < 1.5 * terrain.cell_size_m:
+        return inside
+    tie = _tie(d2, band_m)
+    return (inside & ~tie) | (tie & north)
+
+
+def side_band_mask(terrain: TerrainData, mx: np.ndarray, my: np.ndarray, pts: Sequence[Tuple[float, float]],
+                   band_m: float, side: str) -> Optional[np.ndarray]:
+    """``perimeter_planner._side_band_mask`` (one side of the drawn line, ``band_m`` deep) with the
+    far edge decided so the depth is exactly ``band_m``: the left side keeps a node AT ``band_m`` (its
+    near edge, the line, is not left of itself), the right side keeps the line and drops the node at
+    ``band_m``. Both are band_m / cell nodes deep (the right side used to be one row deeper)."""
+    from .perimeter_planner import _side_band_mask
+    if not pts or len(pts) < 2:
+        return None
+    mask = _side_band_mask(mx, my, list(pts), band_m, side)
+    if band_m < 1.5 * terrain.cell_size_m:
+        return mask
+    d2, _ = _near_line(mx, my, pts)
+    tie = _tie(d2, band_m)
+    if side == "left":
+        # the old test missed a tie by rounding; every tie of the left side is in
+        full = _side_band_mask(mx, my, list(pts), band_m + 2 * _TIE_M, side)
+        return (mask & ~tie) | (full & tie)
+    return mask & ~tie
+
+
 def fence_roi(terrain: TerrainData, fence_points: Sequence[Tuple[float, float]], closed: bool,
               band_m: float = 40.0, inside_m: Optional[float] = None,
               watch_side: Optional[str] = None) -> Optional[np.ndarray]:
@@ -463,8 +540,11 @@ def fence_roi(terrain: TerrainData, fence_points: Sequence[Tuple[float, float]],
 
     ``watch_side`` ("left" / "right"): only that side of the line, ``band_m``
     deep -- a border plan watches the zone beyond the line, and its cameras
-    look away from it, so a band around the line scored 0 %."""
-    from .perimeter_planner import _fence_band_mask, _side_band_mask
+    look away from it, so a band around the line scored 0 %.
+
+    A node exactly ``band_m`` from the line (a fence on grid lines) counts on one side
+    only, so the band's AREA is unbiased (see ``band_mask``); a fence off the grid gives
+    the same mask as the plain ``distance <= band_m`` rule."""
     pts = list(fence_points)
     if closed and len(pts) > 2 and tuple(pts[0]) != tuple(pts[-1]):
         pts = pts + [pts[0]]
@@ -472,13 +552,13 @@ def fence_roi(terrain: TerrainData, fence_points: Sequence[Tuple[float, float]],
     rows = terrain.origin_y + np.arange(terrain.rows) * terrain.cell_size_m
     mx, my = np.meshgrid(cols, rows)
     if watch_side in ("left", "right"):
-        return _side_band_mask(mx, my, pts, band_m, watch_side)
+        return side_band_mask(terrain, mx, my, pts, band_m, watch_side)
     if inside_m is None or not closed or len(pts) < 4 or abs(float(inside_m) - band_m) < 1e-9:
-        return _fence_band_mask(mx, my, pts, band_m)
+        return band_mask(terrain, mx, my, pts, band_m)
     from .area_planner import _inside
     inner = _inside(mx, my, pts)
-    return ((_fence_band_mask(mx, my, pts, band_m) & ~inner)
-            | (_fence_band_mask(mx, my, pts, float(inside_m)) & inner))
+    return ((band_mask(terrain, mx, my, pts, band_m) & ~inner)
+            | (band_mask(terrain, mx, my, pts, float(inside_m)) & inner))
 
 
 def fence_shifts(fence_points: Sequence[Tuple[float, float]], x: float, y: float,
