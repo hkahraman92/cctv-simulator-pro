@@ -32,6 +32,9 @@ export interface TerrainInfo {
   obstacle_note: string;
   preset: string;
   file: string;
+  /** analysis grid: `cell_size_m` is the cell the engines count in (= `base_cell_m / refine_factor`); `base_cell_m` is the loaded DEM's */
+  refine_factor: number;
+  base_cell_m: number;
   save_error?: string;
   summary?: string;
   message?: string;
@@ -182,6 +185,8 @@ export interface CoverageResult {
   monitor_floor?: boolean;
   /** core text (Turkish, shown as-is): the analysis cell is coarse against the shortest camera reach, so the shares are rough; null when fine */
   grid_note?: string | null;
+  /** the smallest refine factor (of the loaded DEM) that makes the cell fine enough for the shares, or the finest allowed; null when fine / no finer grid */
+  grid_suggest?: { factor: number; cell_m: number } | null;
 }
 
 /** The four levels every planner understands. */
@@ -613,6 +618,10 @@ export function terrainApi(rpc: RpcClient) {
       opts?: CallOptions,
     ) => rpc.call<SingleViewshed>("viewshed.single", p, opts),
     plan: (p: T & PlanParams & { camera: CameraConfig }) => rpc.call<PlanResult>("perimeter.plan", p),
+    /** analysis grid `factor` (1..16; 1 = the loaded DEM's own) or `target_cell_m` times finer: same terrain id and extent; results derived
+     *  from the plan or terrain are dropped by the core (the plan stays) */
+    refine: (terrain_id: string, p: { factor?: number; target_cell_m?: number }, opts?: CallOptions) =>
+      rpc.call<TerrainInfo & { changed: boolean }>("terrain.refine", { terrain_id, ...p }, { timeoutMs: 0, ...opts }),
     /** analysis settings kept with the terrain (target height: a person on each cell) */
     settings: (terrain_id: string, s: { target_height_m?: number }) =>
       rpc.call<{ target_height_m: number; changed: boolean }>("terrain.settings", { terrain_id, ...s }),

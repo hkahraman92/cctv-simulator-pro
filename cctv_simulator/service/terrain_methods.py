@@ -79,6 +79,8 @@ def _info(entry: _s.TerrainEntry) -> Dict[str, Any]:
         "obstacle_note": surf.obstacle_note if surf is not None else "",
         # how it was loaded, so a project file can reopen it
         "preset": entry.extra.get("preset", ""), "file": entry.extra.get("file", ""),
+        # analysis grid: ``cell_size_m`` is the cell the engines count in; ``base_cell_m`` the loaded DEM's
+        "refine_factor": entry.refine_factor, "base_cell_m": entry.base_cell_m,
     }
 
 
@@ -239,7 +241,8 @@ def regions_save(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
 
     entry = _s.SESSION.get(params.get("terrain_id"))
     name = _require(params, "name", str)
-    info = save_region(name, entry.terrain(True), entry.photo, source=entry.source,
+    # always the ORIGINAL grid: a refined grid is an analysis setting, not data
+    info = save_region(name, entry.original(True), entry.photo, source=entry.source,
                        attribution=entry.attribution)
     entry.region_id = info.region_id
     return {"region_id": info.region_id, "size_bytes": info.size_bytes}
@@ -276,8 +279,10 @@ def surface_osm(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     if not feats:
         return {**_info(entry), "features": 0, "estimated_share": 0.0,
                 "message": "OpenStreetMap'te bu alanda bina / ağaç kaydı yok; görüş çıplak arazi üzerinden."}
-    layer = obs.rasterize(entry.bare, feats)
-    entry.surface = obs.with_obstacles(entry.bare, layer)
+    layer = obs.rasterize(entry.base_bare, feats)           # on the ORIGINAL grid; refined below
+    entry.base_surface = obs.with_obstacles(entry.base_bare, layer)
+    entry.obstacle_src = {"features": feats, "rasters": []}
+    entry.surface = entry.base_surface if entry.refine_factor == 1 else _fine_surface(entry, entry.bare)
     entry.results.clear()
     return {**_info(entry), "features": len(feats), "estimated_share": float(layer.estimated_share),
             "summary": layer.summary(), "covered_fraction": float(layer.covered_fraction)}
@@ -296,12 +301,12 @@ def surface_raster(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     mode = params.get("mode", "auto")
     if mode not in ("auto", "ndsm", "dsm"):
         raise RpcError(INVALID_PARAMS, "'mode' auto, ndsm ya da dsm olmalı.")
-    surf = entry.surface
+    surf = entry.base_surface
     base = (obs.ObstacleLayer(height_grid=surf.obstacle_grid, kind_grid=surf.obstacle_kind, counts={})
             if surf is not None and surf.obstacle_grid is not None else None)
     try:
         ras = read_geotiff(path)
-        layer, info = obs.layer_from_raster(entry.bare, ras, mode=mode, base=base)
+        layer, info = obs.layer_from_raster(entry.base_bare, ras, mode=mode, base=base)
     except FileNotFoundError:
         raise RpcError(APP_ERROR, f"Dosya bulunamadı: {path}") from None
     except UnsupportedCRS as exc:
@@ -312,7 +317,11 @@ def surface_raster(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         raise RpcError(APP_ERROR, str(exc)) from None
     if surf is not None and surf.obstacle_note and info["coverage_frac"] < 0.999:
         layer.measured_note += " · kapsam dışı: " + surf.obstacle_note
-    entry.surface = obs.with_obstacles(entry.bare, layer)
+    entry.base_surface = obs.with_obstacles(entry.base_bare, layer)
+    src = entry.obstacle_src
+    entry.obstacle_src = {"features": src.get("features"),
+                          "rasters": list(src.get("rasters", [])) + [(ras, info["mode"])]}
+    entry.surface = entry.base_surface if entry.refine_factor == 1 else _fine_surface(entry, entry.bare)
     entry.results.clear()
     return {**_info(entry), "summary": layer.summary(), "coverage_frac": float(info["coverage_frac"])}
 
@@ -730,6 +739,7 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     entry.results["coverage_masks"] = {"roi": roi, "line": line, "ptz_zone": ptz_zone if n_ptz else None,
                                        "band": band, "inside": inside, "monitor": monitor_run}
 
+    grid_note, grid_suggest = _grid_note(t, plan, cam, entry)
     max_px = int(_num(params, "max_px", _DISPLAY_PX, lo=200, hi=4096))
     layer = params.get("layer", "dori")
     if layer not in ("target", "dori", "overlap"):
@@ -755,21 +765,184 @@ def perimeter_coverage(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         "watch_side": kw.get("watch_side"),
         "overlay": _image(overlay, max_px=max_px), "legend": legend,
         "measured": bool(t.is_measured), "monitor_floor": monitor_run,
-        "grid_note": _grid_note(t, plan),
+        "grid_note": grid_note, "grid_suggest": grid_suggest,
     }
 
 
-def _grid_note(t, plan) -> Optional[str]:
-    """Warn when the analysis cell is coarse against the shortest fixed-camera reach: the
-    shares are counted in cells, so a 3-cell wedge makes them rough (the picture is not)."""
-    ranges = [float(c.effective_range_m) for c in plan.placed_cameras if c.effective_range_m > 0]
-    if not ranges:
-        return None
-    short, cell = min(ranges), float(t.cell_size_m)
-    if cell <= short / 12.0:
-        return None
-    return (f"Analiz hücresi {cell:g} m, en kısa kamera menzili {short:.0f} m: kapsama yüzdeleri kaba "
-            f"(menzil boyunca {max(1, round(short / cell))} hücre). Daha ince analiz ızgarası seçin.")
+def _m(x: float) -> str:
+    """A metre figure with a Turkish decimal comma, at most 3 significant digits."""
+    return f"{x:.3g}".replace(".", ",")
+
+
+def _thousands(n: int) -> str:
+    return f"{int(n):,}".replace(",", ".")
+
+
+_REFINE_FACTORS = (2, 3, 4, 5, 6, 8, 10, 12, 16)
+_MAX_REFINE = 16
+_MAX_NODES = 1_600_000
+
+
+def _max_factor(entry) -> int:
+    """Largest refinement of the ORIGINAL grid that stays under the node limit."""
+    base = entry.base_bare
+    f = int(math.isqrt(_MAX_NODES // max(1, base.rows * base.cols)))
+    return max(1, min(_MAX_REFINE, f))
+
+
+def _grid_note(t, plan, cam=None, entry=None) -> Tuple[Optional[str], Optional[Dict[str, Any]]]:
+    """Warn when the analysis cell is coarse against the plan's cameras: shares are counted in
+    cells, so a few-cell wedge makes them rough (the picture is not). Measured on a 10 m grid with
+    2.8 mm cameras the Observation / Recognition shares were 2-3 points off; at
+    cell <= reach / 10 of the lowest level they are within ~0.5 point. The reach is the shortest
+    fixed camera's ground reach of the Observation level (``camera_optics(...).distance_for_ppm``),
+    capped by the plan's own range. Returns (text, suggestion): the suggestion is
+    ``{factor, cell_m}`` relative to the loaded DEM (the smallest factor that satisfies the rule and
+    the node limit, else the finest allowed), or None."""
+    from ..calculations import camera_optics
+    from ..focal_optimizer import level_ppm
+    from ..models import CameraConfig
+    from ..viewshed_3d import ZONE_OBSERVE
+
+    fixed = [c for c in plan.placed_cameras if c.effective_range_m > 0]
+    if not fixed:
+        return None, None
+    short = min(float(c.effective_range_m) for c in fixed)
+    reach, level_txt = short, ""
+    try:
+        reaches = []
+        for c in fixed:
+            ccam = cam if isinstance(cam, CameraConfig) else CameraConfig(sensor_name=c.sensor_name,
+                                                                         resolution_name=c.resolution_name)
+            ppm = level_ppm(ccam, ZONE_OBSERVE)
+            if not math.isfinite(ppm) or ppm <= 0:
+                continue
+            slant = camera_optics(ccam, c.focal_mm).distance_for_ppm(ppm)
+            ground = math.sqrt(max(slant * slant - float(c.mast_height_m) ** 2, 0.0))
+            reaches.append(min(ground, float(c.effective_range_m)))
+        if reaches and min(reaches) > 0:
+            reach = min(reaches)
+            level_txt = f" (Gözlem seviyesi erişimi {reach:.0f} m)"
+    except (KeyError, ValueError, ZeroDivisionError):
+        pass
+    cell = float(t.cell_size_m)
+    want = reach / 10.0
+    if cell <= want + 1e-9:
+        return None, None
+    base = float(entry.base_cell_m) if entry is not None else cell
+    cur = int(entry.refine_factor) if entry is not None else 1
+    fmax = _max_factor(entry) if entry is not None else 1
+    pick = next((f for f in _REFINE_FACTORS if f <= fmax and base / f <= want + 1e-9), None)
+    finest = pick is None
+    if finest:
+        pick = fmax
+    text = (f"Analiz hücresi {_m(cell)} m, en kısa kamera menzili {short:.0f} m{level_txt}: kapsama yüzdeleri kaba "
+            f"(menzil boyunca {max(1, round(reach / cell))} hücre; Gözlem / Tanıma payları birkaç puan kayabilir). "
+            f"Hücre en çok {_m(want)} m olmalı.")
+    if pick <= cur or pick < 2:
+        return text + f" Daha ince hücre mümkün değil (en ince {_m(base / fmax)} m, düğüm sınırı).", None
+    cell_m = base / pick
+    text += (f" Önerilen: {pick}× inceltme ({_m(cell_m)} m)." if not finest else
+             f" Ulaşılabilecek en ince hücre {_m(cell_m)} m ({pick}×, düğüm sınırı); yine de kaba kalabilir.")
+    return text, {"factor": pick, "cell_m": cell_m}
+
+
+# ── analysis grid refinement ─────────────────────────────────────────────
+def _fine_surface(entry, fine_bare):
+    """The surface model on the refined bare grid. Footprints are RE-RASTERISED from the sources the
+    surface was built from (OSM features, local rasters: sharper than upsampling); a surface without
+    sources (a saved region's) is nearest-node upsampled."""
+    from dataclasses import replace
+
+    from .. import surface_obstacles as obs
+    from ..terrain_loader import refine_terrain
+
+    src = entry.obstacle_src or {}
+    feats, rasters = src.get("features"), src.get("rasters") or []
+    f = entry.refine_factor if entry.refine_factor > 1 else int(round(entry.base_cell_m / fine_bare.cell_size_m))
+    if feats is None and not rasters:
+        return refine_terrain(entry.base_surface, f)
+    if feats is not None:
+        layer = obs.rasterize(fine_bare, feats)
+    else:                                           # no vector source: the nearest upsample is the base
+        near = refine_terrain(entry.base_surface, f)
+        layer = obs.ObstacleLayer(height_grid=near.obstacle_grid, kind_grid=near.obstacle_kind, counts={})
+    for ras, mode in rasters:                       # a measured raster replaces where it has data
+        layer, _ = obs.layer_from_raster(fine_bare, ras, mode=mode, base=layer)
+    return replace(obs.with_obstacles(fine_bare, layer), obstacle_note=entry.base_surface.obstacle_note)
+
+
+def _fine_city(entry, base_layer):
+    """The city layer on the current analysis grid (nearest node; polylines / places are metres)."""
+    from dataclasses import replace
+
+    from ..terrain_loader import _nearest_index
+
+    f = entry.refine_factor
+    if f <= 1:
+        return base_layer
+    ri = _nearest_index(entry.base_bare.rows, f)
+    ci = _nearest_index(entry.base_bare.cols, f)
+    return replace(base_layer, street_class=base_layer.street_class[np.ix_(ri, ci)],
+                   residential=base_layer.residential[np.ix_(ri, ci)])
+
+
+def terrain_refine(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """Analysis grid ``factor`` times finer than the loaded DEM (``factor`` 1..16 or ``target_cell_m``;
+    1 restores the original). Same terrain, same extent and pictures; only the cell the engines count in
+    shrinks, so cone / range / shadow edges and the shares counted from them are accurate. Replaces the
+    terrain under the SAME id (obstacles included, re-rasterised), keeps the plan and drops every result
+    derived from the plan or the terrain."""
+    from ..terrain_loader import refine_terrain
+
+    entry = _s.SESSION.get(params.get("terrain_id"))
+    base = entry.base_bare
+    fmax = _max_factor(entry)
+    if "factor" in params and params["factor"] is not None:
+        factor = int(_num(params, "factor", lo=1, hi=_MAX_REFINE))
+        if factor != params["factor"]:
+            raise RpcError(INVALID_PARAMS, "'factor' tam sayı olmalı.")
+    elif "target_cell_m" in params:
+        target = _num(params, "target_cell_m", lo=0.01)
+        factor = max(1, math.ceil(base.cell_size_m / target - 1e-9))
+        if factor > _MAX_REFINE:
+            raise RpcError(APP_ERROR, f"İstenen hücre {_m(target)} m çok ince: en çok {_MAX_REFINE}× inceltilebilir "
+                                      f"(en ince {_m(base.cell_size_m / _MAX_REFINE)} m).")
+    else:
+        raise RpcError(INVALID_PARAMS, "'factor' ya da 'target_cell_m' gerekli.")
+    if factor > fmax:
+        raise RpcError(APP_ERROR,
+                       f"Analiz ızgarası çok büyük olur: {_thousands(base.rows * base.cols * factor * factor)} düğüm "
+                       f"(sınır {_thousands(_MAX_NODES)}). Bu arazide izin verilen en ince hücre "
+                       f"{_m(base.cell_size_m / fmax)} m ({fmax}×).",
+                       {"max_factor": fmax, "finest_cell_m": base.cell_size_m / fmax})
+    if factor == entry.refine_factor:
+        return {**_info(entry), "changed": False}
+
+    ctx.progress(0, 3, "Yer yüzeyi inceltiliyor")
+    if factor == 1:
+        bare, surface, city = entry.base_bare, entry.base_surface, entry.base_city
+    else:
+        bare = refine_terrain(base, factor)
+        ctx.progress(1, 3, "Bina / ağaç yüzeyi yeniden işleniyor")
+        before = entry.refine_factor
+        entry.refine_factor = factor          # _fine_surface / _fine_city read it
+        try:
+            surface = _fine_surface(entry, bare) if entry.base_surface is not None else None
+            city = _fine_city(entry, entry.base_city) if entry.base_city is not None else None
+        except Exception:
+            entry.refine_factor = before
+            raise
+    entry.refine_factor = factor
+    entry.bare, entry.surface, entry.city = bare, surface, city
+    # the plan stays (poles are metres, the bare surface is the same function); everything derived
+    # from the plan or the terrain -- including cached pictures -- goes
+    plan = entry.results.get("plan")
+    entry.results.clear()
+    if plan is not None:
+        entry.results["plan"] = plan
+    ctx.progress(3, 3, "Tamam")
+    return {**_info(entry), "changed": True}
 
 
 def _coverage_overlay(t, plan, cam, kw, mv, layer, size, roi, monitor_run, cls, ptz_zone, ppm, zone):
@@ -1092,7 +1265,7 @@ def city_osm(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
 
     entry = _s.SESSION.get(params.get("terrain_id"))
     _activate(entry)
-    t = entry.bare
+    t = entry.base_bare          # fetched on the original grid; a refined grid gets a nearest upsample
     if t.lat_center is None:
         raise RpcError(APP_ERROR, "Sokak verisi yalnız konumu bilinen bir arazide (indirilen / kayıtlı bölge) alınabilir.")
     ctx.progress(0, 2, "OpenStreetMap sorgulanıyor")
@@ -1101,7 +1274,9 @@ def city_osm(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     except (RuntimeError, ValueError) as exc:
         raise RpcError(APP_ERROR, f"Sokak / bina verisi indirilemedi: {exc}") from None
     ctx.progress(1, 2, "Izgaraya işleniyor")
-    entry.city = layer
+    entry.base_city = layer
+    entry.city = layer = _fine_city(entry, layer)
+    t = entry.bare
     cell = t.cell_size_m ** 2
     max_px = int(_num(params, "max_px", _DISPLAY_PX, lo=200, hi=4096))
     return {
@@ -1302,6 +1477,7 @@ METHODS = {
     "terrain.procedural": terrain_procedural,
     "terrain.geotiff": terrain_geotiff,
     "terrain.download": terrain_download,
+    "terrain.refine": terrain_refine,
     "terrain.image": terrain_image,
     "regions.list": regions_list,
     "regions.open": regions_open,

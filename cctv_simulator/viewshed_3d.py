@@ -13,7 +13,7 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -87,6 +87,98 @@ class ViewshedResult:
     # Atmosphere
     atmospheric_limit_m: float = 0.0     # range where path transmission hits tau_min
     visibility_km: float = 40.0
+
+
+_GRID_FIELDS = (("visibility_mask", np.bool_), ("dori_grid", np.int32),
+                ("ppm_grid", np.float32), ("slant_dist_grid", np.float32))
+_GRID_NAMES = tuple(n for n, _ in _GRID_FIELDS)
+
+
+def _grid_property(name: str, dtype) -> property:
+    def getter(self):
+        full = self.__dict__.get("_full")
+        if full is not None and name in full:           # explicitly assigned by a caller
+            return full[name]
+        out = np.zeros(self.__dict__["_shape"], dtype=dtype)     # transient: never cached
+        r0, r1, c0, c1 = self.__dict__["_window"]
+        out[r0:r1, c0:c1] = self.__dict__["_win"][name]
+        return out
+
+    def setter(self, value):
+        self.__dict__.setdefault("_full", {})[name] = value
+
+    return property(getter, setter, doc=f"Full-size ``{name}``, materialised on every access.")
+
+
+class WindowedViewshedResult(ViewshedResult):
+    """A ``ViewshedResult`` that stores its four terrain-size grids only inside
+    the bounding box of the cells it actually wrote (``window`` = r0, r1, c0, c1
+    in grid rows / columns, ``full_shape`` the terrain shape).
+
+    ``visibility_mask`` / ``dori_grid`` / ``ppm_grid`` / ``slant_dist_grid``
+    stay available as properties that build the full array (same dtype, shape
+    and values as the unwindowed result) on EVERY access -- nothing is cached,
+    so the memory is transient. New code reads the cheap ``*_window`` arrays.
+    A multi-camera run keeps one of these per placement: a short-range fence
+    camera costs its window, not 13 bytes x every terrain cell."""
+
+    visibility_mask = _grid_property("visibility_mask", np.bool_)
+    dori_grid = _grid_property("dori_grid", np.int32)
+    ppm_grid = _grid_property("ppm_grid", np.float32)
+    slant_dist_grid = _grid_property("slant_dist_grid", np.float32)
+
+    @classmethod
+    def from_full(cls, res: ViewshedResult) -> "WindowedViewshedResult":
+        """Window ``res`` (copies the window, so ``res``'s big arrays can be freed)."""
+        arrs = {n: getattr(res, n) for n in _GRID_NAMES}
+        shape = arrs["dori_grid"].shape
+        touched = ((arrs["dori_grid"] != 0) | arrs["visibility_mask"]
+                   | (arrs["ppm_grid"] != 0) | (arrs["slant_dist_grid"] != 0))
+        rows_any = np.flatnonzero(touched.any(axis=1))
+        if rows_any.size:
+            cols_any = np.flatnonzero(touched.any(axis=0))
+            window = (int(rows_any[0]), int(rows_any[-1]) + 1, int(cols_any[0]), int(cols_any[-1]) + 1)
+        else:
+            window = (0, 0, 0, 0)
+        r0, r1, c0, c1 = window
+        obj = object.__new__(cls)
+        for f in fields(ViewshedResult):
+            if f.name not in _GRID_NAMES:
+                obj.__dict__[f.name] = getattr(res, f.name)
+        obj.__dict__["_shape"] = tuple(shape)
+        obj.__dict__["_window"] = window
+        obj.__dict__["_win"] = {n: np.array(a[r0:r1, c0:c1]) for n, a in arrs.items()}
+        return obj
+
+    @property
+    def window(self) -> Tuple[int, int, int, int]:
+        """(r0, r1, c0, c1): rows r0:r1, columns c0:c1 of the terrain grid; everything outside is zero."""
+        return self.__dict__["_window"]
+
+    @property
+    def full_shape(self) -> Tuple[int, int]:
+        return self.__dict__["_shape"]
+
+    @property
+    def visibility_window(self) -> np.ndarray:
+        return self.__dict__["_win"]["visibility_mask"]
+
+    @property
+    def dori_window(self) -> np.ndarray:
+        return self.__dict__["_win"]["dori_grid"]
+
+    @property
+    def ppm_window(self) -> np.ndarray:
+        return self.__dict__["_win"]["ppm_grid"]
+
+    @property
+    def slant_window(self) -> np.ndarray:
+        return self.__dict__["_win"]["slant_dist_grid"]
+
+    @property
+    def window_nbytes(self) -> int:
+        """Bytes the stored grids hold (what this result keeps alive)."""
+        return int(sum(a.nbytes for a in self.__dict__["_win"].values()))
 
 
 _R_EARTH = 6371000.0
@@ -813,42 +905,63 @@ def calculate_multi_camera_viewshed(terrain: TerrainData,
 
     rows, cols = terrain.rows, terrain.cols
     per: List[ViewshedResult] = []
-    for p in placements:
-        per.append(calculate_3d_viewshed(
+    ppm = np.zeros((rows, cols), np.float32)
+    best_cam = np.zeros((rows, cols), np.int32)
+    vis = np.zeros((rows, cols), bool)
+    union_cone = np.zeros((rows, cols), bool)
+    best_code = np.zeros((rows, cols), np.int32)
+    # BUGFIX: redundancy used to count VIEWS, so a PTZ whose 4 presets all
+    # frame a cell read as "4 cameras" there -- inflating overlap and hiding
+    # that the cell is unwatched whenever the PTZ looks elsewhere. Views of
+    # one physical camera (same camera_id) are OR-ed and counted once.
+    # Held as [r0, r1, c0, c1, window mask] (a camera only ever touches its window).
+    cam_vis_by_id: Dict[object, list] = {}
+
+    # MEMORY: each view is run, windowed and merged one at a time -- only one
+    # full-size result is alive at once, and the kept per_camera entries hold
+    # their window only (WindowedViewshedResult). The merge works on windows.
+    # Every merged grid is bit-identical to merging the full-size arrays.
+    for i, p in enumerate(placements, 1):
+        full = calculate_3d_viewshed(
             terrain=terrain, cam_x_m=p.x_m, cam_y_m=p.y_m, mast_height_m=p.mast_height_m,
             camera=p.camera, lens_mode=p.lens_mode, pan_deg=p.pan_deg, tilt_deg=p.tilt_deg,
             max_range_m=p.max_range_m, earth_curvature=earth_curvature,
             visibility_km=visibility_km, weather=weather,
             focal_mm_override=p.focal_mm_override, with_profile=False,
             monitor_floor=monitor_floor,
-        ))
-
-    ppm = np.zeros((rows, cols), np.float32)
-    best_cam = np.zeros((rows, cols), np.int32)
-    vis = np.zeros((rows, cols), bool)
-    union_cone = np.zeros((rows, cols), bool)
-    # BUGFIX: redundancy used to count VIEWS, so a PTZ whose 4 presets all
-    # frame a cell read as "4 cameras" there -- inflating overlap and hiding
-    # that the cell is unwatched whenever the PTZ looks elsewhere. Views of
-    # one physical camera (same camera_id) are OR-ed and counted once.
-    cam_vis_by_id: Dict[object, np.ndarray] = {}
-
-    for i, (p, r) in enumerate(zip(placements, per), 1):
-        cam_vis = r.visibility_mask
-        better = cam_vis & (r.ppm_grid > ppm)
-        ppm = np.where(better, r.ppm_grid, ppm)
-        best_cam = np.where(better, i, best_cam)
-        vis |= cam_vis
+        )
+        r = WindowedViewshedResult.from_full(full)
+        del full
+        per.append(r)
+        r0, r1, c0, c1 = r.window
+        sl = (slice(r0, r1), slice(c0, c1))
+        cam_vis = r.visibility_window
+        cam_ppm = r.ppm_window
+        cam_dori = r.dori_window
+        better = cam_vis & (cam_ppm > ppm[sl])
+        ppm[sl] = np.where(better, cam_ppm, ppm[sl])
+        best_cam[sl] = np.where(better, i, best_cam[sl])
+        vis[sl] |= cam_vis
+        union_cone[sl] |= (cam_dori != ZONE_OUT_OF_FOV)
+        best_code[sl] = np.maximum(best_code[sl], np.where(cam_vis, cam_dori, 0))
         key = p.camera_id if p.camera_id is not None else ("view", i)
-        if key in cam_vis_by_id:
-            cam_vis_by_id[key] = cam_vis_by_id[key] | cam_vis
-        else:
-            cam_vis_by_id[key] = cam_vis.copy()
-        union_cone |= (r.dori_grid != ZONE_OUT_OF_FOV)
+        prev = cam_vis_by_id.get(key)
+        if prev is None:
+            cam_vis_by_id[key] = [r0, r1, c0, c1, cam_vis]
+        elif r1 > r0 and c1 > c0:
+            if prev[1] <= prev[0] or prev[3] <= prev[2]:
+                cam_vis_by_id[key] = [r0, r1, c0, c1, cam_vis]
+            else:
+                u0, u1 = min(prev[0], r0), max(prev[1], r1)
+                v0, v1 = min(prev[2], c0), max(prev[3], c1)
+                both = np.zeros((u1 - u0, v1 - v0), bool)
+                both[prev[0] - u0:prev[1] - u0, prev[2] - v0:prev[3] - v0] = prev[4]
+                both[r0 - u0:r1 - u0, c0 - v0:c1 - v0] |= cam_vis
+                cam_vis_by_id[key] = [u0, u1, v0, v1, both]
 
     seen = np.zeros((rows, cols), np.int32)
-    for cam_vis in cam_vis_by_id.values():
-        seen += cam_vis.astype(np.int32)
+    for r0, r1, c0, c1, cam_vis in cam_vis_by_id.values():
+        seen[r0:r1, c0:c1] += cam_vis.astype(np.int32)
 
     occ = union_cone & ~vis
     # BUGFIX: the merge used to re-threshold the merged best px/m with the EN 62676-4
@@ -856,11 +969,9 @@ def calculate_multi_camera_viewshed(terrain: TerrainData,
     # identification read as Detection). Each camera already classed its own cells
     # (zone_codes: EN or Johnson, monitor floor); zone codes rise with px/m inside one
     # classification, so the merged class is the best code of any camera that SEES the
-    # cell. Bit-identical for visible cameras (the thresholds are the same ones).
-    dori = np.zeros((rows, cols), np.int32)
-    dori = np.where(occ, ZONE_OCCLUDED, dori)
-    for r in per:
-        dori = np.maximum(dori, np.where(r.visibility_mask, r.dori_grid, 0)).astype(np.int32)
+    # cell (``best_code``). Bit-identical for visible cameras (the thresholds are the
+    # same ones). A cell in ``occ`` is seen by nobody, so its best code is 0 there.
+    dori = np.where(occ, ZONE_OCCLUDED, best_code).astype(np.int32)
 
     cell_a = terrain.cell_size_m ** 2
     union_cells = int(np.count_nonzero(union_cone))

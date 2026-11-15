@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_CAMERA } from "../core/api";
 import { isHatched } from "../components/LegendSwatch";
 import {
-  buildTerrainExtra, changedKeys, projectCameraToTerrain, readPlacement, readTerrainExtra, restoreMixedPtz, terrainToProjectCamera, type ExtraState,
+  buildTerrainExtra, changedKeys, maxRefine, projectCameraToTerrain, readPlacement, readRefine, readTerrainExtra, refineChoices, restoreMixedPtz, terrainToProjectCamera, type ExtraState,
 } from "./terrainPersist";
 
 const cam = { ...DEFAULT_CAMERA, name: "KAM-01", model_name: "Model X", focal_min_mm: 2.8, focal_max_mm: 12 };
@@ -13,7 +13,7 @@ const state: ExtraState = {
   area: { interior: false, perPole: 3, streetsOnly: true, maxHole: 100, minCams: 2, maxCams: 80 },
   mixedPtz: { camera: { ...cam, model_name: "PTZ Y" }, everyN: 5, span: 180 }, prices: { camera: 100 }, scenarios: [],
   mapMode: "satellite", useObstacles: false, focal: 7.5, patrol: { speed: 30, dwell: 4 }, ptzReach: true, slide: false, panSearch: true,
-  covLayer: "dori", covLevel: "recognize", sweepLevel: "observe",
+  covLayer: "dori", covLevel: "recognize", sweepLevel: "observe", refine: 4,
 };
 
 describe("terrain_extra save / load mapping", () => {
@@ -24,7 +24,7 @@ describe("terrain_extra save / load mapping", () => {
       closed: false, lineMode: "border", watchSide: "left", targetPpm: 62.5, mast: 9, lensMode: "max", backToBack: true,
       bandOut: 150, bandIn: 30, targetH: 1.6, goal: 90, plannerMode: "perimeter", cameraModel: "Model X",
       mapMode: "satellite", useObstacles: false, focal: 7.5, patrol: { speed: 30, dwell: 4 }, ptzReach: true, slide: false,
-      panSearch: true, covLayer: "dori", covLevel: "recognize", sweepLevel: "observe",
+      panSearch: true, covLayer: "dori", covLevel: "recognize", sweepLevel: "observe", refine: 4,
     });
     expect(r.area).toEqual({ interior: false, perPole: 3, streetsOnly: true, maxHole: 100, minCams: 2, maxCams: 80 });
   });
@@ -37,7 +37,7 @@ describe("terrain_extra save / load mapping", () => {
       area_goal: { level: "detect", goal_pct: 95, interior: true, per_pole: 2 }, scenarios: [{ x: 1 }],
     };
     const r = readTerrainExtra(old);
-    for (const k of ["mapMode", "useObstacles", "focal", "patrol", "ptzReach", "slide", "panSearch", "covLayer", "covLevel", "sweepLevel", "plannerMode"] as const)
+    for (const k of ["mapMode", "useObstacles", "focal", "patrol", "ptzReach", "slide", "panSearch", "covLayer", "covLevel", "sweepLevel", "plannerMode", "refine"] as const)
       expect(r[k]).toBeUndefined();
     expect(r).toMatchObject({ closed: true, targetPpm: 40, goal: 95, lensMode: "min", backToBack: false, bandOut: 40, targetH: 1.8 });
     expect(r.scenarios).toHaveLength(1);
@@ -49,6 +49,24 @@ describe("terrain_extra save / load mapping", () => {
     expect(readTerrainExtra(null).lensMode).toBe("min");
     const r = readTerrainExtra({ map_mode: "weird", ptz_reach: "yes", focal_mm: "7", patrol: { speed_deg_s: 10 }, coverage_view: { layer: "x", level: "nope" }, sweep_level: "face" });
     for (const k of ["mapMode", "ptzReach", "focal", "patrol", "covLayer", "covLevel", "sweepLevel"] as const) expect(r[k]).toBeUndefined();
+  });
+
+  it("the analysis-grid refinement is an integer 2..16; 1, junk and absent all mean the DEM's own cell", () => {
+    expect(buildTerrainExtra({ ...state, refine: 6 }).analysis_refine).toBe(6);
+    expect(readRefine(6)).toBe(6);
+    for (const v of [1, 0, -3, 17, 2.5, "4", null, undefined, NaN]) expect(readRefine(v)).toBeUndefined();
+    expect(readTerrainExtra({ analysis_refine: 3 }).refine).toBe(3);
+    expect(readTerrainExtra({ analysis_refine: 1 }).refine).toBeUndefined();
+  });
+
+  it("the offered factors respect the core's 1.6 M node limit (mirrors terrain_methods._max_factor)", () => {
+    expect(maxRefine(200 * 200)).toBe(6);       // 40 000 nodes -> 6x = 1.44 M
+    expect(maxRefine(400 * 400)).toBe(3);
+    expect(maxRefine(800 * 800)).toBe(1);
+    expect(maxRefine(50 * 50)).toBe(16);        // never above 16
+    expect(refineChoices(200 * 200)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(refineChoices(800 * 800)).toEqual([1]);
+    expect(refineChoices(50 * 50)).toEqual([1, 2, 3, 4, 5, 6, 8, 10, 12, 16]);
   });
 
   it("an older area project that stored a level, not a px/m, still maps to its px/m", () => {

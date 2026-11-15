@@ -48,6 +48,8 @@ export interface ExtraState {
   covLayer: CoverageLayer;
   covLevel: "plan" | TerrainLevel;
   sweepLevel: TerrainLevel;
+  /** analysis-grid refinement of the loaded DEM (1 = its own cell) */
+  refine: number;
 }
 
 export function buildTerrainExtra(s: ExtraState): Record<string, unknown> {
@@ -67,6 +69,7 @@ export function buildTerrainExtra(s: ExtraState): Record<string, unknown> {
     patrol: { speed_deg_s: s.patrol.speed, end_dwell_s: s.patrol.dwell }, ptz_reach: s.ptzReach,
     slide_poles: s.slide, pan_search: s.panSearch,
     coverage_view: { layer: s.covLayer, level: s.covLevel }, sweep_level: s.sweepLevel,
+    analysis_refine: s.refine,
   };
 }
 
@@ -99,6 +102,8 @@ export interface ExtraRead {
   covLayer?: CoverageLayer;
   covLevel?: "plan" | TerrainLevel;
   sweepLevel?: TerrainLevel;
+  /** the saved analysis-grid refinement, an integer 2..16 (1 / absent / invalid: the DEM's own grid) */
+  refine?: number;
   /** the saved mixed fixed + PTZ choice: the model is only a NAME here (see `restoreMixedPtz`) */
   mixedPtz?: { model?: string; everyN?: number; span?: number };
 }
@@ -151,7 +156,25 @@ export function readTerrainExtra(raw: unknown): ExtraRead {
     covLevel: cv.level === "plan" || (typeof cv.level === "string" && LEVELS.includes(cv.level)) ? (cv.level as "plan" | TerrainLevel) : undefined,
     sweepLevel: typeof x.sweep_level === "string" && LEVELS.includes(x.sweep_level) ? (x.sweep_level as TerrainLevel) : undefined,
     mixedPtz,
+    refine: readRefine(x.analysis_refine),
   };
+}
+
+/** A saved refinement factor: an integer 2..16, else undefined (the loaded DEM's own cell). */
+export function readRefine(v: unknown): number | undefined {
+  const n = num(v);
+  return n !== undefined && Number.isInteger(n) && n >= 2 && n <= 16 ? n : undefined;
+}
+
+/** Largest refinement the core allows for a DEM of `baseNodes` nodes (node limit 1.6 M, at most 16x); mirrors `_max_factor`. */
+export function maxRefine(baseNodes: number): number {
+  return Math.max(1, Math.min(16, Math.floor(Math.sqrt(1_600_000 / Math.max(1, baseNodes)))));
+}
+
+/** Refinement choices offered for a DEM of `baseNodes` nodes: 1 (original) and the usual steps up to the limit. */
+export function refineChoices(baseNodes: number): number[] {
+  const hi = maxRefine(baseNodes);
+  return [1, 2, 3, 4, 5, 6, 8, 10, 12, 16].filter((f) => f <= hi);
 }
 
 export type MixedPtzState = { camera: CameraConfig | null; everyN: number; span: number };

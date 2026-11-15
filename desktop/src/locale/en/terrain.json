@@ -282,5 +282,14 @@
   "● Canlı tarama": "● Live sweep",
   "● Erişim zarfı hesaplanıyor…": "● Computing reach envelope…",
   "● ölçülmüş DEM": "● measured DEM",
-  "Optimizasyon başka bir seviye için yapıldı; alan payı için Birleşik Kapsamayı yeniden hesaplayın.": "The optimisation was done for another level; recompute Combined coverage for the area share."
+  "Optimizasyon başka bir seviye için yapıldı; alan payı için Birleşik Kapsamayı yeniden hesaplayın.": "The optimisation was done for another level; recompute Combined coverage for the area share.",
+  "Analiz ızgarası": "Analysis grid",
+  "Analiz hücresi {c} m ({b} m DEM × {f})": "Analysis cell {c} m ({b} m DEM × {f})",
+  "Analiz hücresi {c} m (DEM'in kendi hücresi)": "Analysis cell {c} m (the DEM's own cell)",
+  "İnceltme": "Refinement",
+  "1× (özgün)": "1× (original)",
+  "Yüzdeler hücre sayılarından gelir; ince hücre koni, menzil ve gölge kenarlarını doğrulaştırır (DEM'e kabartma eklemez).": "Shares are counted in cells; a finer cell makes cone, range and shadow edges accurate (it adds no relief to the DEM).",
+  "Analiz ızgarası inceltiliyor": "Refining the analysis grid",
+  "Analiz ızgarasını incelt ({cell} m)": "Refine the analysis grid ({cell} m)",
+  "Projedeki analiz ızgarası ({f}×) uygulanamadı; arazinin kendi ızgarası kullanılıyor.": "The project's analysis grid ({f}×) could not be applied; using the terrain's own grid."
 }

@@ -28,7 +28,7 @@ import { CityPanel } from "../components/CityPanel";
 import { Button, Panel, Slider, Tile, fmt } from "../components/ui";
 import { DISPLAY_TILT_MAX, DISPLAY_TILT_MIN, fromDisplayTilt, toDisplayTilt } from "./terrainTilt";
 import {
-  LEVEL_PPM, buildTerrainExtra, changedKeys, projectCameraToTerrain, readPlacement, readTerrainExtra, restoreMixedPtz, terrainToProjectCamera, type LineMode,
+  LEVEL_PPM, buildTerrainExtra, changedKeys, projectCameraToTerrain, readPlacement, readTerrainExtra, refineChoices, restoreMixedPtz, terrainToProjectCamera, type LineMode,
 } from "./terrainPersist";
 import { LegendSwatch } from "../components/LegendSwatch";
 import { levelName, levelsFor } from "../core/terrainLevels";
@@ -263,6 +263,20 @@ export default function Terrain() {
       layer, level, ptz_speed_deg_s: patrol.speed, ptz_end_dwell_s: patrol.dwell, ptz_reach: ptzReach, ...bandArgs() }, o));
     if (r) setCoverage(r);
   };
+  // A finer analysis grid replaces the core's terrain under the same id: the plan stays, every result computed from it is
+  // dropped (replacePlan, same plan), the base picture and the live viewshed reload from the new `info`.
+  const refineTo = async (factor: number): Promise<boolean> => {
+    if (!info) return false;
+    const ti = await job.run(t("Analiz ızgarası inceltiliyor"), (o) => T.refine(info.terrain_id, { factor }, o));
+    if (!ti) return false;
+    setInfo(ti);
+    replacePlan(planRes);
+    setSweep(null); setPtzLayer(null);
+    return true;
+  };
+  const refineAndRecompute = async (factor: number) => {
+    if (await refineTo(factor)) await runCoverage(covLayer, covLevel);
+  };
   const runPoles = async () => {
     if (!info || fence.length < 2) return;
     const r = await job.run(t("En az direk araması"), (o) => T.minimizePoles(
@@ -332,12 +346,13 @@ export default function Terrain() {
     const source = info.source === "region" || info.region_id ? "region" : info.source === "geotiff" ? "geotiff" : "procedural";
     setTerrainBlock({
       terrain_source: source, terrain_region_id: info.region_id, terrain_preset: info.preset || "ridge_and_valley",
-      terrain_file: info.file, terrain_width_m: info.width_m, terrain_grid: info.cols, viewshed_range_m: mount.range, weather,
+      terrain_file: info.file, terrain_width_m: info.width_m, terrain_grid: Math.round(info.cols / (info.refine_factor || 1)), viewshed_range_m: mount.range, weather,
       placements: [{ camera: camera.name, x_m: mount.x, y_m: mount.y, mast_m: mount.mast, pan_deg: mount.pan, tilt_deg: mount.tilt,
         range_m: mount.range, lens_mode: mount.lens }],
       terrain_extra: buildTerrainExtra({
         camera, tab, fence, plan, band, targetH, goal, reqLevel, area, mixedPtz, prices, scenarios,
         mapMode, useObstacles, focal: mount.focal, patrol, ptzReach, slide, panSearch, covLayer, covLevel, sweepLevel,
+        refine: info.refine_factor || 1,
       }),
     }, { touch: !restoring.current });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -353,10 +368,19 @@ export default function Terrain() {
       : src === "geotiff" && b.terrain_file ? () => T.geotiff(String(b.terrain_file))
       : () => T.procedural(String(b.terrain_preset || "ridge_and_valley"), Number(b.terrain_width_m) || 2000, Number(b.terrain_grid) || 200);
     restoring.current = true;
-    void job.run(t("Projenin arazisi açılıyor"), load).then((ti) => {
+    // the saved analysis grid goes on right after the terrain loads, before anything derived from a plan runs
+    const savedRefine = readTerrainExtra(x).refine;
+    let refineFailed = false;
+    const loadAndRefine = async () => {
+      const loaded = await load();
+      if (!savedRefine) return loaded;
+      try { return await T.refine(loaded.terrain_id, { factor: savedRefine }); } catch { refineFailed = true; return loaded; }
+    };
+    void job.run(t("Projenin arazisi açılıyor"), loadAndRefine).then((ti) => {
       setTimeout(() => { restoring.current = false; }, 1500);
       if (!ti) { setNotice(t("Projedeki arazi açılamadı (kayıtlı bölge silinmiş ya da dosya taşınmış olabilir).")); return; }
       adopt(ti);
+      if (refineFailed) setNotice(t("Projedeki analiz ızgarası ({f}×) uygulanamadı; arazinin kendi ızgarası kullanılıyor.", { f: savedRefine ?? 1 }));
       const pl = readPlacement(b);
       if (pl) setMount((m) => ({ ...m, x: pl.x ?? m.x, y: pl.y ?? m.y, mast: pl.mast ?? m.mast, pan: pl.pan ?? m.pan,
         tilt: pl.tilt ?? m.tilt, range: pl.range ?? m.range, lens: pl.lens ?? m.lens }));
@@ -459,6 +483,7 @@ export default function Terrain() {
             {info.lat_center === null && <p className="mt-2 text-[11px] text-text-3">{t("Yüzey modeli yalnız konumu bilinen araziye (indirilen / kayıtlı bölge) oturur.")}</p>}
           </Panel>
         )}
+        {info && <GridPanel info={info} busy={job.running} onRefine={(fc) => void refineTo(fc)} />}
         {info && <RegionSave info={info} T={T} busy={job.running} onSaved={(rid) => { setInfo({ ...info, region_id: rid }); void T.regions().then((r) => setRegions(r.regions)); }} />}
       </div>
 
@@ -923,7 +948,7 @@ export default function Terrain() {
                     <input type="checkbox" checked={ptzReach} onChange={(e) => setPtzReach(e.target.checked)} /> {t("PTZ talep üzerine erişimini de hesapla")}</label>
                 )}
                 <Button className="mt-2 w-full" disabled={job.running} onClick={() => void runCoverage()}><Layers size={14} /> {t("Birleşik Kapsamayı Hesapla")}</Button>
-                {coverage && <CoverageSummary c={coverage} thermal={isThermal} />}
+                {coverage && <CoverageSummary c={coverage} thermal={isThermal} busy={job.running} onRefine={(fc) => void refineAndRecompute(fc)} />}
                 </Panel>
               )}
               {planRes && (
@@ -1033,7 +1058,7 @@ export default function Terrain() {
 
 /** What coverage says, split the way a designer reads it: the fence line, the
  *  band by target (fixed / PTZ only / below / unseen), then DORI levels. */
-function CoverageSummary({ c, thermal }: { c: CoverageResult; thermal: boolean }) {
+function CoverageSummary({ c, thermal, busy, onRefine }: { c: CoverageResult; thermal: boolean; busy: boolean; onRefine: (factor: number) => void }) {
   const tg = c.target;
   const where = c.roi_kind === "area" ? t("Alan ({a})", { a: ha(c.band_area_m2) })
     : c.roi_kind === "side" ? t("İzlenen taraf ({side}), {m} m derinlik ({a})", { side: c.watch_side === "left" ? t("sol") : t("sağ"), m: fmt(c.band_m, 0), a: ha(c.band_area_m2) })
@@ -1063,8 +1088,36 @@ function CoverageSummary({ c, thermal }: { c: CoverageResult; thermal: boolean }
       {c.band_share_reach && <div className="mt-1 text-3">{t("◆ Talep üzerine: PTZ çevrilirse ulaşır; kendiliğinden izlenmez.")}</div>}
       {c.ptz_count > 0 && <div className="mt-1 text-text-3">{tn(c.ptz_count, "◆ {n} PTZ devriyesi; en uzun izlenmeyen süre {v} sn", { v: fmt(c.ptz_worst_revisit_s, 0) })}</div>}
       {c.grid_note && <div className="mt-1 text-warn">▲ {c.grid_note}</div>}
+      {c.grid_suggest && (
+        <Button className="mt-1 w-full" disabled={busy} onClick={() => onRefine(c.grid_suggest!.factor)}>
+          {t("Analiz ızgarasını incelt ({cell} m)", { cell: fmt(c.grid_suggest.cell_m, 2) })}
+        </Button>
+      )}
       {!c.measured && <div className="mt-1 text-warn">{t("▲ prosedürel arazi — ölçüm değil")}</div>}
     </div>
+  );
+}
+
+/** The analysis cell the engines count in: the DEM's own, or a finer one (the same terrain, extent and pictures). */
+function GridPanel({ info, busy, onRefine }: { info: TerrainInfo; busy: boolean; onRefine: (factor: number) => void }) {
+  const f = info.refine_factor || 1;
+  const baseNodes = (info.rows * info.cols) / (f * f);
+  const choices = refineChoices(baseNodes);
+  return (
+    <Panel title={t("Analiz ızgarası")} icon={<Layers size={16} className="text-secondary" />}>
+      <div className="font-mono text-[11px] text-text-2">
+        {f > 1 ? t("Analiz hücresi {c} m ({b} m DEM × {f})", { c: fmt(info.cell_size_m, 2), b: fmt(info.base_cell_m, 2), f })
+          : t("Analiz hücresi {c} m (DEM'in kendi hücresi)", { c: fmt(info.cell_size_m, 2) })}
+      </div>
+      <label className="mt-2 flex items-center justify-between gap-2 text-[12px]">
+        <span>{t("İnceltme")}</span>
+        <select className="h-7 rounded-md bg-bg-5 px-2 text-[12px]" value={f} disabled={busy} aria-label={t("İnceltme")}
+          onChange={(e) => onRefine(Number(e.target.value))}>
+          {choices.map((c) => <option key={c} value={c}>{c === 1 ? t("1× (özgün)") : `${c}×`}</option>)}
+        </select>
+      </label>
+      <p className="mt-1.5 text-[11px] text-text-3">{t("Yüzdeler hücre sayılarından gelir; ince hücre koni, menzil ve gölge kenarlarını doğrulaştırır (DEM'e kabartma eklemez).")}</p>
+    </Panel>
   );
 }
 

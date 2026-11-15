@@ -151,6 +151,90 @@ def _bilinear(z: np.ndarray, origin_x: float, origin_y: float, cell: float,
     return float(top * (1.0 - fy) + bot * fy)
 
 
+def _upsample_bilinear(z: np.ndarray, factor: int) -> np.ndarray:
+    """Extent-preserving bilinear upsampling: ``n * factor`` nodes per axis at
+    spacing ``cell / factor``. Nodes at indices that are multiples of
+    ``factor`` are the original nodes, copied exactly; the rest are linear
+    between them (separable, identical to ``get_elevation_at`` up to rounding).
+    The ``factor - 1`` nodes past the last original node repeat it (the engine
+    treats the surface as flat past the last node)."""
+    z = np.asarray(z, dtype=np.float64)
+    for axis in (0, 1):
+        n = z.shape[axis]
+        k = np.minimum(np.arange(n * factor), (n - 1) * factor)
+        i = np.minimum(k // factor, max(n - 2, 0))
+        t = (k - i * factor) / float(factor)            # 0 at an original node, 1 at the last one
+        a = np.take(z, i, axis=axis)
+        b = np.take(z, np.minimum(i + 1, n - 1), axis=axis)
+        shape = [1, 1]
+        shape[axis] = -1
+        t = t.reshape(shape)
+        z = a * (1.0 - t) + b * t
+    return z
+
+
+def _nearest_index(n: int, factor: int) -> np.ndarray:
+    """Original node that owns each refined node (round to nearest, ties up)."""
+    k = np.arange(n * factor)
+    return np.minimum((2 * k + factor) // (2 * factor), n - 1)
+
+
+def refine_terrain(terrain: TerrainData, factor: int) -> TerrainData:
+    """The same terrain on a ``factor`` times finer analysis grid.
+
+    A grid of (rows, cols) nodes at spacing ``cell`` becomes
+    (rows * factor, cols * factor) nodes at ``cell / factor``: same origin and
+    the same extent (``width_m = cols * cell`` and ``height_m`` are EXACTLY
+    unchanged, as are the latitude / longitude centre and the georeference, so
+    pictures and KML stay aligned). Every original node is kept exactly (at
+    indices that are multiples of ``factor``); the ``factor - 1`` extra nodes
+    past the last original row / column take the last node's values.
+
+    * Bare ground is bilinear between the original nodes -- the very surface
+      ``get_elevation_at`` / ``ground_elevation_at`` already return, so the
+      refined grid adds no invented relief.
+    * Obstacles (buildings / trees) take the height and kind of the NEAREST
+      original node: footprints stay blocky, heights are not smeared. The
+      surface is the refined ground plus that obstacle height. (The service
+      re-rasterises the source layer on the fine grid when it still has it.)
+
+    ``factor == 1`` returns an equivalent copy. The dtype of the grids is kept
+    (a float32 DEM is rounded back to float32).
+    """
+    from dataclasses import replace
+
+    factor = int(factor)
+    if factor < 1:
+        raise ValueError("Inceltme katsayisi en az 1 olmali.")
+    if factor == 1:
+        return replace(terrain, z_grid=terrain.z_grid.copy(),
+                       ground_z_grid=None if terrain.ground_z_grid is None else terrain.ground_z_grid.copy(),
+                       obstacle_grid=None if terrain.obstacle_grid is None else terrain.obstacle_grid.copy(),
+                       obstacle_kind=None if terrain.obstacle_kind is None else terrain.obstacle_kind.copy(),
+                       georef=None if terrain.georef is None else dict(terrain.georef))
+
+    dtype = terrain.z_grid.dtype
+    ground_src = terrain.ground_z_grid if terrain.ground_z_grid is not None else terrain.z_grid
+    ground = _upsample_bilinear(ground_src, factor)
+    ground_out = ground.astype(dtype)
+    if terrain.ground_z_grid is None:
+        z_out, ground_keep, obs, kind = ground_out, None, None, None
+    else:
+        ri = _nearest_index(terrain.rows, factor)
+        ci = _nearest_index(terrain.cols, factor)
+        obs_src = terrain.obstacle_grid
+        if obs_src is None:
+            obs_src = terrain.z_grid.astype(np.float64) - ground_src
+        obs = obs_src[np.ix_(ri, ci)]
+        kind = None if terrain.obstacle_kind is None else terrain.obstacle_kind[np.ix_(ri, ci)]
+        z_out = (ground + obs).astype(dtype)
+        ground_keep = ground_out
+
+    return replace(terrain, z_grid=z_out, cell_size_m=terrain.cell_size_m / factor,
+                   ground_z_grid=ground_keep, obstacle_grid=obs, obstacle_kind=kind,
+                   georef=None if terrain.georef is None else dict(terrain.georef))
+
+
 def generate_procedural_terrain(preset: str = "ridge_and_valley",
                                  grid_size: int = 200,
                                  cell_size_m: float = 10.0) -> TerrainData:

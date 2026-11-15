@@ -23,13 +23,17 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
 - **API v1** (`cctv_simulator/service/__init__.py: API_VERSION`). Yöntem
   eklemek / isteğe bağlı alan eklemek küçük sürüm; yeniden adlandırma ya da
   silme büyük sürüm. `system.describe` güncel listeyi verir.
-- Yöntemler (79; modül başına):
+- Yöntemler (80; modül başına):
   - `methods.py`: `system.info|ping|describe`, `catalog.get`,
     `library.list|get|camera`, `optics.calculate`, `project.load|save`
   - `library_methods.py`: `library.fields|record|auth|save|delete|set_password`
     (her yazım yönetici şifresini denetler)
-  - `terrain_methods.py`: `terrain.catalog|procedural|geotiff|download|image|settings`
-    (settings: arazi oturumunda hedef boyu),
+  - `terrain_methods.py`: `terrain.catalog|procedural|geotiff|download|image|settings|refine`
+    (settings: arazi oturumunda hedef boyu; `refine`: analiz ızgarasını `factor` 1–16 ya da `target_cell_m` ile
+    inceltir — aynı `terrain_id`, aynı kapsam / resimler, yalnız motorun saydığı hücre küçülür; 1 aslına döner,
+    her seferinde ORİJİNAL ızgaradan başlar; bina / ağaç kaynağından yeniden rasterlenir; plan kalır, plandan /
+    araziden türeyen her sonuç düşer; 1,6 milyon düğümü aşan istek Türkçe APP_ERROR; özetlerde `refine_factor`,
+    `base_cell_m`; kayıtlı bölge hep orijinal DEM'i yazar; kapsama yanıtında `grid_note` + `grid_suggest`),
     `regions.list|open|save|delete`, `surface.osm|raster`, `viewshed.single`,
     `perimeter.plan|coverage|minimize_poles|plan_assisted|optimize|ptz_patrol` (`plan_assisted`: PTZ destekli en az direk +
     PTZ — sabitler sürekli algılar, PTZ `level`'i `max_s` sn içinde tutar; yalnız tutarsa planı değiştirir; bant: `band_m` dış,

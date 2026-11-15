@@ -34,6 +34,32 @@ class TerrainEntry:
     target_height_m: float = 0.0
     # last analysis results, for overlays / exports / follow-up calls
     results: Dict[str, Any] = field(default_factory=dict)
+    # Analysis-grid refinement (terrain.refine). ``bare`` / ``surface`` / ``city`` above are the grids
+    # every analysis reads (refined when ``refine_factor`` > 1); the ORIGINAL ones are kept here so a
+    # new factor always starts from them, factor 1 restores them bit-identically and a saved region
+    # writes them. ``obstacle_src`` keeps what the surface was built from (OSM features, local
+    # rasters) so it can be re-rasterised on a fine grid.
+    base_bare: Any = None
+    base_surface: Any = None
+    base_city: Any = None
+    obstacle_src: Dict[str, Any] = field(default_factory=dict)
+    refine_factor: int = 1
+
+    def __post_init__(self) -> None:
+        if self.base_bare is None:
+            self.base_bare = self.bare
+        if self.base_surface is None:
+            self.base_surface = self.surface
+        if self.base_city is None:
+            self.base_city = self.city
+
+    @property
+    def base_cell_m(self) -> float:
+        return float(self.base_bare.cell_size_m)
+
+    def original(self, use_obstacles: bool = True):
+        """The unrefined terrain (what a saved region must hold)."""
+        return self.base_surface if (use_obstacles and self.base_surface is not None) else self.base_bare
 
     def terrain(self, use_obstacles: bool = True):
         return self.surface if (use_obstacles and self.surface is not None) else self.bare
