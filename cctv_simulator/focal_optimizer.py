@@ -44,6 +44,7 @@ from .models import CameraConfig
 from .mount_visibility import MountVisibility, mount_visibility, view_layers
 from .terrain_loader import TerrainData
 from .viewshed_3d import (
+    in_horizontal_cone,
     PPM_DETECT,
     PPM_IDENT,
     PPM_OBSERVE,
@@ -133,10 +134,13 @@ def _pan_grid(pan_deg: float, search_deg: float, step_deg: float) -> List[float]
     return [(pan_deg + i * step_deg) % 360.0 for i in range(-k, k + 1)]
 
 
-def _cone(center_az_rad: np.ndarray, pan_deg: float, hfov_deg: float) -> np.ndarray:
+def _cone(lay, pan_deg: float) -> np.ndarray:
+    """Horizontal cone of a view layer at ``pan_deg`` -- exactly mount_visibility.view_mask's rule
+    (half-open boundary ties, viewshed_3d "Boundary ties"), so the areas stay bit-equal."""
     pan = math.radians(pan_deg)
-    d = np.arctan2(np.sin(center_az_rad - pan), np.cos(center_az_rad - pan))
-    return np.abs(d) <= math.radians(hfov_deg / 2.0)
+    d = np.arctan2(np.sin(lay.center_az_rad - pan), np.cos(lay.center_az_rad - pan))
+    counted = lay.in_range if lay.in_range is not None else np.ones(d.shape, bool)
+    return in_horizontal_cone(d, lay.center_dist_m, math.radians(lay.hfov_deg / 2.0), counted)
 
 
 def level_areas(zone: np.ndarray, roi: Optional[np.ndarray], cell_area: float,
@@ -205,7 +209,7 @@ def sweep_focals(terrain: TerrainData, x_m: float, y_m: float, mast_m: float, ca
             zone_vis = np.where(lay.visible, lay.zone, 0)
             pans = [None] if pan_deg is None else _pan_grid(pan_deg, pan_search_deg, pan_step_deg)
             for p in pans:
-                z = zone_vis if p is None else np.where(_cone(lay.center_az_rad, p, lay.hfov_deg), zone_vis, 0)
+                z = zone_vis if p is None else np.where(_cone(lay, p), zone_vis, 0)
                 sc = _score(z, roi_w, weights)
                 if best_f is None or sc > best_f.score + 1e-9:
                     best_f = ViewChoice(f, t, p, lay.hfov_deg, level_areas(z, roi_w, cell_area, lvls), sc)
@@ -237,7 +241,7 @@ def envelope(terrain: TerrainData, x_m: float, y_m: float, mast_m: float, camera
                 truncated = truncated or bool(lay.truncated)
                 z = np.where(lay.visible, lay.zone, 0)
                 if pan_deg is not None:
-                    z = np.where(_cone(lay.center_az_rad, pan_deg, lay.hfov_deg), z, 0)
+                    z = np.where(_cone(lay, pan_deg), z, 0)
                 np.maximum(best, z.astype(np.int8), out=best)
     if info is not None:
         info["truncated"] = truncated
@@ -337,7 +341,7 @@ def _candidates(terrain, m: Mount, level, n_focals, rng, vis, weather) -> List[_
                               visibility_km=vis, weather=weather, monitor_floor=monitor)
             zv = np.where(lay.visible, lay.zone, 0)
             for p in ps:
-                sl, z = _crop(np.where(_cone(lay.center_az_rad, p, lay.hfov_deg), zv, 0), mv.window)
+                sl, z = _crop(np.where(_cone(lay, p), zv, 0), mv.window)
                 cands.append(_Cand(f, t, p, lay.hfov_deg, lay.vfov_deg, sl, z, x, y))
 
         if k == 0:

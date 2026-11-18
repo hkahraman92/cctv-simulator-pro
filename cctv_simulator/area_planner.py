@@ -238,7 +238,7 @@ def _views_for_site(terrain, camera, x, y, mast, roi, level, n_focals, rng, vis,
                 truncated.append(True)
             step = max(10.0, min(30.0, lay.hfov_deg / 2.0))
             for p in np.arange(0.0, 360.0, step):
-                z = np.where(_cone(lay.center_az_rad, float(p), lay.hfov_deg), zv, 0)
+                z = np.where(_cone(lay, float(p)), zv, 0)
                 if not (z >= level).any():
                     continue
                 sl, zc = _crop(z, mv.window)

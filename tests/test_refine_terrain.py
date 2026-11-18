@@ -134,6 +134,10 @@ def test_viewshed_on_flat_terrain_converges_to_the_analytic_wedge():
     ref = float(cl.visible.sum()) * 0.25
     err = {f: abs(calculate_multi_camera_viewshed(refine_terrain(t0, f), pl).visible_area_m2 - ref) / ref
            for f in (1, 2, 8)}
-    assert err[1] > 0.05                               # the 10 m cell is rough (3-cell wedge)
-    assert err[2] < err[1] and err[8] < err[2]
-    assert err[8] < 0.02
+    # Pan 0 + a 10 m cell puts the cone edges through grid nodes; the closed rule over-counted them
+    # (+11.7 % at 10 m, +7.1 % / +3.9 % / +1.2 % at f = 2 / 4 / 8), which is what made this a monotone
+    # convergence. With half-open ties (viewshed_3d "Boundary ties") the aligned view is as unbiased as
+    # any: -2.3 % / +0.07 % / +0.07 % / -0.6 %, i.e. only the coarse cell is still rough (3-cell wedge).
+    assert err[1] > 0.02                               # the 10 m cell is rough (3-cell wedge)
+    assert err[2] < err[1]
+    assert err[2] < 0.01 and err[8] < 0.02

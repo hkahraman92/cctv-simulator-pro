@@ -52,8 +52,11 @@ from .viewshed_3d import (
     _exact_horizon,
     build_fan,
     fan_horizons,
+    in_horizontal_cone,
+    range_ok,
     ray_step_size,
     view_focal_mm,
+    vertical_ok,
     view_limits,
     zone_codes,
 )
@@ -242,6 +245,8 @@ class ViewLayers:
     vfov_deg: float
     effective_max_range_m: float
     truncated: bool
+    in_range: Optional[np.ndarray] = None   # window: 1 m < centre distance <= range (half-open, as the engine)
+    center_dist_m: Optional[np.ndarray] = None   # window: ground distance of each cell centre
 
 
 def view_layers(mv: MountVisibility, camera: CameraConfig, *, tilt_deg: float,
@@ -264,14 +269,17 @@ def view_layers(mv: MountVisibility, camera: CameraConfig, *, tilt_deg: float,
     v_hi = math.radians(tilt_deg + optics.vfov_deg / 2.0)
 
     ppm = np.where(mv.written, optics.ppm_at(np.maximum(mv.sample_slant_m, 1.0)), 0.0)
+    # Boundary ties are half-open exactly as in the engine (see viewshed_3d "Boundary ties").
+    ddx = mv.center_dist_m * np.sin(mv.center_az_rad)
+    ddy = mv.center_dist_m * np.cos(mv.center_az_rad)
     framed = (mv.written & (ppm >= lim.min_detect_ppm)
-              & (mv.sample_elev_rad >= v_lo) & (mv.sample_elev_rad <= v_hi))
+              & vertical_ok(mv.sample_elev_rad, v_lo, v_hi, ddx, ddy))
     visible = framed & mv.los_clear
     zone = zone_codes(visible, framed, ppm, lim.thermal, lim.monitor)
-    in_frame = ((mv.center_dist_m <= eff) & (mv.center_dist_m > 1.0)
-                & (mv.center_elev_rad >= v_lo) & (mv.center_elev_rad <= v_hi))
+    in_range = range_ok(mv.center_dist_m, eff, ddx, ddy)
+    in_frame = in_range & vertical_ok(mv.center_elev_rad, v_lo, v_hi, ddx, ddy)
     if mv.ground_elev_rad is not None:       # the engine's cone frames the ground cell as well as the head
-        in_frame &= (mv.ground_elev_rad >= v_lo) & (mv.ground_elev_rad <= v_hi)
+        in_frame &= vertical_ok(mv.ground_elev_rad, v_lo, v_hi, ddx, ddy)
     visible = visible & in_frame
     zone = np.where(in_frame, zone, 0)
     if lim.monitor:
@@ -281,14 +289,15 @@ def view_layers(mv: MountVisibility, camera: CameraConfig, *, tilt_deg: float,
         # would otherwise admit cells whose centre lies past it).
         eff_def = min(view_limits(camera, focal, mv.max_range_m if max_range_m is None else max_range_m,
                                   visibility_km, weather).effective_max_range_m, mv.max_range_m)
-        beyond = (mv.center_dist_m > eff_def) & (zone >= ZONE_DETECT)
+        beyond = ~range_ok(mv.center_dist_m, eff_def, ddx, ddy) & (zone >= ZONE_DETECT)
         visible = visible & ~beyond
         zone = np.where(beyond, 0, zone)
     return ViewLayers(
         visible=visible, zone=zone, ppm=ppm,
         in_frame=in_frame, center_az_rad=mv.center_az_rad, focal_mm=focal,
         hfov_deg=optics.hfov_deg, vfov_deg=optics.vfov_deg, effective_max_range_m=eff,
-        truncated=lim.effective_max_range_m > mv.max_range_m,
+        truncated=lim.effective_max_range_m > mv.max_range_m, in_range=in_range,
+        center_dist_m=mv.center_dist_m,
     )
 
 
@@ -315,7 +324,8 @@ def view_mask(mv: MountVisibility, camera: CameraConfig, *, pan_deg: float, tilt
                       monitor_floor=monitor_floor)
     pan = math.radians(pan_deg)
     d_az = np.arctan2(np.sin(lay.center_az_rad - pan), np.cos(lay.center_az_rad - pan))
-    in_cone = np.abs(d_az) <= math.radians(lay.hfov_deg / 2.0)
+    counted = lay.in_range if lay.in_range is not None else np.ones(d_az.shape, bool)
+    in_cone = in_horizontal_cone(d_az, mv.center_dist_m, math.radians(lay.hfov_deg / 2.0), counted)
     cone = in_cone & lay.in_frame
     return ViewGrids(
         visibility_mask=embed(mv, lay.visible & in_cone, bool),

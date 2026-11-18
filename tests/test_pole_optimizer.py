@@ -43,7 +43,11 @@ def test_reachable_goal_gets_fewer_poles_than_the_planner():
 
 
 def test_goal_above_the_planner_goes_denser():
-    res = minimize_poles(_flat(), FENCE, CAM, plan_kwargs=KW, goal_frac=0.9, level=ZONE_DETECT, n_focals=5)
+    # 0.87, not 0.9: this fence runs along a grid row, so its cone edges are grid-node ties. The closed
+    # rule counted the edge nodes whole and the search reached 90.3 % at 54 poles; with half-open ties
+    # (viewshed_3d "Boundary ties") the same fence plateaus at ~87 % (27 -> 38 poles: 86.5 -> 87.3 %) and
+    # the "densifying adds < 1 point" stop ends the search there. The behaviour under test is unchanged.
+    res = minimize_poles(_flat(), FENCE, CAM, plan_kwargs=KW, goal_frac=0.87, level=ZONE_DETECT, n_focals=5)
     assert not res.base.meets
     assert res.met and res.best.fixed_poles > res.base.fixed_poles
     # and it is the sparsest of the passing trials, not just any dense one

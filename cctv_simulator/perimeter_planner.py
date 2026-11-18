@@ -21,6 +21,7 @@ from .terrain_loader import TerrainData
 from .models import CameraConfig
 from .calculations import CameraOptics, camera_optics
 from .viewshed_3d import PPM_DETECT, PPM_IDENT, PPM_OBSERVE, PPM_RECOG, identify_ppm, view_limits
+from .viewshed_3d import in_horizontal_cone as _in_horizontal_cone
 
 
 @dataclass
@@ -757,7 +758,9 @@ def compute_coverage_grid(plan: PerimeterPlanResult, camera: CameraConfig,
         dist = np.hypot(dx, dy)
         az = np.degrees(np.arctan2(dx, dy))
         off = np.abs((az - c.pan_deg + 180.0) % 360.0 - 180.0)
-        in_cone = (off <= c.hfov_deg / 2.0) & (dist >= c.dead_zone_m) & (dist <= atm_reach)
+        in_range_w = (dist >= c.dead_zone_m) & (dist <= atm_reach)
+        # grid NODES: boundary ties half-open, as the viewshed engine (viewshed_3d "Boundary ties")
+        in_cone = _in_horizontal_cone(np.radians(off), dist, math.radians(c.hfov_deg / 2.0), in_range_w) & in_range_w
 
         # Vertical framing: the ground cell must sit between the bottom and top
         # rays (tilt +/- vfov/2). Without this the heatmap credits far cells the

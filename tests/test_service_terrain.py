@@ -440,7 +440,7 @@ def test_focal_envelope_contains_every_single_view(hills):
         for lv in (ZONE_DETECT, ZONE_RECOG, ZONE_IDENT):
             for tilt in auto_tilts(cam, focal, 10, lv, 700.0):
                 lay = view_layers(mv, cam, tilt_deg=tilt, focal_mm=focal, max_range_m=700.0)
-                single = np.where(lay.visible & _cone(lay.center_az_rad, pan, lay.hfov_deg), lay.zone, 0)
+                single = np.where(lay.visible & _cone(lay, pan), lay.zone, 0)
                 assert (grid[mv.window] >= single).all()     # envelope >= every single view, cell by cell
                 seen += int((single > 0).sum())
     assert seen > 0

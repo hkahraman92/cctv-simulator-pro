@@ -531,6 +531,84 @@ def view_limits(camera: CameraConfig, focal_mm: float, max_range_m: float,
     return ViewLimits(optics, min_detect_ppm, optical_limit_m, atmospheric_limit_m, effective, is_thermal, monitor)
 
 
+# ── Boundary ties ────────────────────────────────────────────────────────────
+# A cell is classified AT ITS NODE, so a boundary that passes exactly through grid nodes (a 90 deg cone
+# panned to 0 has its edges on the grid diagonals; a range of 100 m on a 10 m grid has axis nodes at
+# exactly 100 m) puts every such node ON the boundary. A closed (<=) test counts them all, which
+# over-counted a diagonal-edged wedge by 14 / 8 / 4.6 % at 10 / 5 / 2.5 m cells. Every boundary test of
+# the node classification is therefore HALF-OPEN: a node strictly inside is in, strictly outside is out
+# (any node farther than the tolerance from the boundary keeps the plain answer), and the nodes ON the
+# boundary are counted for half of them:
+#   * cone edges   -- along each edge the tie nodes are ranked by distance from the lens; the left edge
+#                     (pan - hfov/2) keeps the even ranks, the right edge (pan + hfov/2) the odd ones,
+#                     so exactly half of every edge's nodes are in (a lone tie: the left edge keeps it,
+#                     the right one drops it);
+#   * rings        -- range limit, near limit, vertical frame edges: ties lie on a circle round the lens
+#                     (or scattered on sloping ground), no common line to rank along. The northern
+#                     half-plane keeps them (north, and east on the east-west line -- the rule
+#                     focal_optimizer.band_mask uses for the protected band), the southern half drops
+#                     them: a full disc keeps exactly half of its ring nodes whatever its radius, and a
+#                     view looking south is not penalised more than one looking north by more than the
+#                     ties it actually has.
+# The tolerances only absorb float rounding of an exact tie.
+TIE_ANGLE_RAD = 1e-9
+TIE_M = 1e-6
+
+
+def ring_tie_in(dx, dy):
+    """Which ties on a ring round the lens count as inside: the northern half-plane (dy > 0, or dy == 0
+    and dx > 0), the rule focal_optimizer.band_mask uses for the band edge."""
+    return (dy > TIE_M) | ((np.abs(dy) <= TIE_M) & (dx > 0.0))
+
+
+def le_halfopen(x, bound, tie_in, tol):
+    """x <= bound with the ties (|x - bound| <= tol) kept only where ``tie_in``."""
+    return (x < bound - tol) | ((np.abs(x - bound) <= tol) & tie_in)
+
+
+def ge_halfopen(x, bound, tie_in, tol):
+    """x >= bound with the ties (|x - bound| <= tol) kept only where ``tie_in``."""
+    return (x > bound + tol) | ((np.abs(x - bound) <= tol) & tie_in)
+
+
+def range_ok(dist, max_range_m, dx, dy):
+    """1 m < dist <= range, both limits half-open (ring ties, see above)."""
+    tie_in = ring_tie_in(dx, dy)
+    return le_halfopen(dist, max_range_m, tie_in, TIE_M) & ge_halfopen(dist, 1.0, tie_in, TIE_M)
+
+
+def vertical_ok(elev_rad, v_lo, v_hi, dx, dy):
+    """v_lo <= elev <= v_hi, both frame edges half-open (ring ties, see above)."""
+    tie_in = ring_tie_in(dx, dy)
+    return ge_halfopen(elev_rad, v_lo, tie_in, TIE_ANGLE_RAD) & le_halfopen(elev_rad, v_hi, tie_in, TIE_ANGLE_RAD)
+
+
+def _alternate_by_distance(tie, dist, keep_even):
+    """Of the nodes flagged in ``tie`` keep every other one in order of distance (rank parity)."""
+    keep = np.zeros(tie.shape, bool)
+    idx = np.flatnonzero(tie.ravel())
+    if idx.size:
+        order = np.argsort(dist.ravel()[idx], kind="stable")
+        rank = np.empty(idx.size, np.intp)
+        rank[order] = np.arange(idx.size)
+        keep.ravel()[idx] = (rank % 2 == 0) == keep_even
+    return keep
+
+
+def in_horizontal_cone(angle_diff_rad, dist, half_hfov_rad, counted):
+    """Half-open horizontal cone: |diff| < half strictly in, the edge nodes alternate (see above).
+    ``counted`` flags the nodes that can be in the view at all (range / near limits): only those are
+    ranked, so a window that holds more or fewer nodes cannot change which tie is kept. No edges for a
+    full 360 deg view."""
+    if half_hfov_rad >= math.pi - TIE_ANGLE_RAD:
+        return np.ones(np.shape(angle_diff_rad), bool)
+    inside = np.abs(angle_diff_rad) < half_hfov_rad - TIE_ANGLE_RAD
+    left = counted & (np.abs(angle_diff_rad + half_hfov_rad) <= TIE_ANGLE_RAD)
+    right = counted & (np.abs(angle_diff_rad - half_hfov_rad) <= TIE_ANGLE_RAD)
+    return inside | _alternate_by_distance(left, dist, True) | _alternate_by_distance(right, dist, False)
+
+
+
 def zone_codes(visible, framed, ppm, thermal: bool = False, monitor: bool = False):
     """ZONE_* per sample/cell from visibility, framing and px/m -- the one
     DORI classification both the engine and the mount view masks use.
@@ -802,7 +880,8 @@ def _viewshed_core(terrain: TerrainData,
     angle_diff_rad = np.arctan2(np.sin(cell_azimuth_rad - pan_rad),
                                 np.cos(cell_azimuth_rad - pan_rad))
 
-    in_cone_w = (np.abs(angle_diff_rad) <= half_hfov_rad) & (ground_dist <= effective_max_range) & (ground_dist > 1.0)
+    in_range_w = range_ok(ground_dist, effective_max_range, dx, dy)
+    in_cone_w = in_horizontal_cone(angle_diff_rad, ground_dist, half_hfov_rad, in_range_w) & in_range_w
 
     # 4. Initialize Output Grids
     vis_mask = np.zeros((rows, cols), dtype=bool)
@@ -829,7 +908,7 @@ def _viewshed_core(terrain: TerrainData,
     if earth_curvature:
         cell_dz -= (ground_dist ** 2) / (2.0 * R_EARTH) * (1.0 - K_REFRACT)
     cell_elev_angle = np.arctan2(cell_dz, np.maximum(ground_dist, 0.1))
-    in_fov_w = in_cone_w & (cell_elev_angle >= v_lo) & (cell_elev_angle <= v_hi)
+    in_fov_w = in_cone_w & vertical_ok(cell_elev_angle, v_lo, v_hi, dx, dy)
 
     node_slant = np.hypot(ground_dist, cell_dz)
     node_ppm = optics.ppm_at(np.maximum(node_slant, 1.0))
@@ -837,7 +916,7 @@ def _viewshed_core(terrain: TerrainData,
         node_tan = cell_dz / ground_dist
         head_tan = node_tan + target_h / ground_dist if target_h > 0 else node_tan
     head_elev = np.arctan(head_tan)
-    framed_w = in_fov_w & (node_ppm >= min_detect_ppm) & (head_elev >= v_lo) & (head_elev <= v_hi)
+    framed_w = in_fov_w & (node_ppm >= min_detect_ppm) & vertical_ok(head_elev, v_lo, v_hi, dx, dy)
 
     visible_w = np.zeros(framed_w.shape, bool)
     fr_, fc_ = np.nonzero(framed_w)

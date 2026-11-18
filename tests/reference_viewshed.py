@@ -35,6 +35,9 @@ from typing import Dict, List, Optional, Sequence
 import numpy as np
 
 from cctv_simulator.viewshed_3d import (
+    in_horizontal_cone,
+    range_ok,
+    vertical_ok,
     PPM_DETECT,
     PPM_IDENT,
     PPM_OBSERVE,
@@ -185,9 +188,13 @@ def _single_pass(terrain, cam_x, cam_y, cam_z, camera, lens_mode, pan_deg, tilt_
     gd = np.hypot(dx, dy)
     az = np.arctan2(dx, dy)
     diff = np.arctan2(np.sin(az - pan), np.cos(az - pan))
-    cone = (np.abs(diff) <= half_h) & (gd <= lim.effective_max_range_m) & (gd > 1.0)
+    # The cone rule is a shared DEFINITION, not occlusion geometry: boundary ties (nodes exactly on a
+    # cone edge / the range ring / a frame edge) are half-open, the same rule as the engine
+    # (viewshed_3d "Boundary ties"); every non-tie node keeps the plain inclusive test.
+    in_range = range_ok(gd, lim.effective_max_range_m, dx, dy)
+    cone = in_horizontal_cone(diff, gd, half_h, in_range) & in_range
     dz = zt - cam_z - _curv(gd, earth_curvature)
-    cone &= (np.arctan2(dz, np.maximum(gd, 0.1)) >= v_lo) & (np.arctan2(dz, np.maximum(gd, 0.1)) <= v_hi)
+    cone &= vertical_ok(np.arctan2(dz, np.maximum(gd, 0.1)), v_lo, v_hi, dx, dy)
 
     dori = np.zeros((rows, cols), np.int32)
     vis = np.zeros((rows, cols), bool)
@@ -201,7 +208,7 @@ def _single_pass(terrain, cam_x, cam_y, cam_z, camera, lens_mode, pan_deg, tilt_
     with np.errstate(divide="ignore", invalid="ignore"):
         head_tan = dz / gd + (target_h / gd if target_h > 0 else 0.0)
     elev = np.arctan(head_tan)
-    framed = cone & (ppm >= lim.min_detect_ppm) & (elev >= v_lo) & (elev <= v_hi)
+    framed = cone & (ppm >= lim.min_detect_ppm) & vertical_ok(elev, v_lo, v_hi, dx, dy)
     fr_, fc_ = np.nonzero(framed)
     visible = np.zeros((rows, cols), bool)
     if fr_.size:
