@@ -6,7 +6,7 @@ import type { useJob } from "../core/useJob";
 import type { Layer } from "./PtzPanels";
 import { confirmDialog } from "./dialogs";
 import { t } from "../core/i18n";
-import { DEFAULT_NIGHT, localNow, nightCommon, type NightSettings } from "../pages/analysisSettings";
+import { DEFAULT_NIGHT, localNow, nightCommon, nightRunBody, type NightSettings } from "../pages/analysisSettings";
 import type { FullRun } from "../pages/fullAnalysis";
 import { Button, Panel, fmt } from "./ui";
 
@@ -52,7 +52,7 @@ export function NightPanel({ T, job, terrainId, useObstacles, camera, hasLatLon,
     setRes(r); setTl(null); setUsed(null); onResult(r);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [full?.nonce]);
-  const run = () => void job.run(t("Gece kapsaması"), (o) => T.nightCoverage({ terrain_id: terrainId, use_obstacles: useObstacles, datetime: when, max_px: 1200, ...common, ...band }, o))
+  const run = () => void job.run(t("Gece kapsaması"), (o) => T.nightCoverage({ terrain_id: terrainId, use_obstacles: useObstacles, ...nightRunBody(s, camera, hasLatLon, when), ...band }, o))
     .then((r) => {
       if (!r) return;
       // remember the position this run was sent with: a terrain without a location uses the typed (assumed) one

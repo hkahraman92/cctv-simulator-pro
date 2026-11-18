@@ -8,7 +8,7 @@ import { DEFAULT_CAMERA, type CameraConfig, type ModelSummary } from "../core/ap
 import { useCoalesced, useCore } from "../core/CoreProvider";
 import { usePageActive } from "../core/pageActive";
 import type {
-  AreaPlanResult, CityInfo, CoverageLayer, CoverageResult, FocalEnvelope, FocalSweep, TerrainLevel, OptimizeResult, PlaybackPtz, LegendRow, NightCoverage, PlanResult, PoleSearch, RegionInfo, Scenario,
+  AreaPlanResult, AssistedPlan, CityInfo, CoverageLayer, CoverageResult, FocalEnvelope, FocalSweep, TerrainLevel, OptimizeResult, PlaybackPtz, LegendRow, NightCoverage, PlanResult, PoleSearch, RegionInfo, Scenario,
   SingleViewshed, TerrainCatalog, TerrainInfo,
 } from "../core/terrainApi";
 import { useJob } from "../core/useJob";
@@ -146,8 +146,10 @@ export default function Terrain() {
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   // A new plan drops what was computed from the old one (the core does the same: set_plan).
   const [planVer, setPlanVer] = useState(0);       // remounts panels that hold results of the old plan
+  const [assistRes, setAssistRes] = useState<AssistedPlan | null>(null);   // lives here: the panel unmounts with its tab
   const replacePlan = useCallback((p: PlanResult | null) => {
     setPlanVer((v) => v + 1);
+    setAssistRes(null);
     setFullRun(null);
     setPlanRes(p); setCoverage(null); setNetwork(null); setNight(null); setMixedLayer(null); setApproachMarks(null); setPlay(null);
     setOptRes(null); setPoleRes(null);
@@ -1070,7 +1072,7 @@ export default function Terrain() {
               )}
               {!isArea && fence.length >= 2 && (
                 <AssistPanel T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} models={models} camera={camera}
-                  planArgs={planParams()} goal={goal} resetKey={planVer}
+                  planArgs={planParams()} goal={goal} result={assistRes} onResult={setAssistRes}
                   levels={levelsFor(isThermal).filter(([k]) => k !== "monitor" && k !== "detect")}
                   defaultLevel={reqLevel === "identify" && isThermal ? "recognize" : reqLevel === "monitor" || reqLevel === "detect" ? "recognize" : reqLevel}
                   ptzModelFor={async (n) => (await api.cameraFor(n, undefined, true)).camera} onPlan={replacePlan}

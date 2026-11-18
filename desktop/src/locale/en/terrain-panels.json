@@ -275,6 +275,7 @@
   "etiketli": "tagged",
   "İndirilen yükseltinin metrelerce hatası, çoğu bina yüksekliğinin varsayım olması kapsamayı oynatır. Veri her koşuda hata ile bozulup motor yeniden çalışır; hep tutan yer kesin, bazılarında tutan veriye bağlıdır.": "A downloaded DEM is metres off and most building heights are a guess, which moves the coverage. In every run the data is perturbed by an error and the engine is re-run; a place that always holds is certain, one that holds in some runs depends on the data.",
   "Koşu sayısı": "Number of runs",
+  "Koşu sayısı ({lo}–{hi})": "Number of runs ({lo}–{hi})",
   "DEM σ (m)": "DEM σ (m)",
   "Korelasyon (m)": "Correlation (m)",
   "Boş alan = varsayılan: {basis}. Bunlar varsayımdır, ölçülmüş değer değil; verinizin doğruluğunu biliyorsanız girin.": "Empty = default: {basis}. These are assumptions, not measured values; enter your data's accuracy if you know it.",

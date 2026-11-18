@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { SPEEDS } from "../components/ApproachPanel";
-import { buildFullParams, defaultInclude, stepLines, STEP_MARK, STEP_ORDER, type FullInputs } from "./fullAnalysis";
+import { buildFullParams, defaultInclude, partialToShow, stepLines, STEP_MARK, STEP_ORDER, type FullInputs } from "./fullAnalysis";
 import {
   DEFAULT_APPROACH, DEFAULT_NETWORK, DEFAULT_NIGHT, EMPTY_ANALYSIS, THREAT_KEYS, approachRequest, buildAnalysisSettings, buildAnpr, isLocalDateTime,
-  networkRequest, nightCommon, readAnalysisSettings, readAnpr, readNight, readPresets, type AnalysisSettings,
+  networkRequest, nightCommon, nightRunBody, readAnalysisSettings, readAnpr, readNight, readPresets, type AnalysisSettings,
 } from "./analysisSettings";
-import { SENSITIVITY_DEFAULTS, buildTerrainExtra, readTerrainExtra } from "./terrainPersist";
+import { SENSITIVITY_DEFAULTS, clampRuns, buildTerrainExtra, readTerrainExtra } from "./terrainPersist";
 import { mergeExtras } from "../components/ProjectBar";
 import { DEFAULT_CAMERA } from "../core/api";
 
@@ -130,10 +130,45 @@ describe("Tam analiz request + step list", () => {
 
   it("step order equals the core's and the marks are the project's allowed symbols (no emoji)", () => {
     expect([...STEP_ORDER]).toEqual(["coverage", "mixed", "night", "approach", "network", "sensitivity", "statement", "acceptance", "engineering", "package"]);
-    expect(STEP_MARK).toEqual({ ok: "●", skipped: "–", failed: "■" });
+    expect(STEP_MARK).toEqual({ ok: "●", skipped: "–", failed: "■", cancelled: "▲", not_run: "–" });
     const row = { id: "coverage", title: "x", status: "ok" as const, elapsed_s: 1, files: [], numbers: { target_label: "40 px/m", target_held: 0.912, fence_line_held: 0.97, band_share: { detect: 0.99, recognize: 0.5 } } };
     expect(stepLines(row).join("|")).toContain("91,2");
     expect(stepLines({ ...row, id: "approach", numbers: { breach: true } })[0]).toContain("İhlal");
     expect(stepLines({ ...row, id: "package", numbers: {} })).toEqual([]);
+  });
+});
+
+describe("one night request, one network line, one run count", () => {
+  const camera = { ...DEFAULT_CAMERA, ir_range_m: 200, min_lux: 0.02 };
+  const inputs = (night: AnalysisSettings["night"]): FullInputs => ({
+    terrainId: "t1", useObstacles: true, targetH: 1.8, band: {}, camera, hasLatLon: true, goal: 90, projectName: "P",
+    covLayer: "target", covLevel: "plan", patrol: { speed: 20, dwell: 2 }, ptzReach: false, settings: { ...EMPTY_ANALYSIS, night },
+    sens: { nRuns: 60, sigma: null, corr: null }, prices: {}, include: { mixed: false, night: true, approach: false, network: true, sensitivity: true },
+    outDir: "", speeds: SPEEDS,
+  });
+  const when = "2026-01-11T23:00";
+
+  it("the panel's night body equals the full run's night step for null / explicit IR and min lux", () => {
+    for (const ir of [null, 80]) for (const minLux of [null, 0.5]) {
+      const n = { ...DEFAULT_NIGHT, when, ir, minLux };
+      const step = (buildFullParams(inputs(n)).steps as Record<string, unknown>).night;
+      expect(step).toEqual(nightRunBody(n, camera, true, when));
+      expect((step as { camera: { ir_range_m: number; min_lux: number } }).camera).toMatchObject({ ir_range_m: ir ?? 200, min_lux: minLux ?? 0.02 });
+    }
+  });
+  it("a priced-nothing network step says so instead of 0", () => {
+    const row = { id: "network", title: "x", status: "ok" as const, elapsed_s: 0, files: [], numbers: { switches: 6, cost_total: 0, currency: "TL", unpriced: 5 } };
+    expect(stepLines(row)[0]).toContain("birim fiyatı girilmedi");
+    expect(stepLines(row)[0]).not.toContain("0 TL");
+  });
+  it("the run count is clamped to the core's 4..32 in the request", () => {
+    expect(clampRuns(60)).toBe(32); expect(clampRuns(1)).toBe(4); expect(clampRuns("x", 12)).toBe(12);
+    expect((buildFullParams(inputs(null)).steps as { sensitivity: { n_runs: number } }).sensitivity.n_runs).toBe(32);
+  });
+  it("only an unfinished stored run replaces the list", () => {
+    const run = { steps: [], written: [], out_dir: null, measured: true, refine_factor: 1, target_height_m: 0, total_s: 0, results: {}, counts: { ok: 0, skipped: 0, failed: 0 } };
+    expect(partialToShow({ ...run, state: "cancelled" })).not.toBeNull();
+    expect(partialToShow({ ...run, state: "done" })).toBeNull();
+    expect(partialToShow(null)).toBeNull();
   });
 });

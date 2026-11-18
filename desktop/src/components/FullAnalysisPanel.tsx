@@ -8,7 +8,7 @@ import type { useJob } from "../core/useJob";
 import { t } from "../core/i18n";
 import type { FullSettings, FullStep } from "../pages/analysisSettings";
 import {
-  OPTIONAL_STEPS, STEP_MARK, buildFullParams, stepLines, stepTitle, type FullAnalysisResult, type FullInputs, type FullStepRow,
+  OPTIONAL_STEPS, STEP_MARK, buildFullParams, partialToShow, stepLines, stepTitle, type FullAnalysisResult, type FullInputs, type FullStepRow,
 } from "../pages/fullAnalysis";
 import { Button, Panel, fmt } from "./ui";
 
@@ -19,7 +19,7 @@ const optionLabel = (k: FullStep): string => ({
   sensitivity: t("Veri hassasiyeti"),
 } as Record<FullStep, string>)[k];
 
-const statusText = (r: FullStepRow): string => (r.status === "ok" ? t("tamam") : r.status === "skipped" ? t("atlandı") : t("başarısız"));
+const statusText = (r: FullStepRow): string => ({ ok: t("tamam"), skipped: t("atlandı"), failed: t("başarısız"), cancelled: t("iptal edildi"), not_run: t("çalışmadı") })[r.status];
 
 /**
  * "Tam analiz": one run of every analysis of the plan with the settings the panels hold, plus (with an output folder) the
@@ -46,7 +46,13 @@ export function FullAnalysisPanel({ T, job, base, settings, onSettings, defaults
     if (typeof d === "string") onSettings({ include: settings?.include ?? {}, outDir: d });
   };
   const run = () => void job.run(t("Tam analiz"), (o) => T.fullAnalysis(buildFullParams({ ...base, include: defaults, outDir }), o))
-    .then((r) => { if (r) { setRes(r); setMsg(""); onDone(r); } });
+    .then(async (r) => {
+      if (r) { setRes(r); setMsg(""); onDone(r); return; }
+      // cancelled (or the call itself failed): the steps that finished already wrote their results in the core; show that partial run
+      // (not the previous complete one) and let the panels take those results
+      const part = partialToShow(await T.fullPartial(base.terrainId).catch(() => null));
+      if (part) { setRes(part); setMsg(""); onDone(part); }
+    });
   const openFile = (p: string) => report.open(p).catch((e) => setMsg(String(e.message ?? e)));
   const p = job.running && job.label === t("Tam analiz") ? job.progress : undefined;
 
@@ -66,7 +72,7 @@ export function FullAnalysisPanel({ T, job, base, settings, onSettings, defaults
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2">
         <Button disabled={!isTauri()} onClick={pickDir}><FolderOpen size={14} /> {t("Klasör Seç")}</Button>
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-text-2" title={outDir}>{outDir || t("klasör seçilmedi (yalnız hesaplanır, dosya yazılmaz)")}</span>
+        <span className={`min-w-0 flex-1 font-mono text-[11px] text-text-2 ${outDir ? "truncate" : "basis-40 break-words"}`} title={outDir}>{outDir || t("klasör seçilmedi (yalnız hesaplanır, dosya yazılmaz)")}</span>
         {outDir && <button type="button" aria-label={t("Klasörü temizle")} title={t("Klasörü temizle")} onClick={() => onSettings({ include: settings?.include ?? {}, outDir: "" })}><X size={14} /></button>}
       </div>
       <Button primary className="mt-2 w-full" disabled={job.running} onClick={run}><Play size={14} /> {t("Tam Analizi Çalıştır")}</Button>
@@ -77,17 +83,20 @@ export function FullAnalysisPanel({ T, job, base, settings, onSettings, defaults
           <div className="flex flex-wrap gap-x-3 font-mono text-[11px] text-text-2">
             <span>● {t("{n} tamam", { n: res.counts.ok })}</span><span>– {t("{n} atlandı", { n: res.counts.skipped })}</span>
             <span className={res.counts.failed ? "text-danger" : ""}>■ {t("{n} başarısız", { n: res.counts.failed })}</span>
+            {!!res.counts.cancelled && <span className="text-warn">▲ {t("iptal edildi")}</span>}
+            {!!res.counts.not_run && <span>– {t("{n} çalışmadı", { n: res.counts.not_run })}</span>}
             <span>{t("{s} sn", { s: fmt(res.total_s, 1) })}</span>
           </div>
           <ul className="mt-1 flex flex-col gap-1">
             {res.steps.map((r) => (
               <li key={r.id} className="rounded bg-bg-3 px-2 py-1">
                 <div className="flex items-baseline gap-2">
-                  <span className={`font-mono ${r.status === "ok" ? "text-primary" : r.status === "failed" ? "text-danger" : "text-text-3"}`}>{STEP_MARK[r.status]}</span>
+                  <span className={`font-mono ${r.status === "ok" ? "text-primary" : r.status === "failed" ? "text-danger" : r.status === "cancelled" ? "text-warn" : "text-text-3"}`}>{STEP_MARK[r.status]}</span>
                   <span className="font-semibold">{stepTitle(r.id, r.title)}</span>
                   <span className="text-text-3">{statusText(r)}</span>
                   {r.status === "ok" && <span className="ml-auto font-mono text-[11px] text-text-3">{t("{s} sn", { s: fmt(r.elapsed_s, 1) })}</span>}
                 </div>
+                {r.status === "cancelled" && <div className="ml-5 text-[11px] text-warn">{t("Çalışırken iptal edildi; bu adımın sonucu yok.")}</div>}
                 {r.status === "skipped" && <div className="ml-5 text-[11px] text-text-3">{r.reason}{r.kept_previous ? ` — ${t("önceki sonuç korunuyor")}` : ""}</div>}
                 {r.status === "failed" && <div className="ml-5 text-[11px] text-danger">{r.error}</div>}
                 {r.status === "ok" && stepLines(r).map((l) => <div key={l} className="ml-5 font-mono text-[11px] text-text-2">{l}</div>)}

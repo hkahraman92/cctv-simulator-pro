@@ -188,6 +188,10 @@ export function nightCommon<C extends { ir_range_m: number; min_lux: number }>(s
   const cam = { ...camera, ir_range_m: s.ir ?? camera.ir_range_m, min_lux: s.minLux ?? camera.min_lux };
   return { cloud_cover: s.cloud / 100, sky_glow_lux: s.glow, ir_on: s.irOn, white_light_range_m: s.white, camera: cam, ...(hasLatLon ? {} : { lat: s.lat, lon: s.lon }) };
 }
+/** The `night.coverage` body (without terrain / band) -- the ONE builder the Night panel and the full run both use, so a stored
+ *  null IR range / min lux resolves to the same camera value in both. `when` is the local "YYYY-MM-DDTHH:MM". */
+export const nightRunBody = <C extends { ir_range_m: number; min_lux: number }>(s: NightSettings, camera: C, hasLatLon: boolean, when: string) =>
+  ({ datetime: when, max_px: 1200, ...nightCommon(s, camera, hasLatLon) });
 /** The approach analysis request body (without terrain): `speeds` are the UI's intruder speeds (m/s). */
 export const approachRequest = (s: ApproachSettings, speeds: Record<string, number>) => ({ depth_m: s.depth, response_s: s.response, speeds, max_px: 1200 });
 /** The network request body (without terrain / prices). */

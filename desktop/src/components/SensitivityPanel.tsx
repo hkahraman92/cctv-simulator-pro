@@ -6,7 +6,7 @@ import type { FullRun } from "../pages/fullAnalysis";
 import type { Layer } from "./PtzPanels";
 import { t, tn } from "../core/i18n";
 import { levelsFor } from "../core/terrainLevels";
-import { SENSITIVITY_LIMITS, type SensitivitySettings } from "../pages/terrainPersist";
+import { SENSITIVITY_LIMITS, clampRuns, type SensitivitySettings } from "../pages/terrainPersist";
 import { Button, Panel, fmt } from "./ui";
 
 type Job = ReturnType<typeof useJob>;
@@ -61,7 +61,7 @@ export function SensitivityPanel({ T, job, info, useObstacles, level, band, ther
   const [runsLo, runsHi] = SENSITIVITY_LIMITS.runs;
 
   const run = () => void job.run(t("Veri hassasiyeti hesaplanıyor"), (o) => T.sensitivity({
-    terrain_id: info.terrain_id, use_obstacles: useObstacles, level, ...band, max_px: 1200, n_runs: value.nRuns,
+    terrain_id: info.terrain_id, use_obstacles: useObstacles, level, ...band, max_px: 1200, n_runs: clampRuns(value.nRuns),
     dem_sigma_m: value.sigma, dem_corr_m: value.corr }, o)).then((r) => {
     if (!r) return;
     setRes(r);
@@ -77,9 +77,9 @@ export function SensitivityPanel({ T, job, info, useObstacles, level, band, ther
     <Panel title={t("Veri hassasiyeti")} icon={<ShieldQuestion size={16} className="text-secondary" />}>
       <p className="text-[11px] text-text-3">{t("İndirilen yükseltinin metrelerce hatası, çoğu bina yüksekliğinin varsayım olması kapsamayı oynatır. Veri her koşuda hata ile bozulup motor yeniden çalışır; hep tutan yer kesin, bazılarında tutan veriye bağlıdır.")}</p>
       <div className="mt-2 grid grid-cols-3 gap-1.5">
-        <label className="flex flex-col gap-0.5 text-[12px] text-text-3">{t("Koşu sayısı")}
+        <label className="flex flex-col gap-0.5 text-[12px] text-text-3">{t("Koşu sayısı ({lo}–{hi})", { lo: runsLo, hi: runsHi })}
           <input type="number" min={runsLo} max={runsHi} step={1} value={value.nRuns} aria-label={t("Koşu sayısı")}
-            onChange={(e) => onChange({ ...value, nRuns: Math.min(runsHi, Math.max(runsLo, Math.round(Number(e.target.value)) || value.nRuns)) })}
+            onChange={(e) => onChange({ ...value, nRuns: clampRuns(e.target.value, value.nRuns) })}
             className="h-8 w-full rounded border border-line bg-bg-0 px-2 font-mono text-text" />
         </label>
         <OptNumber label={t("DEM σ (m)")} value={value.sigma} placeholder={d ? fmt(d.dem_sigma_m, 1) : ""} min={0} max={100}

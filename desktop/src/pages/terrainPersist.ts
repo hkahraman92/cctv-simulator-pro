@@ -60,6 +60,11 @@ export interface ExtraState {
 export interface SensitivitySettings { nRuns: number; sigma: number | null; corr: number | null }
 export const SENSITIVITY_DEFAULTS: SensitivitySettings = { nRuns: 12, sigma: null, corr: null };
 export const SENSITIVITY_LIMITS = { runs: [4, 32], sigma: [0, 100], corr: [1, 5000] } as const;
+/** The run count the core will actually use (it clamps silently): an integer within the limits, `fallback` for junk. */
+export const clampRuns = (v: unknown, fallback: number = SENSITIVITY_DEFAULTS.nRuns): number => {
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) ? Math.min(SENSITIVITY_LIMITS.runs[1], Math.max(SENSITIVITY_LIMITS.runs[0], n)) : fallback;
+};
 
 export function buildTerrainExtra(s: ExtraState): Record<string, unknown> {
   return {

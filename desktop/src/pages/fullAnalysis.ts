@@ -7,11 +7,11 @@ import type { CameraConfig } from "../core/api";
 import { t } from "../core/i18n";
 import type { CoverageLayer, TerrainLevel } from "../core/terrainApi";
 import {
-  DEFAULT_APPROACH, DEFAULT_ASSIST, DEFAULT_NETWORK, DEFAULT_NIGHT, approachRequest, localNow, networkRequest, nightCommon,
+  DEFAULT_APPROACH, DEFAULT_ASSIST, DEFAULT_NETWORK, DEFAULT_NIGHT, approachRequest, localNow, networkRequest, nightRunBody,
   type AnalysisSettings, type FullStep,
 } from "./analysisSettings";
 import type { SensitivitySettings } from "./terrainPersist";
-import { SENSITIVITY_DEFAULTS } from "./terrainPersist";
+import { SENSITIVITY_DEFAULTS, clampRuns } from "./terrainPersist";
 
 /** The steps in the order the core runs them (kept equal to `full_methods.STEP_ORDER`). */
 export const STEP_ORDER = ["coverage", "mixed", "night", "approach", "network", "sensitivity", "statement", "acceptance", "engineering", "package"] as const;
@@ -19,12 +19,14 @@ export type StepId = (typeof STEP_ORDER)[number];
 export const OPTIONAL_STEPS: readonly FullStep[] = ["mixed", "night", "approach", "network", "sensitivity"];
 
 export interface FullStepRow {
-  id: string; title: string; status: "ok" | "skipped" | "failed"; reason?: string; error?: string; elapsed_s: number;
+  id: string; title: string; status: "ok" | "skipped" | "failed" | "cancelled" | "not_run"; reason?: string; error?: string; elapsed_s: number;
   numbers: Record<string, unknown>; files: string[]; kept_previous?: boolean;
 }
 export interface FullAnalysisResult {
   steps: FullStepRow[]; written: string[]; out_dir: string | null; measured: boolean; refine_factor: number; target_height_m: number;
-  total_s: number; counts: { ok: number; skipped: number; failed: number };
+  total_s: number; counts: { ok: number; skipped: number; failed: number; cancelled?: number; not_run?: number };
+  /** only on a stored (partial) run: "running" | "cancelled" | "done", and the step a cancel stopped */
+  state?: string; stopped_at?: string | null;
   /** each ok step's own method result (what the panel would hold), keyed by step id */
   results: Record<string, unknown>;
   summary_path?: string; summary_error?: string;
@@ -63,17 +65,20 @@ export function buildFullParams(i: FullInputs): Record<string, unknown> {
     steps: {
       coverage: { layer: i.covLayer, level: i.covLevel, max_px: 1200, ptz_speed_deg_s: i.patrol.speed, ptz_end_dwell_s: i.patrol.dwell, ptz_reach: i.ptzReach },
       mixed: i.include.mixed ? { speed_deg_s: i.patrol.speed, end_dwell_s: i.patrol.dwell, layer: i.settings.mixedPanel?.layer ?? "fused", max_px: 1200 } : false,
-      night: i.include.night ? { datetime: night.when ?? localNow(), max_px: 1200, ...nightCommon(night, i.camera, i.hasLatLon) } : false,
+      night: i.include.night ? nightRunBody(night, i.camera, i.hasLatLon, night.when ?? localNow()) : false,
       approach: i.include.approach ? approachRequest(approach, i.speeds) : false,
       network: i.include.network ? { ...networkRequest(network), prices: i.prices } : false,
-      sensitivity: i.include.sensitivity ? { n_runs: i.sens.nRuns, dem_sigma_m: i.sens.sigma, dem_corr_m: i.sens.corr, max_px: 1200 } : false,
+      sensitivity: i.include.sensitivity ? { n_runs: clampRuns(i.sens.nRuns), dem_sigma_m: i.sens.sigma, dem_corr_m: i.sens.corr, max_px: 1200 } : false,
       statement: { goal_frac: i.goal / 100, assist_max_s: assist.maxS },
     },
   };
 }
 
 /** Status marks use the project's allowed symbols (no emoji): ● done, – skipped, ■ failed. */
-export const STEP_MARK: Record<FullStepRow["status"], string> = { ok: "●", skipped: "–", failed: "■" };
+export const STEP_MARK: Record<FullStepRow["status"], string> = { ok: "●", skipped: "–", failed: "■", cancelled: "▲", not_run: "–" };
+
+/** The stored run to show after a call that returned nothing (cancel, or a failure of the call itself): never the previous complete run. */
+export const partialToShow = (r: FullAnalysisResult | null): FullAnalysisResult | null => (r && r.state && r.state !== "done" ? r : null);
 
 const pct = (v: unknown, nd = 1): string => (typeof v === "number" && Number.isFinite(v) ? t("%{n}", { n: (v * 100).toFixed(nd).replace(".", ",") }) : "—");
 const n1 = (v: unknown, nd = 1): string => (typeof v === "number" && Number.isFinite(v) ? v.toFixed(nd).replace(".", ",") : "—");
@@ -103,7 +108,12 @@ export function stepLines(r: FullStepRow): string[] {
       return [t("Gece bant payı: algılama {d} · tanıma {r}", { d: pct(ns.detect), r: pct(ns.recognize) })];
     }
     case "approach": return [n.breach ? t("İhlal var: hedefe görünmeden ulaşılıyor") : t("Uyarı mesafesi {m} m", { m: n1(o.warning_m, 0) })];
-    case "network": return [t("{n} switch · maliyet {c} {cur}", { n: String(n.switches ?? "—"), c: n1(o.cost_total, 0), cur: String(n.currency ?? "") })];
+    case "network": {
+      const unpriced = typeof o.unpriced === "number" ? o.unpriced : 0;
+      return [unpriced > 0
+        ? t("{n} switch · maliyet: {u} kalemin birim fiyatı girilmedi (toplam verilmez)", { n: String(n.switches ?? "—"), u: unpriced })
+        : t("{n} switch · maliyet {c} {cur}", { n: String(n.switches ?? "—"), c: n1(o.cost_total, 0), cur: String(n.currency ?? "") })];
+    }
     case "sensitivity": return [t("Kesin {c} · belirsiz {u} · hiç {z}", { c: pct(n.certain), u: pct(n.uncertain), z: pct(n.never) })];
     case "statement": return [t("Beyan: {v}", { v: String(n.verdict ?? "—") })];
     case "acceptance": return [t("{p} kontrol noktası · hedef noktası olmayan kamera: {c}", { p: String(n.points ?? "—"), c: String(n.cameras_without_target_point ?? "—") })];

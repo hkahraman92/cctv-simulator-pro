@@ -151,6 +151,32 @@ def test_cancel_stops_between_steps_and_keeps_finished_results():
     assert "sensitivity" not in e.results              # cancelled inside the sensitivity runs
 
 
+def test_a_cancelled_run_leaves_a_partial_report_the_ui_can_read():
+    tid = make(ptz=False)
+    assert ok("analysis.full_partial", terrain_id=tid)["run"] is None
+    token = CancelToken()
+
+    def notify(_m, p):
+        if "Veri hassasiyeti" in p.get("message", ""):
+            token.cancel()
+
+    with pytest.raises(Cancelled):
+        analysis_full({"terrain_id": tid, "steps": {"coverage": {"max_px": 300}, "sensitivity": {"n_runs": 4}}},
+                      Context(1, token, notify))
+    run = ok("analysis.full_partial", terrain_id=tid)["run"]
+    st = by_id(run)
+    assert [s["id"] for s in run["steps"]] == list(STEP_ORDER)
+    assert st["coverage"]["status"] == "ok" and "coverage" in run["results"] and "network" in run["results"]
+    assert st["sensitivity"]["status"] == "cancelled" and st["statement"]["status"] == "not_run"
+    assert run["state"] == "cancelled" and run["stopped_at"] == "sensitivity"
+    assert run["counts"]["cancelled"] == 1 and run["counts"]["not_run"] == 4
+    # a new full run replaces it; a new plan drops it
+    ok("analysis.full", terrain_id=tid, steps={"coverage": {"max_px": 300}})
+    assert ok("analysis.full_partial", terrain_id=tid)["run"]["state"] == "done"
+    ok("perimeter.plan", terrain_id=tid, camera=CAM, fence=FENCE, target_ppm=40, mast_m=6)
+    assert ok("analysis.full_partial", terrain_id=tid)["run"] is None
+
+
 def test_an_old_project_without_the_new_settings_runs():
     """No ``steps`` at all: coverage + network + statement + acceptance run, the optional panels are skipped."""
     tid = make(ptz=False)

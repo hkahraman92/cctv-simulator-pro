@@ -239,35 +239,48 @@ def analysis_full(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         "sensitivity": s_sensitivity, "statement": s_statement, "acceptance": s_acceptance,
         "engineering": s_engineering, "package": s_package}
 
+    # the run as it stands, kept in the session after every step: a cancelled / failed call returns nothing, and
+    # the UI reads this (`analysis.full_partial`) to show the steps that did finish
+    live: Dict[str, Any] = {"steps": report, "results": results, "written": written, "state": "running", "stopped_at": None}
+    entry.results["full_run"] = live
+
     for i, step in enumerate(STEP_ORDER):
-        ctx.token.check()
         title = STEP_TITLES[step]
         row: Dict[str, Any] = {"id": step, "title": title, "status": "ok", "elapsed_s": 0.0, "numbers": {}, "files": []}
-        report.append(row)
-        ctx.progress(i, total, title)
-        if cfg[step] is None:
-            row.update(status="skipped", reason=_OPTIONAL_REASON.get(step) or f"{title.lower()} seçilmedi")
-            if _stale(entry, step):
-                row["kept_previous"] = True
-            continue
-        t0 = time.perf_counter()
         try:
-            payload, files = runners[step](_sub_ctx(ctx, i, total, title))
-            row["numbers"] = _numbers(step, payload)
-            row["files"] = files
-            written.extend(files)
-            results[step] = payload
+            ctx.token.check()
+            report.append(row)
+            ctx.progress(i, total, title)
+            if cfg[step] is None:
+                row.update(status="skipped", reason=_OPTIONAL_REASON.get(step) or f"{title.lower()} seçilmedi")
+                if _stale(entry, step):
+                    row["kept_previous"] = True
+                continue
+            t0 = time.perf_counter()
+            try:
+                payload, files = runners[step](_sub_ctx(ctx, i, total, title))
+                row["numbers"] = _numbers(step, payload)
+                row["files"] = files
+                written.extend(files)
+                results[step] = payload
+            except Cancelled:
+                raise
+            except _Skip as sk:
+                row.update(status="skipped", reason=sk.reason)
+                if _stale(entry, step):
+                    row["kept_previous"] = True
+            except RpcError as exc:
+                row.update(status="failed", error=exc.message)
+            except Exception as exc:  # an engine bug in one step must not lose the others
+                row.update(status="failed", error=f"İç hata: {type(exc).__name__}: {exc}")
+            row["elapsed_s"] = time.perf_counter() - t0
         except Cancelled:
+            if not report or report[-1] is not row:
+                report.append(row)
+            row.update(status="cancelled", reason="iptal edildi")
+            live.update(state="cancelled", stopped_at=step)
             raise
-        except _Skip as sk:
-            row.update(status="skipped", reason=sk.reason)
-            if _stale(entry, step):
-                row["kept_previous"] = True
-        except RpcError as exc:
-            row.update(status="failed", error=exc.message)
-        except Exception as exc:  # an engine bug in one step must not lose the others
-            row.update(status="failed", error=f"İç hata: {type(exc).__name__}: {exc}")
-        row["elapsed_s"] = time.perf_counter() - t0
+    live["state"] = "done"
     ctx.progress(total, total, "Tamamlandı")
 
     out: Dict[str, Any] = {
@@ -360,4 +373,28 @@ def summary_markdown(entry, t, plan, kw: Dict[str, Any], out: Dict[str, Any], pr
     return "\n".join(L)
 
 
-METHODS = {"analysis.full": analysis_full}
+def analysis_full_partial(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """The last ``analysis.full`` run as it stands in the session (cheap read): the steps that finished with their
+    results, the one a cancel stopped (status ``cancelled``) and the rest as ``not_run``. ``run`` is null when no run
+    exists (never run, or a new plan dropped it)."""
+    from . import terrain_methods as tm
+
+    entry, t = tm._terrain_of(params)
+    live = entry.results.get("full_run")
+    if live is None:
+        return {"run": None}
+    steps = [dict(r) for r in live["steps"]]
+    seen = {r["id"] for r in steps}
+    for sid in STEP_ORDER:
+        if sid not in seen:
+            steps.append({"id": sid, "title": STEP_TITLES[sid], "status": "not_run", "reason": "çalışmadı", "elapsed_s": 0.0,
+                          "numbers": {}, "files": []})
+    keys = ("ok", "skipped", "failed", "cancelled", "not_run")
+    return {"run": {
+        "steps": steps, "written": list(live["written"]), "out_dir": None, "measured": bool(t.is_measured),
+        "refine_factor": entry.refine_factor, "target_height_m": entry.target_height_m,
+        "total_s": sum(r["elapsed_s"] for r in steps), "counts": {k: sum(1 for r in steps if r["status"] == k) for k in keys},
+        "results": dict(live["results"]), "state": live["state"], "stopped_at": live["stopped_at"]}}
+
+
+METHODS = {"analysis.full": analysis_full, "analysis.full_partial": analysis_full_partial}

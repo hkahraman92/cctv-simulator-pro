@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Cable, Play, RotateCw, Scale, Trophy } from "lucide-react";
 import type { CameraConfig, ModelSummary } from "../core/api";
 import type { AssistedPlan, PlanResult, TerrainApi } from "../core/terrainApi";
@@ -137,7 +137,7 @@ export function NetworkPanel({ T, job, terrainId, useObstacles, prices, onPrices
 }
 
 /** Fewest poles + PTZs when the fixed cameras detect and a PTZ zooms in on alarm (instead of fixed-only Recognition). */
-export function AssistPanel({ T, job, terrainId, useObstacles, models, camera, planArgs, goal, levels, defaultLevel, ptzModelFor, onPlan, onApplied, resetKey, value, onChange, ptz, onPtz }: {
+export function AssistPanel({ T, job, terrainId, useObstacles, models, camera, planArgs, goal, levels, defaultLevel, ptzModelFor, onPlan, onApplied, result: res, onResult: setRes, value, onChange, ptz, onPtz }: {
   /** the saved choices (null = never touched; the PTZ model is kept by name) and where an edit goes */
   value: AssistSettings | null; onChange: (v: AssistSettings) => void;
   /** the chosen PTZ model resolved from the library (the page looks the saved name up when a project opens) */
@@ -152,8 +152,8 @@ export function AssistPanel({ T, job, terrainId, useObstacles, models, camera, p
   onPlan: (p: PlanResult) => void;
   /** a met plan was applied: its PTZ model and density, for the mixed panel to re-plan with the same PTZs */
   onApplied: (ptz: CameraConfig, everyN: number) => void;
-  /** changes with every new plan: the shown result belongs to an older one */
-  resetKey?: number;
+  /** the last assist result. The page owns it (this panel unmounts with its tab) and drops it on a plan change this run did not cause. */
+  result: AssistedPlan | null; onResult: (r: AssistedPlan | null) => void;
 }) {
   const ptzModels = models.filter((m) => m.is_ptz);
   const s = value ?? { ...DEFAULT_ASSIST, level: defaultLevel };
@@ -162,16 +162,14 @@ export function AssistPanel({ T, job, terrainId, useObstacles, models, camera, p
   const setLevel = (l: string) => onChange({ ...s, level: l });
   const setMaxS = (m: number) => onChange({ ...s, maxS: m });
   const setPtz = (c: CameraConfig | null) => { onPtz(c); onChange({ ...s, model: c?.model_name ?? "" }); };
-  const [res, setRes] = useState<AssistedPlan | null>(null);
-  const own = useRef(false);               // the next plan change is this panel's own result
-  useEffect(() => { if (own.current) own.current = false; else setRes(null); }, [resetKey, terrainId]);
   const run = () => ptz && void job.run(t("PTZ destekli en az direk"), (o) => T.assistedPlan({
     terrain_id: terrainId, use_obstacles: useObstacles, camera, ...planArgs, ptz_camera: ptz,
     goal_frac: goal / 100, level, max_s: maxS, position_steps: 0,
   } as Parameters<TerrainApi["assistedPlan"]>[0], o)).then((r) => {
     if (!r) return;
+    // the new plan replaces (and so clears) the old result first; the run's own result is set AFTER it
+    if (r.plan) { onPlan(r.plan); onApplied(ptz, r.ptz_every_n); }
     setRes(r);
-    if (r.plan) { own.current = true; onPlan(r.plan); onApplied(ptz, r.ptz_every_n); }
   });
   const pctOf = (f: number) => t("%{n}", { n: fmt(f * 100, 1) });
   return (

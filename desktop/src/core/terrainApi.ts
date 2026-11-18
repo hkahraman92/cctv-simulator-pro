@@ -668,6 +668,9 @@ export function terrainApi(rpc: RpcClient) {
     /** `analysis.full`: every analysis of the plan + the deliverables in one job; see pages/fullAnalysis.ts */
     fullAnalysis: (p: Record<string, unknown>, opts?: CallOptions) =>
       rpc.call<import("../pages/fullAnalysis").FullAnalysisResult>("analysis.full", p, { timeoutMs: 0, ...opts }),
+    /** `analysis.full_partial`: the last full run as the core holds it (finished steps, the cancelled one, the rest not run); null = none */
+    fullPartial: (terrain_id: string, opts?: CallOptions) =>
+      rpc.call<{ run: import("../pages/fullAnalysis").FullAnalysisResult | null }>("analysis.full_partial", { terrain_id }, opts).then((r) => r.run),
     sensitivity: (p: T & { level?: "plan" | TerrainLevel; band_m?: number; band_in_m?: number; max_px?: number; n_runs?: number; seed?: number; dem_sigma_m?: number | null; dem_corr_m?: number | null; obstacle_uncertainty?: number }, opts?: CallOptions) =>
       rpc.call<SensitivityResult>("perimeter.sensitivity", p, { timeoutMs: 0, ...opts }),
     approach: (p: T & { depth_m: number; response_s?: number; speeds?: Record<string, number>; max_px?: number }, opts?: CallOptions) =>
