@@ -74,7 +74,7 @@ desktop/                             yeni arayüz: Tauri 2 (Rust) + React/TS/Tai
 
 **Yeni masaüstü kabuğu.** `desktop/` Python çekirdeği (`python -m
 cctv_simulator.service`, yayında `cctv-core.exe`) alt süreç olarak başlatır,
-satır başına bir JSON-RPC nesnesi taşır (API v1, 81 yöntem; liste ve
+satır başına bir JSON-RPC nesnesi taşır (API v1, 82 yöntem; liste ve
 sözleşme `docs/masaustu-mimari.md`). Ekran fizik türetmez; her sayı bir API
 yönteminden gelir. Yeni özellik için: önce `service/*_methods.py`'ye yöntem +
 `tests/test_service_*.py`'ye motorla birebir eşlik testi, sonra
@@ -1284,6 +1284,38 @@ Modu" satırı.
   kurmaz. Teklif paketine
   `05-plan-uygunluk-beyani.md/.pdf` olarak girer; Raporlar sayfasında düğme.
   Testler: `tests/test_plan_statement.py`.
+- **Saha kabul föyü** (`acceptance.py`, `delivery.acceptance`): kapsama sayıları
+  bir modelden gelir; sahada tutup tutmadığı kurulumdan sonra ölçülerek bilinir.
+  Föy her SABİT kamera için nereye hedef (0,5 m pano / insan) dikileceğini ve
+  görüntüde ne görünmesi gerektiğini yazar. Noktalar `perimeter.coverage`'ın
+  koştuğu otoriter çok kameralı sonucun `per_camera[i]` pencere ızgaralarından
+  (planın `placed_cameras[i]`'si) seçilir; yalnız motorun GÖRÜNÜR dediği
+  düğümler, px/m / DORI / eğik mesafe düğümün motor değeri (türetme yok,
+  testte birebir). Sıra: A eksene yakın (|sapma| ≤ HFOV/6, yoksa genişler ve
+  notu yazar) hedef px/m'yi tutan en uzak; B kadraj kenarında (yarı FOV'un
+  0,6–0,95'i) en uzak hedef mesafesinin yarısında, hedefi tutan; C Algılama
+  sınırındaki en uzak görünür düğüm; 4-6. nokta karşı kenar / eksen orta /
+  kenar yakın. Korunan alan (ROI) düğümleri önceliklidir, dışındaysa notu
+  yazar. Hedefi hiçbir görünür düğümde tutmayan kamera satırı "bulgu" olarak
+  nokta yerine bu cümleyi taşır. PTZ'ler yalnız ev / devriye ayarlarıyla ve
+  "presetlerde doğrulanır" notuyla listelenir. Her nokta: yerel + enlem/boylam
+  (`GeoFrame`, KML ile aynı çerçeve), mesafe / yön / yükseklik farkı, beklenen
+  px/m, DORI, kişi / pano / (≥ 143 px/m'de) plaka piksel bandı =
+  px/m × boy × (1 ± tolerans, vars. ±%15), boş "Ölçülen px" / "Sonuç" sütunları.
+  Başlık: proje, tarih, plan özeti, hedef, bant, arazi kaynağı ("ölçüm değil"
+  uyarısı), hedef boyu, hava, ve hassasiyet sonucu varsa veriye bağlı
+  hücredeki noktalar ▲ ile işaretlenir — bunun için `perimeter.sensitivity`
+  artık `class_grid`'ini `entry.results["sensitivity"]`'a koyar (ızgarasız
+  sonuç noktaları işaretleyemez, başlık bunu söyler). Yazarlar: CSV (UTF-8
+  BOM, `;`), XLSX (openpyxl), PDF (yatay A4, ReportLab; Segoe'de ✔/✘ yok →
+  "G / K"; ReportLab yoksa düz PDF), KML (konumsuz arazide diğer KML
+  çıktılarıyla aynı hata), DXF (yerel metre POINT). Yöntem: `delivery.acceptance`
+  (`path`, `format`, `points_per_camera` 1–6, `tolerance`, `level`; geçici
+  dosya + yeniden adlandırma); `multi` + `coverage_masks` uyuyorsa yeniden
+  kullanır, yoksa aynı `band_area` koşusunu yapar (saklamaz). Teklif paketine
+  `09-saha-kabul-foyu.pdf/.csv` olarak YALNIZ kapsama koşmuşsa girer, yoksa
+  BENİOKU'da eksik yazılır. Raporlar sayfasında "Saha kabul föyü" grubu.
+  Testler: `tests/test_acceptance.py`, `tests/test_service_acceptance.py`.
 - **Kamera çizelgesi** (`offer.pole_rows(plan, terrain=, camera=, ptz_camera=,
   network=)`, teklif paketinde `02-direk-listesi.csv` + XLSX "Direkler"):
   eski 14 sütun aynı; eklenenler Enlem / Boylam (`GeoFrame`, KML ile aynı

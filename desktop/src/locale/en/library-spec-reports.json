@@ -180,5 +180,19 @@
   "◆ Yer mesafesi, modelin kütüphanedeki direk ve eğim değerleriyle optik motordan.": "◆ Ground distance from the optics engine, using the model's library mast height and tilt.",
   "◆ Şartname metni (ve PDF) Google'a gönderilir. Gizli belgeler için Kurallı ya da Yerel yolu kullanın.": "◆ The specification text (and PDF) is sent to Google. For confidential documents use the Rules or Local method.",
   "● Ollama çalışıyor (localhost:11434)": "● Ollama is running (localhost:11434)",
-  "● ölçülmüş DEM": "● measured DEM"
+  "● ölçülmüş DEM": "● measured DEM",
+  "Saha kabul föyü": "Site acceptance sheet",
+  "Önce \"Arazi & Görüş Alanı\" sayfasında bir çevre çiti planı oluşturun: föy planın her sabit kamerası için ölçülecek noktaları yazar.": "First create a perimeter plan on the \"Terrain & Viewshed\" page: the sheet lists the points to measure for every fixed camera of the plan.",
+  "Saha kabul föyü yazılıyor": "Writing the site acceptance sheet",
+  "{n} kamera hedef px/m'yi hiçbir noktada tutmuyor (föyde bulgu olarak yazılı): {list}": "{n} camera(s) hold the target px/m at no point (written in the sheet as a finding): {list}",
+  "{n} nokta veriye bağlı hücrede (▲): sahada ilk onlar başarısız olabilir.": "{n} point(s) lie in data-dependent cells (▲): they are the most likely to fail on site.",
+  "Arazi ölçülmüş değil: föydeki noktalar bağlayıcı değil.": "The terrain is not measured: the points in the sheet are not binding.",
+  "Her sabit kamera için ölçüm noktaları (eksende en uzak, kadraj kenarı, Algılama sınırı), beklenen px/m ve piksel bandı; boş Ölçülen px / Sonuç sütunları. PTZ'ler presetlerde doğrulanır.": "Check points for every fixed camera (farthest on the axis, frame edge, Detection limit), expected px/m and pixel band, with empty Measured px / Result columns. PTZs are verified at their presets.",
+  "Biçim": "Format",
+  "Kamera başına nokta": "Points per camera",
+  "Tolerans (±%)": "Tolerance (±%)",
+  "Hedef seviye": "Target level",
+  "Planın hedefi": "Plan target",
+  "Föyü Oluştur": "Create Sheet",
+  "KML için arazinin coğrafi konumu gerekir (çevrimiçi indirilen, kayıtlı ya da georeferanslı GeoTIFF).": "KML needs the terrain's geographic location (an online-downloaded or saved region, or a georeferenced GeoTIFF)."
 }

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { isTauri } from "@tauri-apps/api/core";
-import { ExternalLink, FileCheck2, FileText, FolderOpen, Globe2, Mountain, Package, PenTool, Share2, Table2 } from "lucide-react";
+import { ClipboardCheck, ExternalLink, FileCheck2, FileText, FolderOpen, Globe2, Mountain, Package, PenTool, Share2, Table2 } from "lucide-react";
 import { useCore } from "../core/CoreProvider";
 import { useProject } from "../core/project";
 import { useActiveTerrain, useSpecResult } from "../core/activeTerrain";
@@ -10,6 +10,8 @@ import JobBar from "../components/JobBar";
 import { Button, Panel } from "../components/ui";
 import { getPrefs, setPref } from "../core/prefs";
 import { t, tn } from "../core/i18n";
+import { levelsFor } from "../core/terrainLevels";
+import type { TerrainApi } from "../core/terrainApi";
 
 /** Report files from the same writers as the classic app and the headless CLI. */
 export default function Reports() {
@@ -116,6 +118,13 @@ export default function Reports() {
         ) : <p className="text-[12px] text-text-3">{t('Önce "Arazi & Görüş Alanı" sayfasında bir çevre çiti planı oluşturun.')}</p>}
       </Panel>
 
+      <Panel title={t("Saha kabul föyü")} icon={<ClipboardCheck size={16} className="text-primary" />} className="w-full">
+        {active?.ran.plan ? (
+          <AcceptancePanel T={T} job={job} terrainId={active.terrain_id} useObstacles={active.use_obstacles} dir={dir} base={base} projectName={name}
+            measured={active.is_measured} onFile={(f, extra) => done({ files: [f] }, extra)} />
+        ) : <p className="text-[12px] text-text-3">{t('Önce "Arazi & Görüş Alanı" sayfasında bir çevre çiti planı oluşturun: föy planın her sabit kamerası için ölçülecek noktaları yazar.')}</p>}
+      </Panel>
+
       {files.length > 0 && (
         <Panel title={t("Yazılan dosyalar")} className="w-full">
           <ul className="flex flex-col gap-1">
@@ -145,6 +154,52 @@ function Formats({ value, onChange, only = ["pdf", "xlsx", "csv"] }: { value: Re
 }
 
 type Job = ReturnType<typeof useJob>;
+
+type AcceptFormat = "pdf" | "csv" | "xlsx" | "kml" | "dxf";
+
+/** Site acceptance sheet: where to stand a test target per camera and what the image must show. */
+function AcceptancePanel({ T, job, terrainId, useObstacles, dir, base, projectName, measured, onFile }: {
+  T: TerrainApi; job: Job; terrainId: string; useObstacles: boolean; dir: string; base: string; projectName: string; measured: boolean;
+  onFile: (f: string, note?: string) => void;
+}) {
+  const [fmt, setFmt] = useState<AcceptFormat>("pdf");
+  const [points, setPoints] = useState(3);
+  const [tolPct, setTolPct] = useState(15);
+  const [level, setLevel] = useState("plan");
+  const write = async () => {
+    if (!isTauri()) return;
+    const p = await save({ title: t("Saha kabul föyü"), filters: [{ name: fmt.toUpperCase(), extensions: [fmt] }], defaultPath: `${dir ? `${dir}\\` : ""}${base}-kabul.${fmt}` });
+    if (typeof p !== "string") return;
+    void job.run(t("Saha kabul föyü yazılıyor"), () => T.acceptance({
+      terrain_id: terrainId, use_obstacles: useObstacles, path: p, format: fmt, points_per_camera: points, tolerance: tolPct / 100, level, project_name: projectName,
+    })).then((r) => r && onFile(r.path, [
+      r.cameras_without_target_point > 0 ? t("{n} kamera hedef px/m'yi hiçbir noktada tutmuyor (föyde bulgu olarak yazılı): {list}", { n: r.cameras_without_target_point, list: r.no_target_cameras.slice(0, 8).join(", ") }) : "",
+      r.uncertain_points > 0 ? t("{n} nokta veriye bağlı hücrede (▲): sahada ilk onlar başarısız olabilir.", { n: r.uncertain_points }) : "",
+      measured ? "" : t("Arazi ölçülmüş değil: föydeki noktalar bağlayıcı değil."),
+    ].filter(Boolean).join(" ")));
+  };
+  const field = "h-8 rounded border border-line bg-bg-0 px-2 text-[12px]";
+  return (
+    <div className="flex flex-wrap items-end gap-3">
+      <p className="min-w-[260px] flex-1 text-[12px] text-text-2">{t("Her sabit kamera için ölçüm noktaları (eksende en uzak, kadraj kenarı, Algılama sınırı), beklenen px/m ve piksel bandı; boş Ölçülen px / Sonuç sütunları. PTZ'ler presetlerde doğrulanır.")}</p>
+      <label className="flex flex-col gap-1 text-[12px]"><span className="label">{t("Biçim")}</span>
+        <select className={field} value={fmt} onChange={(e) => setFmt(e.target.value as AcceptFormat)}>
+          <option value="pdf">PDF</option><option value="xlsx">XLSX</option><option value="csv">CSV</option><option value="kml">KML</option><option value="dxf">DXF</option>
+        </select></label>
+      <label className="flex flex-col gap-1 text-[12px]"><span className="label">{t("Kamera başına nokta")}</span>
+        <input className={`${field} w-20 font-mono`} type="number" min={1} max={6} step={1} value={points} onChange={(e) => setPoints(Math.min(6, Math.max(1, Math.round(Number(e.target.value)) || 1)))} /></label>
+      <label className="flex flex-col gap-1 text-[12px]"><span className="label">{t("Tolerans (±%)")}</span>
+        <input className={`${field} w-20 font-mono`} type="number" min={1} max={60} step={1} value={tolPct} onChange={(e) => setTolPct(Math.min(60, Math.max(1, Number(e.target.value) || 15)))} /></label>
+      <label className="flex flex-col gap-1 text-[12px]"><span className="label">{t("Hedef seviye")}</span>
+        <select className={field} value={level} onChange={(e) => setLevel(e.target.value)}>
+          <option value="plan">{t("Planın hedefi")}</option>
+          {levelsFor(false).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        </select></label>
+      <Button primary disabled={job.running} onClick={() => void write()}><ClipboardCheck size={14} /> {t("Föyü Oluştur")}</Button>
+      {fmt === "kml" && <p className="w-full text-[11px] text-text-3">{t("KML için arazinin coğrafi konumu gerekir (çevrimiçi indirilen, kayıtlı ya da georeferanslı GeoTIFF).")}</p>}
+    </div>
+  );
+}
 
 function Deliverables({ run, status, job, base, dir, onFile, realWorld, onRealWorld, measured, coverageRan }: {
   run: {

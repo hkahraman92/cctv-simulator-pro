@@ -112,7 +112,8 @@ def perimeter_sensitivity(params: Dict[str, Any], ctx: Context) -> Dict[str, Any
         "line": line, "label": label, "n_runs": res.n_runs, "certain": res.certain_share,
         "uncertain": res.uncertain_share, "never": res.never_share, "nominal": res.nominal_share,
         "share_min": res.share_min, "share_max": res.share_max, "levels": levels_out,
-        "assumptions": res.assumptions, "measured": res.measured}
+        "assumptions": res.assumptions, "measured": res.measured,
+        "class_grid": res.class_grid}             # per-cell CERTAIN / UNCERTAIN / NEVER: the acceptance sheet marks points by it
     return {
         "n_runs": res.n_runs, "seed": res.seed, "level_label": label, "target_ppm": ppm,
         "certain": res.certain_share, "uncertain": res.uncertain_share, "never": res.never_share,

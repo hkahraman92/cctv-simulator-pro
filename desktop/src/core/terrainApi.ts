@@ -729,9 +729,20 @@ export function terrainApi(rpc: RpcClient) {
       rpc.call<{ path: string; bytes: number }>("export.share_html", p, { timeoutMs: 0 }),
     planStatement: (p: T & { path?: string; project_name?: string; bidder?: string; goal_frac?: number; assist_max_s?: number }) =>
       rpc.call<PlanStatement>("export.plan_statement", p, { timeoutMs: 0 }),
+    acceptance: (p: T & { path: string; format: "pdf" | "csv" | "xlsx" | "kml" | "dxf"; points_per_camera?: number; tolerance?: number; level?: string; project_name?: string; band_m?: number; band_in_m?: number }, opts?: CallOptions) =>
+      rpc.call<AcceptanceSummary>("delivery.acceptance", p, { timeoutMs: 0, ...opts }),
     exportPackage: (p: T & { path: string; project_name: string; goal_frac?: number; bidder?: string; spec_result?: object; scenarios?: Scenario[] }, opts?: CallOptions) =>
       rpc.call<{ path: string; files: string[]; skipped: string[] }>("export.package", p, { timeoutMs: 0, ...opts }),
   };
+}
+
+/** Site acceptance sheet ("saha kabul föyü"): what the core wrote and what it found. */
+export interface AcceptanceSummary {
+  path: string; format: string; cameras: number; ptz: number; points: number;
+  /** Fixed cameras that hold the target px/m at no visible node (a finding). */
+  cameras_without_target_point: number; no_target_cameras: string[];
+  /** Points inside "veriye bağlı" cells of a sensitivity result (0 when none was run). */
+  uncertain_points: number; measured: boolean; has_latlon: boolean;
 }
 
 export type TerrainApi = ReturnType<typeof terrainApi>;

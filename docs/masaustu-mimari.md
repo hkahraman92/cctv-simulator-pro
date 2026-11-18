@@ -23,7 +23,7 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
 - **API v1** (`cctv_simulator/service/__init__.py: API_VERSION`). Yöntem
   eklemek / isteğe bağlı alan eklemek küçük sürüm; yeniden adlandırma ya da
   silme büyük sürüm. `system.describe` güncel listeyi verir.
-- Yöntemler (81; modül başına):
+- Yöntemler (82; modül başına):
   - `methods.py`: `system.info|ping|describe`, `catalog.get`,
     `library.list|get|camera`, `optics.calculate`, `project.load|save`
   - `library_methods.py`: `library.fields|record|auth|save|delete|set_password`
@@ -64,7 +64,9 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
   - `delivery_methods.py`: `export.site` (KML / KMZ / DXF), `export.share_html`,
     `export.write_file` (webview'in yazamadığı dosyalar: `.csv` / `.txt` metin ya da `.png` data URL, 50 MB sınırı),
     `export.plan_statement` (planın EN 62676-4 uygunluk beyanı: bölge × seviye × sonuç),
-    `export.package` (teklif ZIP), `night.condition|timeline|coverage`,
+    `export.package` (teklif ZIP), `delivery.acceptance` (saha kabul föyü: kamera başına ölçüm noktaları, beklenen px/m +
+    piksel bandı; `format` csv|pdf|xlsx|kml|dxf, `points_per_camera` 1–6, `tolerance`, `level`; KML konumsuz arazide reddedilir),
+    `night.condition|timeline|coverage`,
     `scenario.snapshot|compare`
   - `sensitivity_methods.py`: `perimeter.sensitivity` (veri belirsizliği: planın kapsamasını `n_runs` (4–32) bozulmuş
     yükselti / bina yüksekliği kopyasında otoriter çok kameralı motordan yeniden geçirir; koşu 0 = veri olduğu gibi =

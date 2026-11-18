@@ -14,6 +14,10 @@ from .params import _camera_from, _require
 from .protocol import APP_ERROR, INVALID_PARAMS, Context, RpcError
 from .terrain_methods import _DISPLAY_PX, _image, _num, _overlay_size, _terrain_of
 
+def _invalid(msg: str) -> RpcError:
+    return RpcError(INVALID_PARAMS, msg)
+
+
 _LEVEL_KEYS = ("identify", "recognize", "observe", "detect")
 
 
@@ -269,6 +273,10 @@ def export_package(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
     spec_kw = {"project_name": str(params.get("project_name", "")), "bidder": str(params.get("bidder", ""))}
     bs = entry.results.get("band_share")
     stmt = _plan_statement(entry, t, params)
+    try:                                          # only from a coverage run already done; never sinks the package
+        acceptance = _acceptance_sheet(entry, t, params, ctx, compute=False)
+    except (RpcError, ValueError):
+        acceptance = None
     try:
         out = build_offer_package(
             p, project_name=str(params.get("project_name") or p.stem), terrain=t, plan=plan, camera=cam,
@@ -276,7 +284,7 @@ def export_package(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
             band_share=bs[1] if bs else None, night=entry.results.get("night"), photo=entry.photo,
             spec_result=spec, spec_kw=spec_kw, plan_statement=stmt[1] if stmt else None, ptz_camera=kw.get("ptz_camera"), scenarios=_scenarios(params, required=False),
             weather=kw.get("weather", ""), progress=ctx.progress,
-            sensitivity=entry.results.get("sensitivity"))
+            sensitivity=entry.results.get("sensitivity"), acceptance=acceptance)
     except OSError as exc:
         raise RpcError(APP_ERROR, f"Paket yazılamadı: {exc}") from None
     return out
@@ -355,6 +363,95 @@ def export_plan_statement(params: Dict[str, Any], ctx: Context) -> Dict[str, Any
     return out
 
 
+# ── site acceptance sheet ─────────────────────────────────────────────────
+_ACCEPT_FORMATS = ("csv", "pdf", "xlsx", "kml", "dxf")
+
+
+def _acceptance_sheet(entry, t, params: Dict[str, Any], ctx: Context, *, compute: bool, points: int = 3,
+                      tolerance: float = 0.15):
+    """(AcceptanceSheet, reused_coverage) from the plan's coverage engine result.
+
+    The coverage report's own ``multi`` + ``coverage_masks`` are reused when they fit this request (same
+    camera count, protected area, monitor floor); else, with ``compute``, the same ``band_area`` run is made
+    (not stored: it is not the coverage report). ``compute=False`` and no coverage -> None."""
+    from ..acceptance import PERSON_M, build_acceptance
+    from ..focal_optimizer import band_area, full_reach_placements
+    from ..viewshed_3d import PPM_DETECT, ZONE_DETECT, ZONE_MONITOR, is_thermal_camera
+    from .terrain_methods import _band_params, _plan_roi, _target_level
+
+    plan, cam, kw, fence = _plan_of(entry)
+    ptz_cam = kw.get("ptz_camera")
+    label, ppm, _zone = _target_level(params, plan, kw, cam, ptz_cam)
+    monitor = not is_thermal_camera(cam) and ppm < PPM_DETECT - 1e-9
+    is_area = kw.get("line_mode") == "area"
+    masks, mv = entry.results.get("coverage_masks"), entry.results.get("multi")
+    band, inside = (0.0, None) if is_area else _band_params(params)
+    fits = (mv is not None and masks is not None and len(mv.per_camera) == len(plan.placed_cameras)
+            and (not monitor or masks.get("monitor"))
+            and (is_area or "band_m" not in params or (masks["band"], masks["inside"]) == (band, inside)))
+    if fits:
+        roi, band, inside = masks["roi"], masks["band"], masks["inside"]
+    elif not compute:
+        return None
+    else:
+        roi = _plan_roi(t, fence, kw, band, inside)
+        ctx.progress(0, 1, f"{len(plan.placed_cameras)} kamera hesaplanıyor")
+        mv, _ = band_area(t, plan, cam, roi, ZONE_MONITOR if monitor else ZONE_DETECT,
+                          visibility_km=kw["visibility_km"], weather=kw["weather"])
+    mode = kw.get("line_mode")
+    where = ("Korunan alan (poligon)" if is_area else
+             f"İzlenen şerit ({band:.0f} m derinlik)" if mode == "border" else
+             f"Çit bandı (dış {band:.0f} m · iç {inside:.0f} m)" if inside is not None and inside != band else
+             f"Çit bandı (±{band:.0f} m)")
+    sheet = build_acceptance(
+        t, plan, cam, mv=mv, placements=full_reach_placements(plan, cam, ZONE_MONITOR if monitor else ZONE_DETECT),
+        roi=roi, target_ppm=ppm, level=label, points_per_camera=points, tolerance=tolerance,
+        sensitivity=entry.results.get("sensitivity"), project=str(params.get("project_name") or t.name),
+        weather=kw.get("weather", ""), visibility_km=kw.get("visibility_km"),
+        person_height_m=entry.target_height_m if entry.target_height_m > 0 else PERSON_M,
+        target_height_m=entry.target_height_m or None, band_text=where, ptz_camera=ptz_cam)
+    return sheet
+
+
+def delivery_acceptance(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
+    """Site acceptance test sheet of the plan: per fixed camera, check points chosen from the engine's visible
+    nodes with the expected px/m and pixel counts, a tolerance band and empty measured / result columns.
+    Formats: csv, pdf, xlsx, kml (needs a real location), dxf. Reuses the coverage result when it fits."""
+    from ..acceptance import write_acceptance
+
+    entry, t = _terrain_of(params)
+    plan = _plan_of(entry)[0]
+    if not plan.placed_cameras:
+        raise RpcError(APP_ERROR, "Planda sabit kamera yok: kabul föyü yazılacak nokta bulunamadı.")
+    fmt = params.get("format", "pdf")
+    if fmt not in _ACCEPT_FORMATS:
+        raise _invalid("'format' " + ", ".join(_ACCEPT_FORMATS) + " olmalı.")
+    p = _target(params, "path", (f".{fmt}",))
+    points = params.get("points_per_camera", 3)
+    if isinstance(points, bool) or not isinstance(points, int) or not 1 <= points <= 6:
+        raise _invalid("'points_per_camera' 1-6 arasında tam sayı olmalı.")
+    tol = _num(params, "tolerance", 0.15, lo=0.01, hi=0.6)
+    try:
+        sheet = _acceptance_sheet(entry, t, params, ctx, compute=True, points=points, tolerance=tol)
+    except ValueError as exc:
+        raise RpcError(APP_ERROR, str(exc)) from None
+    tmp = p.with_name(f".{p.stem}.tmp{p.suffix}")
+    try:
+        write_acceptance(tmp, sheet, fmt, t)
+        tmp.replace(p)
+    except ValueError as exc:                                 # KML on a terrain with no location: the exporters' message
+        raise RpcError(APP_ERROR, str(exc)) from None
+    except (OSError, RuntimeError) as exc:
+        raise RpcError(APP_ERROR, f"Kabul föyü yazılamadı: {exc}") from None
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+    return {"path": str(p), "format": fmt, **sheet.summary()}
+
+
 # -- generic file writer for the webview (no fs plugin) ------------------
 _WRITE_MAX_BYTES = 50 * 1024 * 1024
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
@@ -429,6 +526,7 @@ METHODS = {
     "export.share_html": export_share_html,
     "export.write_file": export_write_file,
     "export.package": export_package,
+    "delivery.acceptance": delivery_acceptance,
     "night.condition": night_condition,
     "night.timeline": night_timeline,
     "night.coverage": night_coverage,

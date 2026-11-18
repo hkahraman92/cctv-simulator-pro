@@ -354,7 +354,7 @@ def build_offer_package(zip_path: str | Path, *, project_name: str, terrain: Ter
                         night: Optional[Dict] = None, photo=None, spec_result: Optional[Dict] = None,
                         spec_kw: Optional[Dict] = None, scenarios: Sequence[Dict] = (), weather: str = "",
                         plan_statement: Optional[str] = None, ptz_camera=None, progress=None,
-                        sensitivity: Optional[Dict] = None) -> Dict[str, Any]:
+                        sensitivity: Optional[Dict] = None, acceptance=None) -> Dict[str, Any]:
     """Write the offer ZIP; returns {"path", "files": [names], "skipped": [reasons]}."""
     import tempfile
 
@@ -439,7 +439,19 @@ def build_offer_package(zip_path: str | Path, *, project_name: str, terrain: Ter
         if geo_export.GeoFrame(terrain).exact:
             files["06-saha-projeksiyon.dxf"] = geo_export.build_dxf(terrain, plan, network, real_world=True) \
                 .replace("\n", "\r\n").encode("ascii")
-    step(4, "Paylaşım sayfası")
+    step(4, "Saha kabul föyü")
+    if acceptance is not None:                  # an AcceptanceSheet built from the coverage result already run
+        from . import acceptance as acc
+        with tempfile.TemporaryDirectory() as td:
+            for ext, fn in (("pdf", acc.write_pdf), ("csv", acc.write_csv)):
+                try:
+                    fn(Path(td) / f"f.{ext}", acceptance)
+                    files[f"09-saha-kabul-foyu.{ext}"] = (Path(td) / f"f.{ext}").read_bytes()
+                except Exception as exc:        # noqa: BLE001 -- one part must not sink the package
+                    skipped.append(f"Saha kabul föyü {ext.upper()} yazılamadı: {exc}")
+    else:
+        skipped.append("Birleşik kapsama çalıştırılmadı — saha kabul föyü eklenmedi")
+    step(5, "Paylaşım sayfası")
     files["07-paylasim.html"] = build_share_html(terrain, plan, title=project_name, network=network, coverage=coverage,
                                                  photo=photo, summary=summary, scenarios=scenarios).encode("utf-8")
     files["08-ozet.json"] = json.dumps({"summary": summary, "scenarios": list(scenarios)}, ensure_ascii=False,
@@ -449,7 +461,7 @@ def build_offer_package(zip_path: str | Path, *, project_name: str, terrain: Ter
              ([f"  - {s}" for s in skipped] or ["  (yok)"]) + \
              ["", "Sayılar uygulamanın görüş alanı / optik motorundan gelir; 07-paylasim.html internet bağlantısız açılır."]
     files["00-BENIOKU.txt"] = "\r\n".join(readme).encode("utf-8-sig")
-    step(5, "ZIP yazılıyor")
+    step(6, "ZIP yazılıyor")
     p = Path(zip_path)
     tmp = p.with_suffix(p.suffix + ".tmp")
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
