@@ -1,9 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, Sparkles, XCircle } from "lucide-react";
 import type { CameraConfig } from "../core/api";
 import type { AnprLane, AnprResult, AnprSetup } from "../core/benchApi";
 import { useCoalesced, useCore } from "../core/CoreProvider";
 import { useJob } from "../core/useJob";
+import { useProject } from "../core/project";
+import { buildAnpr, readAnpr } from "../pages/analysisSettings";
 import { t } from "../core/i18n";
 import JobBar from "./JobBar";
 import { Button, Panel, Slider, Tile, fmt } from "./ui";
@@ -19,10 +21,27 @@ const DEFAULT: AnprSetup = {
 export default function AnprBench({ camera, active }: { camera: CameraConfig; active: boolean }) {
   const { bench, state } = useCore();
   const job = useJob();
-  const [s, setS] = useState<AnprSetup>(DEFAULT);
-  const [focal, setFocal] = useState<number | null>(null);
+  const { extras, setExtra, openNonce } = useProject();
+  // the saved setup (project file) over the lab's defaults; read again whenever a project is opened
+  const saved = (): { setup: AnprSetup; focal: number | null } => {
+    const r = readAnpr(extras.anpr);
+    return { setup: { ...DEFAULT, ...(r?.setup ?? {}) } as AnprSetup, focal: r?.focal ?? null };
+  };
+  const [s, setS] = useState<AnprSetup>(() => saved().setup);
+  const [focal, setFocalState] = useState<number | null>(() => saved().focal);
+  const seen = useRef(openNonce);
+  useEffect(() => {
+    if (seen.current === openNonce) return;
+    seen.current = openNonce;
+    const r = saved();
+    setS(r.setup); setFocalState(r.focal);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openNonce]);
+  // only a user's edit is published (an opened project must not turn "unsaved" because this tab mounted)
+  const publish = (next: AnprSetup, f: number | null) => setExtra("anpr", buildAnpr(next as unknown as Record<string, number | boolean | null>, f));
+  const setFocal = (f: number | null) => { setFocalState(f); publish(s, f); };
   const f = Math.min(Math.max(focal ?? camera.focal_max_mm, camera.focal_min_mm), Math.max(camera.focal_max_mm, camera.focal_min_mm));
-  const set = (p: Partial<AnprSetup>) => setS((x) => ({ ...x, ...p }));
+  const set = (p: Partial<AnprSetup>) => { const next = { ...s, ...p }; setS(next); publish(next, focal); };
   const roadW = s.lanes * s.lane_width_m;
 
   const input = useMemo(() => ({ camera, focal_mm: f, setup: s }), [camera, f, s]);
@@ -31,8 +50,8 @@ export default function AnprBench({ camera, active }: { camera: CameraConfig; ac
 
   const auto = () => void job.run(t("ANPR odak ve nişan araması"), (o) => bench.anprOptimize({ camera, setup: s }, o)).then((b) => {
     if (!b) return;
-    setFocal(b.focal_mm);
-    set({ aim_y_m: b.setup.aim_y_m, aim_x_m: b.setup.aim_x_m });
+    const next = { ...s, aim_y_m: b.setup.aim_y_m, aim_x_m: b.setup.aim_x_m };
+    setFocalState(b.focal_mm); setS(next); publish(next, b.focal_mm);
   });
   const aimLabel = s.aim_x_m === null || Math.abs(s.aim_x_m - roadW / 2) < 0.01 ? "mid"
     : String(Math.round(s.aim_x_m / s.lane_width_m - 0.5) + 1);

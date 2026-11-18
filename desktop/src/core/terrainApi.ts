@@ -665,6 +665,9 @@ export function terrainApi(rpc: RpcClient) {
       rpc.call<{ target_height_m: number; changed: boolean }>("terrain.settings", { terrain_id, ...s }),
     coverage: (p: T & { layer?: CoverageLayer; level?: "plan" | TerrainLevel; band_m?: number; band_in_m?: number; max_px?: number; ptz_speed_deg_s?: number; ptz_end_dwell_s?: number; ptz_reach?: boolean }, opts?: CallOptions) =>
       rpc.call<CoverageResult>("perimeter.coverage", p, { timeoutMs: 0, ...opts }),
+    /** `analysis.full`: every analysis of the plan + the deliverables in one job; see pages/fullAnalysis.ts */
+    fullAnalysis: (p: Record<string, unknown>, opts?: CallOptions) =>
+      rpc.call<import("../pages/fullAnalysis").FullAnalysisResult>("analysis.full", p, { timeoutMs: 0, ...opts }),
     sensitivity: (p: T & { level?: "plan" | TerrainLevel; band_m?: number; band_in_m?: number; max_px?: number; n_runs?: number; seed?: number; dem_sigma_m?: number | null; dem_corr_m?: number | null; obstacle_uncertainty?: number }, opts?: CallOptions) =>
       rpc.call<SensitivityResult>("perimeter.sensitivity", p, { timeoutMs: 0, ...opts }),
     approach: (p: T & { depth_m: number; response_s?: number; speeds?: Record<string, number>; max_px?: number }, opts?: CallOptions) =>

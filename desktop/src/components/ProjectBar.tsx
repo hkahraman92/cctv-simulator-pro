@@ -11,6 +11,12 @@ import type { PPMLevel } from "../core/api";
 // 28x28 hit area, icon stays 14 px; focus ring comes from the global :focus-visible rule
 const ICON_BTN = "flex h-7 w-7 items-center justify-center rounded text-text-2 hover:bg-bg-5 disabled:opacity-40";
 
+/** The terrain block with the other pages' settings (ANPR ...) merged into its `terrain_extra`: the terrain page republishes the block, these live on. */
+export function mergeExtras(block: Record<string, unknown>, extras: Record<string, unknown>): Record<string, unknown> {
+  if (Object.keys(extras).length === 0) return block;
+  return { ...block, terrain_extra: { ...((block.terrain_extra as Record<string, unknown> | undefined) ?? {}), ...extras } };
+}
+
 const filters = () => [{ name: t("CCTV projesi"), extensions: ["json"] }];
 
 /** Project name + saved state + open / save, in the title bar. Same .json schema as the classic app. */
@@ -34,7 +40,7 @@ export default function ProjectBar() {
         target_point: { active: proj.plan.target.active, name: "Kontrol Noktası" /* i18n-ignore: stored with the project, the core keys on it */, x_m: proj.plan.target.x_m,
           y_m: proj.plan.target.y_m, required_level_key: proj.plan.level_key },
         // the terrain page may never have opened this session: keep the block read from the file
-        ...(proj.terrainBlock ?? proj.loadedTerrain?.block ?? {}),
+        ...mergeExtras(proj.terrainBlock ?? proj.loadedTerrain?.block ?? {}, proj.extras),
         ...(proj.levels ? { ppm_levels: proj.levels } : {}),
       });
       proj.markSaved(path, name);

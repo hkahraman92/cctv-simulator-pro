@@ -5,19 +5,23 @@ import { levelName, levelsFor } from "../core/terrainLevels";
 import type { useJob } from "../core/useJob";
 import type { Layer } from "./PtzPanels";
 import { t, tn } from "../core/i18n";
+import { DEFAULT_CITY, type CitySettings } from "../pages/analysisSettings";
 import { Button, Panel, fmt } from "./ui";
 
 type Job = ReturnType<typeof useJob>;
 const pct = (f: number) => t("%{n}", { n: fmt(f * 100, f < 0.1 ? 1 : 0) });
 
 /** City surveillance: OSM streets / homes / places, then street coverage, face-capable streets and privacy (KVKK). */
-export function CityPanel({ T, job, terrainId, useObstacles, hasLatLon, hasPlan, thermal, city, onCity, onLayer, resetKey }: {
+export function CityPanel({ T, job, terrainId, useObstacles, hasLatLon, hasPlan, thermal, city, onCity, onLayer, resetKey, value, onChange }: {
+  /** the saved level choice (null = never touched) and where an edit goes (kept in the project file) */
+  value: CitySettings | null; onChange: (v: CitySettings) => void;
   T: TerrainApi; job: Job; terrainId: string; useObstacles: boolean; hasLatLon: boolean; hasPlan: boolean; resetKey: number;
   /** the plan's camera is thermal: Johnson levels, no Monitoring */
   thermal: boolean;
   city: CityInfo | null; onCity: (c: CityInfo | null) => void; onLayer: (l: Layer | null) => void;
 }) {
-  const [level, setLevel] = useState<TerrainLevel>("observe");
+  const level: TerrainLevel = (value ?? DEFAULT_CITY).level;
+  const setLevel = (l: TerrainLevel) => onChange({ level: l });
   // a thermal has no Monitoring / face level: the selection follows the camera's scale
   const levels = levelsFor(thermal);
   const levelNow = levels.some(([k]) => k === level) ? level : "observe";

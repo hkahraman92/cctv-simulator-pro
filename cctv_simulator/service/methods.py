@@ -249,3 +249,7 @@ METHODS.update(_DELIVERY_METHODS)
 from .sensitivity_methods import METHODS as _SENSITIVITY_METHODS  # noqa: E402
 
 METHODS.update(_SENSITIVITY_METHODS)
+
+from .full_methods import METHODS as _FULL_METHODS  # noqa: E402
+
+METHODS.update(_FULL_METHODS)

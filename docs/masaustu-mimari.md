@@ -23,7 +23,7 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
 - **API v1** (`cctv_simulator/service/__init__.py: API_VERSION`). Yöntem
   eklemek / isteğe bağlı alan eklemek küçük sürüm; yeniden adlandırma ya da
   silme büyük sürüm. `system.describe` güncel listeyi verir.
-- Yöntemler (82; modül başına):
+- Yöntemler (83; modül başına):
   - `methods.py`: `system.info|ping|describe`, `catalog.get`,
     `library.list|get|camera`, `optics.calculate`, `project.load|save`
   - `library_methods.py`: `library.fields|record|auth|save|delete|set_password`
@@ -68,6 +68,7 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
     piksel bandı; `format` csv|pdf|xlsx|kml|dxf, `points_per_camera` 1–6, `tolerance`, `level`; KML konumsuz arazide reddedilir),
     `night.condition|timeline|coverage`,
     `scenario.snapshot|compare`
+  - `full_methods.py`: `analysis.full` (**Tam analiz**: planın analizlerini ve teslim çıktılarını tek uzun işte koşar; her adım mevcut servis işlevini alt bağlamla ÇAĞIRIR, fizik / mantık kopyalanmaz, sonuç `entry.results`'a panel koşmuş gibi yazılır. Sıra: `coverage`, `mixed` (plan PTZ içeriyorsa), `night` (`steps.night.datetime` varsa), `approach`, `network`, `sensitivity`, sonra `statement`, `acceptance`, `engineering`, `package`. Parametreler: `terrain_id`, `use_obstacles`, `target_height_m`, `band_m|band_in_m`, `project_name`, `bidder`, `camera`, isteğe bağlı `out_dir` + `stem`, ve `steps`: adım başına panelin kendi yönteminin parametre nesnesi (`false`/`null` = istenmedi; `coverage`, `mixed`, `network`, `statement`, `acceptance`, `engineering`, `package` yokken varsayılanla koşar, `night` / `approach` / `sensitivity` yokken atlanır; `sensitivity`/`acceptance` seviyeyi kapsamadan miras alır). Yanıt: `steps[]` (`id`, `title`, `status` ok|skipped|failed, `reason` / `error` Türkçe, `elapsed_s`, `numbers`, `files`, `kept_previous`), `counts`, `total_s`, `written`, `summary_path`, `results{}` (her ok adımın kendi yönteminin yanıtı: paneller bundan kendini yeniler). Bir adımın hatası sonrakini durdurmaz; iptal adımlar arasında ve her adımın ilerleme çağrısında denetlenir (`REQUEST_CANCELLED`, biten adımların sonucu oturumda kalır). `out_dir` yoksa beyan + kabul föyü yalnız hesaplanır, mühendislik raporu ve ZIP atlanır ("çıktı klasörü verilmedi"); varsa `<stem>-plan-beyani.md|pdf`, `-kabul-foyu.pdf|csv`, `-gorusalani.pdf|csv`, `-teklif.zip` (koşulmuş her şey) ve `analiz-ozeti.md` (adım / durum / neden / sayılar / varsayımlar) yazılır.)
   - `sensitivity_methods.py`: `perimeter.sensitivity` (veri belirsizliği: planın kapsamasını `n_runs` (4–32) bozulmuş
     yükselti / bina yüksekliği kopyasında otoriter çok kameralı motordan yeniden geçirir; koşu 0 = veri olduğu gibi =
     `perimeter.coverage` ile bit-aynı. Parametreler kapsamayla aynı (`level`, `band_m`, `band_in_m`, `use_obstacles`,

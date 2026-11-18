@@ -26,6 +26,10 @@ interface ProjectCtx {
   /** what the terrain page last published (saved with the project) */
   terrainBlock: TerrainBlock | null;
   setTerrainBlock: (b: TerrainBlock | null, opts?: { touch?: boolean }) => void;
+  /** settings of pages that are not the terrain page (the Optics lab's ANPR), kept in `terrain_extra` of the file */
+  extras: Record<string, unknown>;
+  /** publish one page's settings (a no-op for an equal value; a real change marks the project unsaved) */
+  setExtra: (key: string, value: unknown) => void;
   /** terrain block of the project file just opened; nonce changes on every open */
   loadedTerrain: { block: TerrainBlock; nonce: number } | null;
   selected: number;
@@ -65,6 +69,9 @@ export const undoScope: { current: null | { undo: () => boolean; redo: () => boo
 const Ctx = createContext<ProjectCtx | null>(null);
 
 /** Name of a project that was never named. Stored and compared as is; shown through t("Yeni proje"). */
+/** Keys of `terrain_extra` owned by pages other than the terrain page (they survive a terrain-block republish). */
+export const EXTRA_KEYS = ["anpr"] as const;
+
 export const NEW_PROJECT_NAME = "Yeni proje"; // i18n-ignore
 
 export const DEFAULT_PLAN: PlanSettings = {
@@ -103,6 +110,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
   const [terrainBlock, setTerrainBlockState] = useState<TerrainBlock | null>(null);
   const [loadedTerrain, setLoadedTerrain] = useState<{ block: TerrainBlock; nonce: number } | null>(null);
   const sel = Math.min(selected, sites.length - 1);
+  const [extras, setExtras] = useState<Record<string, unknown>>({});
   const [resetNonce, setResetNonce] = useState(0);
   const [openNonce, setOpenNonce] = useState(0);
 
@@ -140,7 +148,16 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const setExtra = useCallback((key: string, v: unknown) => {
+    setExtras((prev) => {
+      if (JSON.stringify(prev[key]) === JSON.stringify(v)) return prev;
+      setDirty(true);
+      return { ...prev, [key]: v };
+    });
+  }, []);
+
   const value = useMemo<ProjectCtx>(() => ({
+    extras, setExtra,
     sites, selected: sel, site: sites[sel], plan, path, name, dirty, terrainBlock, loadedTerrain, levels,
     setLevels: (l) => { record(); setLevelsState(l); setDirty(true); },
     setTerrainBlock,
@@ -165,6 +182,8 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
       setLevelsState(lv ?? null);
       setSites(next.length ? next : [newSite(1)]); setSelected(0); setPath(p); setName(n);
       setPlanState({ ...DEFAULT_PLAN, ...pl }); setDirty(false);
+      const te = (terrain?.terrain_extra ?? {}) as Record<string, unknown>;
+      setExtras(Object.fromEntries(EXTRA_KEYS.filter((k) => te[k] !== undefined).map((k) => [k, te[k]])));
       if (terrain) setLoadedTerrain((t) => ({ block: terrain, nonce: (t?.nonce ?? 0) + 1 }));
       setOpenNonce((n) => n + 1);
     },
@@ -173,7 +192,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     reset: () => {
       clearHistory();
       setSites([newSite(1)]); setSelected(0); setPlanState(DEFAULT_PLAN); setLevelsState(null);
-      setPath(""); setName(NEW_PROJECT_NAME); setTerrainBlockState(null); setLoadedTerrain(null); setDirty(false);
+      setPath(""); setName(NEW_PROJECT_NAME); setTerrainBlockState(null); setLoadedTerrain(null); setExtras({}); setDirty(false);
       setResetNonce((n) => n + 1);
       setOpenNonce((n) => n + 1);
     },
@@ -183,7 +202,7 @@ export function ProjectProvider({ children }: { children: ReactNode }) {
     redo: () => { const h = hist.current, s = h.future.pop(); if (!s) return; h.past.push(snap.current); restore(s); },
     canUndo: hist.current.past.length > 0, canRedo: hist.current.future.length > 0,
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [sites, sel, plan, path, name, dirty, touch, setTerrainBlock, terrainBlock, loadedTerrain, levels, resetNonce, openNonce, record, restore,
+  }), [extras, setExtra, sites, sel, plan, path, name, dirty, touch, setTerrainBlock, terrainBlock, loadedTerrain, levels, resetNonce, openNonce, record, restore,
     hist.current.past.length, hist.current.future.length]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

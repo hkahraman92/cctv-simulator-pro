@@ -21,6 +21,7 @@ import JobBar from "../components/JobBar";
 import { FocalCurve, ProfileChart } from "../components/charts";
 import { MixedPanel, PtzPanel, type Layer, type Patrol } from "../components/PtzPanels";
 import PtzSweep from "../components/PtzSweep";
+import { FullAnalysisPanel } from "../components/FullAnalysisPanel";
 import { AssistPanel, ComparePanel, EMPTY_PRICES, NetworkPanel, type NetworkResult, type PriceBook } from "../components/PlanningPanels";
 import { NightPanel, ScenarioPanel } from "../components/DeliveryPanels";
 import { ApproachPanel, type ApproachMarks } from "../components/ApproachPanel";
@@ -33,6 +34,9 @@ import {
 } from "./terrainPersist";
 import { LegendSwatch } from "../components/LegendSwatch";
 import { levelName, levelsFor } from "../core/terrainLevels";
+import { EMPTY_ANALYSIS, type AnalysisSettings } from "./analysisSettings";
+import { SPEEDS } from "../components/ApproachPanel";
+import { defaultInclude, type FullAnalysisResult, type FullRun } from "./fullAnalysis";
 import { t, tn } from "../core/i18n";
 
 const ha = (m2: number) => `${fmt(m2 / 1e4, 2)} ha`;
@@ -103,6 +107,11 @@ export default function Terrain() {
   const [covLayer, setCovLayer] = useState<CoverageLayer>("target");
   const [covLevel, setCovLevel] = useState<"plan" | TerrainLevel>("plan");
   const [sens, setSens] = useState<SensitivitySettings>(SENSITIVITY_DEFAULTS);   // data-sensitivity panel (persisted)
+  // choices of the assist / night / approach / network / PTZ / city panels and the "Tam analiz" ticks (persisted)
+  const [analysis, setAnalysis] = useState<AnalysisSettings>(EMPTY_ANALYSIS);
+  const setA = useCallback(<K extends keyof AnalysisSettings>(k: K, v: NonNullable<AnalysisSettings[K]>) => setAnalysis((a) => ({ ...a, [k]: v })), []);
+  const [assistPtz, setAssistPtz] = useState<CameraConfig | null>(null);   // the assist panel's PTZ model, resolved from the saved name
+  const [fullRun, setFullRun] = useState<FullRun | null>(null);             // the last "Tam analiz": panels show their step's result
   const [showFov, setShowFov] = useState(true);
   // live PTZ sweep: pictures from the core once, the map turns the cones
   const [play, setPlay] = useState<{ ptz: PlaybackPtz[]; tab: Tab; camera: string } | null>(null);
@@ -139,6 +148,7 @@ export default function Terrain() {
   const [planVer, setPlanVer] = useState(0);       // remounts panels that hold results of the old plan
   const replacePlan = useCallback((p: PlanResult | null) => {
     setPlanVer((v) => v + 1);
+    setFullRun(null);
     setPlanRes(p); setCoverage(null); setNetwork(null); setNight(null); setMixedLayer(null); setApproachMarks(null); setPlay(null);
     setOptRes(null); setPoleRes(null);
     if (!p) setAreaRes(null);
@@ -296,7 +306,18 @@ export default function Terrain() {
   };
 
   // ── project file: publish this page's state, restore it when a project opens ──
-  const { setTerrainBlock, loadedTerrain, sites: projectSites, site: projectSite, update: updateProjectCamera } = useProject();
+  const { setTerrainBlock, loadedTerrain, sites: projectSites, site: projectSite, update: updateProjectCamera, name: projectName } = useProject();
+  // a finished "Tam analiz": the core already holds every result (as if each panel had run); the page and its panels take theirs
+  const onFullDone = (r: FullAnalysisResult) => {
+    setFullRun((p) => ({ nonce: (p?.nonce ?? 0) + 1, results: r.results }));
+    const cov = r.results.coverage as CoverageResult | undefined;
+    if (cov) setCoverage(cov);
+    const nt = r.results.night as NightCoverage | undefined;
+    if (nt) setNight(nt);
+    const nw = r.results.network as NetworkResult | undefined;
+    if (nw) setNetwork(nw);
+    setMixedLayer(null);          // the map shows the coverage picture
+  };
   // Fence edits undo with Ctrl+Z while this tab is in front (ProjectBar asks undoScope first).
   // Changes closer than 500 ms (a corner drag) are one step.
   const fenceHist = useRef<{ past: [number, number][][]; future: [number, number][][]; last: number; prev: [number, number][] | null; skip: boolean }>(
@@ -354,12 +375,12 @@ export default function Terrain() {
       terrain_extra: buildTerrainExtra({
         camera, tab, fence, plan, band, targetH, goal, reqLevel, area, mixedPtz, prices, scenarios,
         mapMode, useObstacles, focal: mount.focal, patrol, ptzReach, slide, panSearch, covLayer, covLevel, sweepLevel,
-        refine: info.refine_factor || 1, sensitivity: sens,
+        refine: info.refine_factor || 1, sensitivity: sens, analysis,
       }),
     }, { touch: !restoring.current });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setTerrainBlock, info, mount, weather, camera, tab, fence, plan, band, targetH, area, mixedPtz, prices, scenarios, goal, isThermal,
-    mapMode, useObstacles, patrol, ptzReach, slide, panSearch, covLayer, covLevel, sweepLevel, sens]);
+    mapMode, useObstacles, patrol, ptzReach, slide, panSearch, covLayer, covLevel, sweepLevel, sens, analysis]);
 
   useEffect(() => {
     if (!loadedTerrain || state !== "ready") return;
@@ -418,6 +439,11 @@ export default function Terrain() {
         setSens((s) => ({ nRuns: sv.nRuns ?? s.nRuns, sigma: sv.sigma === undefined ? s.sigma : sv.sigma, corr: sv.corr === undefined ? s.corr : sv.corr }));
       }
       if (e.sweepLevel) setSweepLevel(e.sweepLevel);
+      // the analysis panels' choices: set with everything else here, before any analysis can run on this terrain
+      setAnalysis(e.analysis);
+      setAssistPtz(null);
+      const assistModel = e.analysis.assist?.model;
+      if (assistModel) void api.cameraFor(assistModel, undefined, true).then((x) => setAssistPtz(x.camera)).catch(() => setNotice(t("Projedeki PTZ modeli \"{model}\" kütüphanede yok; \"PTZ yok\" bırakıldı.", { model: assistModel })));
       // applyModel resets the focal to the lens end, so the saved focal goes back after it
       const restoreFocal = () => { if (e.focal !== undefined) setMount((m) => ({ ...m, focal: e.focal })); };
       if (e.cameraModel) void applyModel(e.cameraModel, { keepMount: true }).then(restoreFocal).catch(restoreFocal);
@@ -686,7 +712,8 @@ export default function Terrain() {
                   {ptzLayer && envView === "envelope" && <p className="mt-1 text-[11px] text-text-3">{t("◆ Aşağıdaki PTZ sonucu haritada; zarfı görmek için \"Tekil görüş alanına dön\".")}</p>}
                 </Panel>
                 <PtzPanel T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} camera={camera}
-                  thermal={isThermal} mount={mount} weather={weather} onLayer={setPtzLayer} onPlay={startPlayback} />
+                  thermal={isThermal} mount={mount} weather={weather} onLayer={setPtzLayer} onPlay={startPlayback}
+                  value={analysis.ptz} onChange={(v) => setA("ptz", v)} />
                 {ptzLayer && <Button className="w-full" onClick={() => { setPtzLayer(null); setEnvView("single"); }}>{t("Tekil görüş alanına dön")}</Button>}
               </>
             )}
@@ -925,7 +952,7 @@ export default function Terrain() {
               )}
               <MixedPanel T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} models={models}
                 value={mixedPtz} onChange={setMixedPtz} hasPlanWithPtz={!!planRes?.ptz.length} ptz={planRes?.ptz ?? []} onLayer={setMixedLayer} onPlay={startPlayback}
-                resetKey={planVer} patrol={patrol} onPatrol={setPatrol}
+                resetKey={planVer} patrol={patrol} onPatrol={setPatrol} panel={analysis.mixedPanel} onPanel={(v) => setA("mixedPanel", v)} full={fullRun}
                 level={reqLevel} levelLabel={levelName(reqLevel, isThermal)} band={bandArgs()} onPlan={replacePlan}
                 ptzModelFor={async (n) => (await api.cameraFor(n, undefined, true)).camera} />
             </div>
@@ -933,6 +960,12 @@ export default function Terrain() {
             {/* ── 3. Doğrula: what the layout really delivers ── */}
             <div className={step === "verify" ? "flex flex-col gap-3" : "hidden"}>
               {!planRes && <Panel title={t("Doğrula")}><p className="text-[12px] text-text-3">{t("Önce 2. adımda planı oluşturun.")}</p></Panel>}
+              {planRes && (
+                <FullAnalysisPanel T={T} job={job} hasPtz={planRes.ptz.length > 0}
+                  base={{ terrainId: info.terrain_id, useObstacles, targetH, band: bandArgs(), camera, hasLatLon: info.lat_center !== null, goal, projectName,
+                    covLayer, covLevel, patrol, ptzReach, settings: analysis, sens, prices, speeds: SPEEDS }}
+                  settings={analysis.full} onSettings={(v) => setA("full", v)} defaults={defaultInclude(analysis, sens, planRes.ptz.length > 0)} onDone={onFullDone} />
+              )}
               {planRes && (
                 <Panel title={t("Birleşik kapsama")}>
                 <label className="mt-2 flex items-center gap-2 text-[12px]"><input type="checkbox" checked={showFov} onChange={(e) => setShowFov(e.target.checked)} /> {t("Haritada FOV kamaları, odak ve PTZ devriyesi")}</label>
@@ -960,18 +993,20 @@ export default function Terrain() {
               {planRes && (
                 <SensitivityPanel T={T} job={job} info={info} useObstacles={useObstacles} thermal={isThermal} level={covLevel} band={bandArgs()}
                   resetKey={planVer} inputsKey={`${targetH}|${useObstacles}|${covLevel}|${band.out}|${band.in}|${info.refine_factor}`}
-                  value={sens} onChange={setSens} showing={mixedLayer?.kind === "sensitivity"} onLayer={setMixedLayer} />
+                  value={sens} onChange={setSens} showing={mixedLayer?.kind === "sensitivity"} onLayer={setMixedLayer} full={fullRun} />
               )}
               {planRes && (
                 <NightPanel resetKey={planVer} T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} camera={camera}
-                  hasLatLon={info.lat_center !== null} onLayer={setMixedLayer} onResult={setNight} band={bandArgs()} />
+                  hasLatLon={info.lat_center !== null} onLayer={setMixedLayer} onResult={setNight} band={bandArgs()}
+                  value={analysis.night} onChange={(v) => setA("night", v)} full={fullRun} />
               )}
               {planRes && (
                 <ApproachPanel resetKey={planVer} T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles}
-                  onLayer={setMixedLayer} onMarks={setApproachMarks} />
+                  onLayer={setMixedLayer} onMarks={setApproachMarks} value={analysis.approach} onChange={(v) => setA("approach", v)} full={fullRun} />
               )}
               <CityPanel resetKey={planVer} T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles}
-                hasLatLon={info.lat_center !== null} hasPlan={!!planRes} thermal={isThermal} city={city} onCity={setCity} onLayer={setMixedLayer} />
+                hasLatLon={info.lat_center !== null} hasPlan={!!planRes} thermal={isThermal} city={city} onCity={setCity} onLayer={setMixedLayer}
+                value={analysis.city} onChange={(v) => setA("city", v)} />
             </div>
 
             {/* ── 4. İyileştir: the same requirement with fewer / better-aimed cameras ── */}
@@ -1039,6 +1074,7 @@ export default function Terrain() {
                   levels={levelsFor(isThermal).filter(([k]) => k !== "monitor" && k !== "detect")}
                   defaultLevel={reqLevel === "identify" && isThermal ? "recognize" : reqLevel === "monitor" || reqLevel === "detect" ? "recognize" : reqLevel}
                   ptzModelFor={async (n) => (await api.cameraFor(n, undefined, true)).camera} onPlan={replacePlan}
+                  value={analysis.assist} onChange={(v) => setA("assist", v)} ptz={assistPtz} onPtz={setAssistPtz}
                   onApplied={(c, n) => setMixedPtz((m) => ({ ...m, camera: c, everyN: n }))} />
               )}
               {fence.length >= 2 && !isArea && (
@@ -1053,7 +1089,8 @@ export default function Terrain() {
             <div className={step === "deliver" ? "flex flex-col gap-3" : "hidden"}>
               {!planRes && scenarios.length === 0 && <Panel title={t("Teslim")}><p className="text-[12px] text-text-3">{t("Önce 2. adımda planı oluşturun.")}</p></Panel>}
               {planRes && (
-                <NetworkPanel resetKey={planVer} T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} prices={prices} onPrices={setPrices} onResult={setNetwork} />
+                <NetworkPanel resetKey={planVer} T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} prices={prices} onPrices={setPrices} onResult={setNetwork}
+                  value={analysis.network} onChange={(v) => setA("network", v)} full={fullRun} />
               )}
               {(planRes || scenarios.length > 0) && (
                 <ScenarioPanel T={T} terrainId={info.terrain_id} scenarios={scenarios} onChange={setScenarios} canSnapshot={!!planRes} />

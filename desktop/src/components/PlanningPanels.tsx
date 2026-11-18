@@ -4,6 +4,8 @@ import type { CameraConfig, ModelSummary } from "../core/api";
 import type { AssistedPlan, PlanResult, TerrainApi } from "../core/terrainApi";
 import type { useJob } from "../core/useJob";
 import { numberLocale, t, tn } from "../core/i18n";
+import { DEFAULT_ASSIST, DEFAULT_NETWORK, networkRequest, type AssistSettings, type NetworkSettings } from "../pages/analysisSettings";
+import type { FullRun } from "../pages/fullAnalysis";
 import { Button, Panel, fmt } from "./ui";
 
 /** "<name> · <min>–<max> mm" for a model selector; library names taken from brochure titles are cut at 40 characters
@@ -53,16 +55,28 @@ const priceFields = (): [keyof PriceBook, string][] => [
 ];
 
 /** Cabling, PoE, NVR sizing and the priced bill of quantities of the current plan. */
-export function NetworkPanel({ T, job, terrainId, useObstacles, prices, onPrices, onResult, resetKey }: {
+export function NetworkPanel({ T, job, terrainId, useObstacles, prices, onPrices, onResult, resetKey, value, onChange, full }: {
   T: TerrainApi; job: Job; terrainId: string; useObstacles: boolean; resetKey: number;
+  /** the saved cabling choices (null = never touched) and where an edit goes (kept in the project file) */
+  value: NetworkSettings | null; onChange: (v: NetworkSettings) => void;
+  /** a "Tam analiz" run: its network result is shown here as if this panel had run it */
+  full?: FullRun | null;
   prices: PriceBook; onPrices: (p: PriceBook) => void; onResult: (r: NetworkResult | null) => void;
 }) {
-  const [cfg, setCfg] = useState({ switch_ports: 8, poe_budget_w: 120, max_copper_m: 90, retention_days: 30, autonomy_h: 1, night_factor: 2 });
-  const [ring, setRing] = useState(false);
+  const s = value ?? DEFAULT_NETWORK;
+  const cfg = { switch_ports: s.switch_ports, poe_budget_w: s.poe_budget_w, max_copper_m: s.max_copper_m, retention_days: s.retention_days, autonomy_h: s.autonomy_h, night_factor: s.night_factor };
+  const setCfg = (c: typeof cfg) => onChange({ ...s, ...c });
+  const ring = s.ring;
+  const setRing = (r: boolean) => onChange({ ...s, ring: r });
   const [res, setRes] = useState<NetworkResult | null>(null);
+  useEffect(() => {
+    const r = full?.results.network as NetworkResult | undefined;
+    if (r) { setRes(r); onResult(r); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [full?.nonce]);
   const [showPrices, setShowPrices] = useState(false);
   useEffect(() => { setRes(null); }, [resetKey]);       // a new plan: the old network no longer applies
-  const run = () => void job.run(t("Ağ planı ve maliyet"), () => T.network({ terrain_id: terrainId, use_obstacles: useObstacles, ...cfg, fibre_ring: ring, prices }))
+  const run = () => void job.run(t("Ağ planı ve maliyet"), () => T.network({ terrain_id: terrainId, use_obstacles: useObstacles, ...networkRequest(s), prices }))
     .then((r) => { if (r) { setRes(r); onResult(r); } });
   const n = res?.network;
   return (
@@ -123,7 +137,11 @@ export function NetworkPanel({ T, job, terrainId, useObstacles, prices, onPrices
 }
 
 /** Fewest poles + PTZs when the fixed cameras detect and a PTZ zooms in on alarm (instead of fixed-only Recognition). */
-export function AssistPanel({ T, job, terrainId, useObstacles, models, camera, planArgs, goal, levels, defaultLevel, ptzModelFor, onPlan, onApplied, resetKey }: {
+export function AssistPanel({ T, job, terrainId, useObstacles, models, camera, planArgs, goal, levels, defaultLevel, ptzModelFor, onPlan, onApplied, resetKey, value, onChange, ptz, onPtz }: {
+  /** the saved choices (null = never touched; the PTZ model is kept by name) and where an edit goes */
+  value: AssistSettings | null; onChange: (v: AssistSettings) => void;
+  /** the chosen PTZ model resolved from the library (the page looks the saved name up when a project opens) */
+  ptz: CameraConfig | null; onPtz: (c: CameraConfig | null) => void;
   T: TerrainApi; job: Job; terrainId: string; useObstacles: boolean; models: ModelSummary[]; camera: CameraConfig;
   /** the project's coverage goal (%) */
   goal: number;
@@ -138,9 +156,12 @@ export function AssistPanel({ T, job, terrainId, useObstacles, models, camera, p
   resetKey?: number;
 }) {
   const ptzModels = models.filter((m) => m.is_ptz);
-  const [ptz, setPtz] = useState<CameraConfig | null>(null);
-  const [level, setLevel] = useState(defaultLevel);
-  const [maxS, setMaxS] = useState(10);
+  const s = value ?? { ...DEFAULT_ASSIST, level: defaultLevel };
+  const level = levels.some(([k]) => k === s.level) ? s.level : defaultLevel;
+  const maxS = s.maxS;
+  const setLevel = (l: string) => onChange({ ...s, level: l });
+  const setMaxS = (m: number) => onChange({ ...s, maxS: m });
+  const setPtz = (c: CameraConfig | null) => { onPtz(c); onChange({ ...s, model: c?.model_name ?? "" }); };
   const [res, setRes] = useState<AssistedPlan | null>(null);
   const own = useRef(false);               // the next plan change is this panel's own result
   useEffect(() => { if (own.current) own.current = false; else setRes(null); }, [resetKey, terrainId]);

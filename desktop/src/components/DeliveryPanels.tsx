@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Bookmark, Moon, Play, Trash2 } from "lucide-react";
 import type { CameraConfig } from "../core/api";
 import type { NightCoverage, NightTimeline, Scenario, TerrainApi } from "../core/terrainApi";
@@ -6,6 +6,8 @@ import type { useJob } from "../core/useJob";
 import type { Layer } from "./PtzPanels";
 import { confirmDialog } from "./dialogs";
 import { t } from "../core/i18n";
+import { DEFAULT_NIGHT, localNow, nightCommon, type NightSettings } from "../pages/analysisSettings";
+import type { FullRun } from "../pages/fullAnalysis";
 import { Button, Panel, fmt } from "./ui";
 
 type Job = ReturnType<typeof useJob>;
@@ -17,34 +19,39 @@ const glowOptions = (): [string, number][] => [[t("Kırsal (karanlık)"), 0], [t
 const modeText = (m: string): string => ({ termal: t("Termal"), pasif: t("Ortam ışığı"), ir: "IR", beyaz: t("Beyaz ışık"), yok: t("Görüntü yok") } as Record<string, string>)[m];
 const MODE_TONE: Record<string, string> = { termal: "bg-secondary", pasif: "bg-primary", ir: "bg-info", beyaz: "bg-warn", yok: "bg-danger" };
 
-const localNow = (h = 23) => {
-  const d = new Date();
-  d.setHours(h, 0, 0, 0);
-  const z = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${z(d.getMonth() + 1)}-${z(d.getDate())}T${z(h)}:00`;
-};
-
 /** Night: what lights the scene at a date / time, and the plan's fence band by night vs by day. */
-export function NightPanel({ T, job, terrainId, useObstacles, camera, hasLatLon, onLayer, onResult, resetKey, band }: {
+export function NightPanel({ T, job, terrainId, useObstacles, camera, hasLatLon, onLayer, onResult, resetKey, band, value, onChange, full }: {
   T: TerrainApi; job: Job; terrainId: string; useObstacles: boolean; camera: CameraConfig; hasLatLon: boolean; resetKey: number;
+  /** the saved choices (null = never touched: the defaults) and where an edit goes (the project file keeps them) */
+  value: NightSettings | null; onChange: (v: NightSettings) => void;
+  /** a "Tam analiz" run: its night result is shown here as if this panel had run it */
+  full?: FullRun | null;
   /** the fence band the plan protects (same as coverage) */
   band?: { band_m?: number; band_in_m?: number };
   onLayer: (l: Layer | null) => void; onResult: (r: NightCoverage | null) => void;
 }) {
-  const [when, setWhen] = useState(localNow());
-  const [pos, setPos] = useState({ lat: 39.92, lon: 32.85 });
-  const [cfg, setCfg] = useState({ cloud: 0, glow: 0, ir_on: true, white: 0, ir: camera.ir_range_m, min_lux: camera.min_lux });
+  const s = value ?? DEFAULT_NIGHT;
+  const defaultWhen = useMemo(() => localNow(), []);
+  const when = s.when ?? defaultWhen;
+  const setWhen = (w: string) => onChange({ ...s, when: w });
+  const pos = { lat: s.lat, lon: s.lon };
+  const setPos = (p: { lat: number; lon: number }) => onChange({ ...s, lat: p.lat, lon: p.lon });
+  // IR range / min lux stay "the camera's own" (null) until the user types one, so a camera change still moves them
+  const cfg = { cloud: s.cloud, glow: s.glow, ir_on: s.irOn, white: s.white, ir: s.ir ?? camera.ir_range_m, min_lux: s.minLux ?? camera.min_lux };
+  const setCfg = (c: typeof cfg) => onChange({ ...s, cloud: c.cloud, glow: c.glow, irOn: c.ir_on, white: c.white,
+    ir: c.ir === cfg.ir ? s.ir : c.ir, minLux: c.min_lux === cfg.min_lux ? s.minLux : c.min_lux });
   const [res, setRes] = useState<NightCoverage | null>(null);
   const [tl, setTl] = useState<NightTimeline | null>(null);
   const [used, setUsed] = useState<{ lat: number; lon: number } | null>(null);
-  useEffect(() => { setCfg((c) => ({ ...c, ir: camera.ir_range_m, min_lux: camera.min_lux })); }, [camera.ir_range_m, camera.min_lux]);
   useEffect(() => { setRes(null); setTl(null); setUsed(null); onResult(null); }, [terrainId, resetKey, onResult]);
 
-  const cam = { ...camera, ir_range_m: cfg.ir, min_lux: cfg.min_lux };
-  const common = {
-    cloud_cover: cfg.cloud / 100, sky_glow_lux: cfg.glow, ir_on: cfg.ir_on, white_light_range_m: cfg.white, camera: cam,
-    ...(hasLatLon ? {} : pos),
-  };
+  const common = nightCommon(s, camera, hasLatLon);
+  useEffect(() => {
+    const r = full?.results.night as NightCoverage | undefined;
+    if (!r) return;
+    setRes(r); setTl(null); setUsed(null); onResult(r);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [full?.nonce]);
   const run = () => void job.run(t("Gece kapsaması"), (o) => T.nightCoverage({ terrain_id: terrainId, use_obstacles: useObstacles, datetime: when, max_px: 1200, ...common, ...band }, o))
     .then((r) => {
       if (!r) return;

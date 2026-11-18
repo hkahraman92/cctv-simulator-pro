@@ -8,6 +8,8 @@ import { Button, Panel, Slider, Tile, fmt } from "./ui";
 import { modelOptionLabel } from "./PlanningPanels";
 import { toDisplayTilt } from "../pages/terrainTilt";
 import { parseMaxRevisit, speedCandidates } from "./patrolSpeeds";
+import { DEFAULT_MIXED_PANEL, DEFAULT_PTZ, type MixedPanelSettings, type PtzSettings } from "../pages/analysisSettings";
+import type { FullRun } from "../pages/fullAnalysis";
 
 export interface Layer {
   overlay: string;
@@ -26,7 +28,9 @@ const cueTargetsThermal = (): [number | null, string][] => [[null, t("Johnson te
 export interface Patrol { speed: number; dwell: number }
 
 /** Single-camera tab, PTZ model: sweep (360° / sector) or alarm -> identify time. */
-export function PtzPanel({ T, job, terrainId, useObstacles, camera, thermal, mount, weather, onLayer, onPlay }: {
+export function PtzPanel({ T, job, terrainId, useObstacles, camera, thermal, mount, weather, onLayer, onPlay, value, onChange }: {
+  /** the saved mode / presets / patrol / cue choices (null = never touched) and where an edit goes (kept in the project file) */
+  value: PtzSettings | null; onChange: (v: PtzSettings) => void;
   T: TerrainApi;
   job: Job;
   terrainId: string;
@@ -39,18 +43,29 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, thermal, mou
   /** live sweep of this camera with the panel's settings */
   onPlay?: (args: Record<string, unknown>) => void;
 }) {
-  const [mode, setMode] = useState<"rotation" | "sector" | "cue" | "tour">("rotation");
-  const [presets, setPresets] = useState<{ name: string; pan_deg: number; tilt_deg: number; focal_mm?: number; dwell_s: number }[]>([]);
+  const sv = value ?? DEFAULT_PTZ;
+  const { mode, presets, speed, span, dwell, target, accel } = sv;
+  const setMode = (m: PtzSettings["mode"]) => onChange({ ...sv, mode: m });
+  type PresetList = PtzSettings["presets"];
+  const setPresets = (p: PresetList | ((x: PresetList) => PresetList)) => onChange({ ...sv, presets: typeof p === "function" ? p(presets) : p });
   const [tour, setTour] = useState<TourResult | null>(null);
-  const [speed, setSpeed] = useState(20);
-  const [span, setSpan] = useState(120);
-  const [dwell, setDwell] = useState(2);
+  const setSpeed = (v: number) => onChange({ ...sv, speed: v });
+  const setSpan = (v: number) => onChange({ ...sv, span: v });
+  const setDwell = (v: number) => onChange({ ...sv, dwell: v });
   // null = the camera's own identification level (EN 250 px/m, Johnson 13,33 for a thermal): the core decides
-  const [target, setTarget] = useState<number | null>(null);
-  useEffect(() => { setTarget(null); setCue(null); }, [thermal]);
+  const setTarget = (v: number | null) => onChange({ ...sv, target: v });
+  // a thermal camera has other levels: a px/m target chosen for the other scale no longer applies (not on the first render)
+  const thermalSeen = useRef(thermal);
+  useEffect(() => {
+    setCue(null);
+    if (thermalSeen.current === thermal) return;
+    thermalSeen.current = thermal;
+    onChange({ ...sv, target: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thermal]);
   // the zoom the map shows: an applied optimum, else the lens end the single view uses
   const focal = mount.focal ?? (mount.lens === "min" ? camera.focal_min_mm : camera.focal_max_mm);
-  const [accel, setAccel] = useState(0);        // deg/s^2, 0 = instant top speed
+  const setAccel = (v: number) => onChange({ ...sv, accel: v });   // deg/s^2, 0 = instant top speed
   const [sweep, setSweep] = useState<SweepResult | null>(null);
   const [cue, setCue] = useState<CueResult | null>(null);
   const base = { terrain_id: terrainId, use_obstacles: useObstacles, camera, x_m: mount.x, y_m: mount.y, mast_m: mount.mast, range_m: mount.range, weather, max_px: 1200, slew_accel_deg_s2: accel };
@@ -157,7 +172,11 @@ export function PtzPanel({ T, job, terrainId, useObstacles, camera, thermal, mou
 }
 
 /** Perimeter tab: co-mount a PTZ on every Nth pole and evaluate fixed + PTZ together. */
-export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onChange, hasPlanWithPtz, ptz, onLayer, ptzModelFor, onPlay, resetKey, patrol, onPatrol, level, levelLabel, band, onPlan }: {
+export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onChange, hasPlanWithPtz, ptz, onLayer, ptzModelFor, onPlay, resetKey, patrol, onPatrol, level, levelLabel, band, onPlan, panel, onPanel, full }: {
+  /** panel choices beyond model / density / patrol (null = never touched) and where an edit goes (kept in the project file) */
+  panel: MixedPanelSettings | null; onPanel: (v: MixedPanelSettings) => void;
+  /** a "Tam analiz" run: its fixed + PTZ result is shown here as if this panel had run it */
+  full?: FullRun | null;
   T: TerrainApi;
   job: Job;
   terrainId: string;
@@ -186,8 +205,11 @@ export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onC
   const [search, setSearch] = useState<PatrolResult | null>(null);
   const ownPlan = useRef(false);          // the next plan change is this panel's own search result
   useEffect(() => { setRes(null); if (ownPlan.current) ownPlan.current = false; else setSearch(null); }, [resetKey, terrainId]);
-  const [searchSpeed, setSearchSpeed] = useState(false);   // also search the patrol speed
-  const [revisitText, setRevisitText] = useState("");        // optional limit on the longest unwatched stretch (s)
+  const ps = panel ?? DEFAULT_MIXED_PANEL;
+  const searchSpeed = ps.searchSpeed;                      // also search the patrol speed
+  const setSearchSpeed = (b: boolean) => onPanel({ ...ps, searchSpeed: b });
+  const revisitText = ps.revisitText;                       // optional limit on the longest unwatched stretch (s)
+  const setRevisitText = (x: string) => onPanel({ ...ps, revisitText: x });
   const revisit = parseMaxRevisit(revisitText);
   const ownSpeeds = ptz.filter((c) => c.speed_deg_s != null).length;
   const runSearch = () => void job.run(t("PTZ devriye araması"), (o) => T.ptzPatrol({ terrain_id: terrainId, use_obstacles: useObstacles,
@@ -198,7 +220,13 @@ export function MixedPanel({ T, job, terrainId, useObstacles, models, value, onC
   // clear the searched speeds (every PTZ follows the global speed again); the new plan drops the old search result
   const resetSpeeds = () => void job.run(t("Aranan hızlar sıfırlanıyor"), () => T.resetPatrolSpeeds({ terrain_id: terrainId }))
     .then((r) => { if (r) onPlan(r.plan); });
-  const [layer, setLayer] = useState<"fused" | "cue">("fused");
+  const layer = ps.layer;
+  const setLayer = (l: "fused" | "cue") => onPanel({ ...ps, layer: l });
+  useEffect(() => {
+    const r = full?.results.mixed as MixedResult | undefined;
+    if (r) setRes(r);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [full?.nonce]);
   const ptzModels = models.filter((m) => m.is_ptz);
   const run = (l: "fused" | "cue") => {
     setLayer(l);

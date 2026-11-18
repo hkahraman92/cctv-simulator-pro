@@ -59,6 +59,9 @@ export const TRANSLATED_FILES: string[] = [
   "main.tsx",
   "pages/opticsSeed.ts",
   "pages/terrainTilt.ts",
+  "pages/analysisSettings.ts",
+  "pages/fullAnalysis.ts",
+  "components/FullAnalysisPanel.tsx",
 ];
 
 // ---------------------------------------------------------------------------------------------

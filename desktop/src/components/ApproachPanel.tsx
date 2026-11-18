@@ -4,6 +4,8 @@ import type { ApproachResult, TerrainApi } from "../core/terrainApi";
 import type { useJob } from "../core/useJob";
 import type { Layer } from "./PtzPanels";
 import { numberLocale, t } from "../core/i18n";
+import { DEFAULT_APPROACH, approachRequest, type ApproachSettings } from "../pages/analysisSettings";
+import type { FullRun } from "../pages/fullAnalysis";
 import { Button, Panel, Slider, fmt } from "./ui";
 
 type Job = ReturnType<typeof useJob>;
@@ -23,14 +25,26 @@ export interface ApproachMarks {
 const secs = (s: number | null) => (s === null ? "—" : s >= 600 ? `${fmt(s / 60, 0)} ${t("dk")}` : `${fmt(s, 0)} ${t("sn")}`);
 
 /** Hidden approach: how close an intruder gets unseen, and how many seconds the response force gets. */
-export function ApproachPanel({ T, job, terrainId, useObstacles, onLayer, onMarks, resetKey }: {
+export function ApproachPanel({ T, job, terrainId, useObstacles, onLayer, onMarks, resetKey, value, onChange, full }: {
   T: TerrainApi; job: Job; terrainId: string; useObstacles: boolean; resetKey: number;
+  /** the saved choices (null = never touched) and where an edit goes (kept in the project file) */
+  value: ApproachSettings | null; onChange: (v: ApproachSettings) => void;
+  /** a "Tam analiz" run: its result is shown here as if this panel had run it */
+  full?: FullRun | null;
   onLayer: (l: Layer | null) => void; onMarks: (m: ApproachMarks | null) => void;
 }) {
-  const [depth, setDepth] = useState(400);
-  const [response, setResponse] = useState(60);
-  const [threat, setThreat] = useState("Koşarak"); // i18n-ignore
+  const s = value ?? DEFAULT_APPROACH;
+  const { depth, response } = s;
+  const threat = s.threat in SPEEDS ? s.threat : DEFAULT_APPROACH.threat;
+  const setDepth = (v: number) => onChange({ ...s, depth: v });
+  const setResponse = (v: number) => onChange({ ...s, response: v });
+  const setThreat = (v: string) => onChange({ ...s, threat: v });
   const [res, setRes] = useState<ApproachResult | null>(null);
+  useEffect(() => {
+    const r = full?.results.approach as ApproachResult | undefined;
+    if (r) setRes(r);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [full?.nonce]);
   useEffect(() => { setRes(null); onMarks(null); }, [terrainId, resetKey, onMarks]);
 
   // sector colours follow the chosen threat speed against the response time
@@ -49,7 +63,7 @@ export function ApproachPanel({ T, job, terrainId, useObstacles, onLayer, onMark
   }, [res, threat, response, onMarks]);
 
   const run = () => void job.run(t("Gizli yaklaşma analizi"), (o) => T.approach({
-    terrain_id: terrainId, use_obstacles: useObstacles, depth_m: depth, response_s: response, speeds: SPEEDS, max_px: 1200 }, o))
+    terrain_id: terrainId, use_obstacles: useObstacles, ...approachRequest(s, SPEEDS) }, o))
     .then((r) => {
       if (!r) return;
       setRes(r);

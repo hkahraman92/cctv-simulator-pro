@@ -74,7 +74,7 @@ desktop/                             yeni arayüz: Tauri 2 (Rust) + React/TS/Tai
 
 **Yeni masaüstü kabuğu.** `desktop/` Python çekirdeği (`python -m
 cctv_simulator.service`, yayında `cctv-core.exe`) alt süreç olarak başlatır,
-satır başına bir JSON-RPC nesnesi taşır (API v1, 82 yöntem; liste ve
+satır başına bir JSON-RPC nesnesi taşır (API v1, 83 yöntem; liste ve
 sözleşme `docs/masaustu-mimari.md`). Ekran fizik türetmez; her sayı bir API
 yönteminden gelir. Yeni özellik için: önce `service/*_methods.py`'ye yöntem +
 `tests/test_service_*.py`'ye motorla birebir eşlik testi, sonra
@@ -1120,6 +1120,33 @@ Fizik türetilmez, yalnız motor çıktısı sayılır; test iddiaları motor sa
   Ölçüldü (148 direklik çit, 2 km tepelik, 10 m, 4 MP 2,8–12 mm, 12 koşu): ~6,8 sn (kapsama 0,8 sn); Algılama
   %78,06 nominal, %77,4 kesin, %1,2 veriye bağlı. Sentetik şehir (196 bina, %80 varsayılan yükseklik, düz zemin):
   %41,7 nominal, %19,5 kesin, %34,6 veriye bağlı (yalnız bina %25,4, yalnız DEM %5,3), 5,4 sn.
+
+## Tam analiz (`analysis.full`) ve panel ayarlarının proje dosyası
+
+**Proje dosyası artık her analiz ayarını tutar.** Masaüstünde yardımcı / gece / gizli yaklaşma / ağ / PTZ / şehir
+panelleri ve "Tam analiz" onay kutuları `terrain_extra.analysis_settings`'te (`desktop/src/pages/analysisSettings.ts`:
+`buildAnalysisSettings` / `readAnalysisSettings`; alanlar: `assist{model,level,max_s}`, `night{when,lat,lon,cloud,glow,ir_on,
+white,ir,min_lux}`, `approach{depth_m,response_s,threat}`, `network{switch_ports,…,fibre_ring}`, `ptz{mode,presets,speed_deg_s,
+span_deg,end_dwell_s,target_ppm,accel_deg_s2}`, `mixed_panel{search_speed,revisit_text,layer}`, `city{level}`, `full{include,out_dir}`),
+Optics tezgâhı ANPR kurulumu `terrain_extra.anpr`'de saklanır (`project.tsx` `extras` / `setExtra`; `ProjectBar.mergeExtras` kayıtta
+birleştirir). Sonuçlar saklanmaz. Hiç dokunulmamış panel bloğu yazılmaz → okununca `null` (panel varsayılanı gösterir, Tam analiz
+onay kutusu işaretlenmez); eksik / hatalı / aralık dışı alan varsayılana düşer, eski dosya değişmeden açılır. Python `project_io`
+şeması DEĞİŞMEDİ: `terrain_extra` zaten olduğu gibi geçer (başsız CLI yükle + kaydet bunları korur; `test_service_full`
+pass-through testi). Gece `ir` / `min_lux` `null` = kameranın kendi değeri (kamera değişince izler). Yeni ayar için: `analysisSettings.ts`'e
+tip + varsayılan + `read*` + `build*`, `analysisSettings.test.ts`'e gidiş-dönüş / varsayılan / çöp testi; panel `value`/`onChange` alır, kendi
+`useState`'i tutmaz (yeni plan paneli sıfırlayınca ayar kaybolurdu).
+
+**Tam analiz** (`service/full_methods.py`, `FullAnalysisPanel.tsx` — Arazi sayfası, Doğrula adımının en üstü: plan orada doğrulanır ve ayarları
+kullanılan gece / yaklaşma / hassasiyet panelleri orada; Raporlar sayfasında ayarlar yok). Kapsama → karma (PTZ varsa) → gece → yaklaşma →
+ağ → hassasiyet → beyan → kabul föyü → mühendislik raporu → teklif ZIP. Her adım ilgili servis işlevini alt bağlamla çağırır (mantık
+kopyalanmaz; sayılar ayrı çağrıyla bit-aynı — `test_service_full`), `entry.results`'a panel koşmuş gibi yazar. Durum ok / skipped (Türkçe
+neden: "plan PTZ içermiyor", "gece tarihi seçilmedi" …) / failed (Türkçe hata; sonraki adım koşar). Klasör verilmezse yalnız hesaplanır
+(beyan, kabul föyü); mühendislik raporu ve ZIP yazılır-yalnız, atlanır. Klasör varsa dosyalar + `analiz-ozeti.md` (adımlar, durum, sayılar,
+varsayımlar: ölçülmüş mü, ızgara inceltme, hedef boyu, hava, hassasiyet varsayımları). Yanıtın `results{}`'ı panellere `FullRun` olarak
+verilir (`full` prop, `nonce` değişince panel kendi `res`'ini yeniler); yeni plan `fullRun`'ı düşürür. Sonuç sembolleri ● – ■ (emoji yok).
+Ölçüldü (148 direk / 152 kamera, 2 km ridge_and_valley, 10 m, 4 MP 2,8–12 mm, 8 m direk, 40 px/m, hedef 1,8 m; gece + yaklaşma + ağ +
+hassasiyet 12 koşu): klasörsüz ~10,6 sn (kapsama 1,6, gece 1,8, yaklaşma 0,7, hassasiyet 6,1, beyan 0,4); klasörlü ~16,8 sn
+(+kabul föyü PDF/CSV 2,5, mühendislik 0,4, ZIP 3,1); yazılan ~0,8 MB.
 
 ## Çevre çiti boşluk analizi
 

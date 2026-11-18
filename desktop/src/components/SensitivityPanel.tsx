@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Play, ShieldQuestion } from "lucide-react";
 import type { SensitivityResult, TerrainApi, TerrainInfo, TerrainLevel } from "../core/terrainApi";
 import type { useJob } from "../core/useJob";
+import type { FullRun } from "../pages/fullAnalysis";
 import type { Layer } from "./PtzPanels";
 import { t, tn } from "../core/i18n";
 import { levelsFor } from "../core/terrainLevels";
@@ -31,7 +32,9 @@ function OptNumber({ label, value, placeholder, min, max, onChange }: {
 
 /** How much of the coverage survives wrong data: certain / data-dependent / never, over perturbed copies of the DEM and
  *  the building heights (the engine re-run per copy; run 0 is the data as it is). */
-export function SensitivityPanel({ T, job, info, useObstacles, level, band, thermal, resetKey, inputsKey, value, onChange, showing, onLayer }: {
+export function SensitivityPanel({ T, job, info, useObstacles, level, band, thermal, resetKey, inputsKey, value, onChange, showing, onLayer, full }: {
+  /** a "Tam analiz" run: its result is shown here as if this panel had run it */
+  full?: FullRun | null;
   T: TerrainApi; job: Job; info: TerrainInfo; useObstacles: boolean; thermal: boolean;
   /** the coverage report's level choice ("plan" = the plan's own target) and band widths: scored the same way */
   level: "plan" | TerrainLevel; band: { band_m?: number; band_in_m?: number };
@@ -49,6 +52,11 @@ export function SensitivityPanel({ T, job, info, useObstacles, level, band, ther
     if (showing) onLayer(null);          // a picture of the old inputs must not stay on the map
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [info.terrain_id, resetKey, inputsKey]);
+  useEffect(() => {
+    const r = full?.results.sensitivity as SensitivityResult | undefined;
+    if (r) setRes(r);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [full?.nonce]);
   const d = info.sensitivity_defaults;
   const [runsLo, runsHi] = SENSITIVITY_LIMITS.runs;
 

@@ -9,6 +9,7 @@
 import type { CameraConfig } from "../core/api";
 import { t } from "../core/i18n";
 import type { CoverageLayer, DoriLevel, Scenario, TerrainLevel } from "../core/terrainApi";
+import { buildAnalysisSettings, readAnalysisSettings, type AnalysisSettings } from "./analysisSettings";
 
 export type LineMode = "facility" | "border" | "highway" | "area";
 export type Pt = [number, number];
@@ -51,6 +52,8 @@ export interface ExtraState {
   /** analysis-grid refinement of the loaded DEM (1 = its own cell) */
   refine: number;
   sensitivity: SensitivitySettings;
+  /** the analysis panels' choices (assist, night, approach, network, PTZ, city, "Tam analiz"); absent = none touched */
+  analysis?: AnalysisSettings;
 }
 
 /** Data-sensitivity panel settings. `sigma` / `corr` null = the core's documented default for the loaded DEM. */
@@ -77,6 +80,7 @@ export function buildTerrainExtra(s: ExtraState): Record<string, unknown> {
     coverage_view: { layer: s.covLayer, level: s.covLevel }, sweep_level: s.sweepLevel,
     analysis_refine: s.refine,
     sensitivity: { n_runs: s.sensitivity.nRuns, dem_sigma_m: s.sensitivity.sigma, dem_corr_m: s.sensitivity.corr },
+    analysis_settings: s.analysis ? buildAnalysisSettings(s.analysis) : {},
   };
 }
 
@@ -115,6 +119,8 @@ export interface ExtraRead {
   sensitivity?: { nRuns?: number; sigma?: number | null; corr?: number | null };
   /** the saved mixed fixed + PTZ choice: the model is only a NAME here (see `restoreMixedPtz`) */
   mixedPtz?: { model?: string; everyN?: number; span?: number };
+  /** the analysis panels' saved choices: a block never touched (or absent / invalid in the file) is null */
+  analysis: AnalysisSettings;
 }
 
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
@@ -167,6 +173,7 @@ export function readTerrainExtra(raw: unknown): ExtraRead {
     mixedPtz,
     refine: readRefine(x.analysis_refine),
     sensitivity: readSensitivity(x.sensitivity),
+    analysis: readAnalysisSettings(x.analysis_settings),
   };
 }
 
