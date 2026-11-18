@@ -102,6 +102,12 @@ LAYER_BANDS = {
         (2, 3, _rgba("ptz", 170), "Yalnız PTZ devriyesiyle (aralıklı)"),
         (3, 4, _rgba("warn", 165), "Görülüyor, hedefin altında"),
         (4, 5, _rgba("danger", 165), "Hiç görülmüyor"))),
+    # data-sensitivity layer (``sensitivity.coverage_sensitivity``): codes painted only inside the protected
+    # area. Certain = the cold "held" colour, uncertain = the warm attention colour, never = "unseen".
+    "sensitivity": ("VERİ HASSASİYETİ — hedef tutuyor mu", (
+        (1, 2, _rgba("dori-identify", 175), "Kesin (tüm koşularda tutuyor)"),
+        (2, 3, _rgba("warn", 180), "Veriye bağlı (bazı koşularda)"),
+        (3, 4, _rgba("danger", 165), "Hiçbir koşuda tutmuyor"))),
     "fused": ("ALGILAMA: SABİT + PTZ", (
         (2, 3, _rgba("dori-identify", 140), "Sürekli — sabit kamera"),
         (1, 2, _rgba("warn", 125), "Aralıklı — yalnız PTZ devriyesi"))),

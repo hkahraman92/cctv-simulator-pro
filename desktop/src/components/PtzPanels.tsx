@@ -14,7 +14,7 @@ export interface Layer {
   legend: LegendRow[];
   title: string;
   /** stable id for code that must recognise a layer (the title is translated display text) */
-  kind?: "approach";
+  kind?: "approach" | "sensitivity";
 }
 
 type Job = ReturnType<typeof useJob>;

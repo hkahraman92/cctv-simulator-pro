@@ -35,6 +35,8 @@ export interface TerrainInfo {
   /** analysis grid: `cell_size_m` is the cell the engines count in (= `base_cell_m / refine_factor`); `base_cell_m` is the loaded DEM's */
   refine_factor: number;
   base_cell_m: number;
+  /** documented default data error of this DEM (an assumption, not a datasheet value): the placeholders of the sensitivity fields */
+  sensitivity_defaults?: { dem_sigma_m: number; dem_corr_m: number; basis: string };
   save_error?: string;
   summary?: string;
   message?: string;
@@ -187,6 +189,40 @@ export interface CoverageResult {
   grid_note?: string | null;
   /** the smallest refine factor (of the loaded DEM) that makes the cell fine enough for the shares, or the finest allowed; null when fine / no finer grid */
   grid_suggest?: { factor: number; cell_m: number } | null;
+}
+
+/** Data-uncertainty analysis of the coverage (`perimeter.sensitivity`): the shares are counts over the engine's grids */
+export interface SensitivityResult {
+  /** runs including run 0, the data as it is */
+  n_runs: number;
+  seed: number;
+  level_label: string;
+  target_ppm: number;
+  /** shares of the protected area: held in every run / in some runs / in none */
+  certain: number;
+  uncertain: number;
+  never: number;
+  /** the share with the data as it is, and its spread over the runs */
+  nominal: number;
+  share_min: number;
+  share_max: number;
+  share_p10: number;
+  share_p90: number;
+  run_shares: number[];
+  /** per DORI level: min / nominal / max share over the runs (monitor only from a monitor-floor run) */
+  levels: Partial<Record<TerrainLevel, { min: number; nominal: number; max: number }>>;
+  assumptions: {
+    dem_sigma_m: number; dem_corr_m: number; dem_basis: string; obstacle_scale: number; refine_factor: number; base_cell_m: number;
+    objects: { tagged?: number; levels?: number; default?: number }; measured_cells: number; source_known: boolean;
+  };
+  /** core text (Turkish, shown as-is): "Veri hassasiyeti: %X kesin, %Y veriye bağlı (...)" */
+  line: string;
+  band_area_m2: number;
+  measured: boolean;
+  monitor_floor: boolean;
+  overlay: Picture;
+  legend: LegendRow[];
+  elapsed_s: number;
 }
 
 /** The four levels every planner understands. */
@@ -588,6 +624,8 @@ export interface Scenario {
   copper_m: number | null; fibre_m: number | null; poe_w: number | null; cost_total: number | null; currency: string;
   unpriced: string[]; band_share: Record<string, number | null>; night_band_share: Record<string, number> | null;
   night_mode: string; measured: boolean | null;
+  /** present only when a sensitivity analysis ran on the plan */
+  sensitivity?: { certain: number; uncertain: number; n_runs: number; line: string };
 }
 
 type T = { terrain_id: string; use_obstacles?: boolean };
@@ -627,6 +665,8 @@ export function terrainApi(rpc: RpcClient) {
       rpc.call<{ target_height_m: number; changed: boolean }>("terrain.settings", { terrain_id, ...s }),
     coverage: (p: T & { layer?: CoverageLayer; level?: "plan" | TerrainLevel; band_m?: number; band_in_m?: number; max_px?: number; ptz_speed_deg_s?: number; ptz_end_dwell_s?: number; ptz_reach?: boolean }, opts?: CallOptions) =>
       rpc.call<CoverageResult>("perimeter.coverage", p, { timeoutMs: 0, ...opts }),
+    sensitivity: (p: T & { level?: "plan" | TerrainLevel; band_m?: number; band_in_m?: number; max_px?: number; n_runs?: number; seed?: number; dem_sigma_m?: number | null; dem_corr_m?: number | null; obstacle_uncertainty?: number }, opts?: CallOptions) =>
+      rpc.call<SensitivityResult>("perimeter.sensitivity", p, { timeoutMs: 0, ...opts }),
     approach: (p: T & { depth_m: number; response_s?: number; speeds?: Record<string, number>; max_px?: number }, opts?: CallOptions) =>
       rpc.call<ApproachResult>("approach.analyse", p, { timeoutMs: 0, ...opts }),
     cityOsm: (terrain_id: string, opts?: CallOptions) =>

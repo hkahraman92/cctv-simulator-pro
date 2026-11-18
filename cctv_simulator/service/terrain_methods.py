@@ -81,7 +81,16 @@ def _info(entry: _s.TerrainEntry) -> Dict[str, Any]:
         "preset": entry.extra.get("preset", ""), "file": entry.extra.get("file", ""),
         # analysis grid: ``cell_size_m`` is the cell the engines count in; ``base_cell_m`` the loaded DEM's
         "refine_factor": entry.refine_factor, "base_cell_m": entry.base_cell_m,
+        # documented default data error of this DEM (perimeter.sensitivity prefills / placeholders)
+        "sensitivity_defaults": _sensitivity_defaults(entry),
     }
+
+
+def _sensitivity_defaults(entry: _s.TerrainEntry) -> Dict[str, Any]:
+    from ..sensitivity import default_dem_assumption
+
+    d = default_dem_assumption(entry.bare, base_cell_m=entry.base_cell_m)
+    return {"dem_sigma_m": d.sigma_m, "dem_corr_m": d.corr_m, "basis": d.basis}
 
 
 def _register(terrain, photo=None, **kw) -> _s.TerrainEntry:

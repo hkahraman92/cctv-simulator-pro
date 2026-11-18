@@ -25,10 +25,11 @@ import { AssistPanel, ComparePanel, EMPTY_PRICES, NetworkPanel, type NetworkResu
 import { NightPanel, ScenarioPanel } from "../components/DeliveryPanels";
 import { ApproachPanel, type ApproachMarks } from "../components/ApproachPanel";
 import { CityPanel } from "../components/CityPanel";
+import { SensitivityPanel } from "../components/SensitivityPanel";
 import { Button, Panel, Slider, Tile, fmt } from "../components/ui";
 import { DISPLAY_TILT_MAX, DISPLAY_TILT_MIN, fromDisplayTilt, toDisplayTilt } from "./terrainTilt";
 import {
-  LEVEL_PPM, buildTerrainExtra, changedKeys, projectCameraToTerrain, readPlacement, readTerrainExtra, refineChoices, restoreMixedPtz, terrainToProjectCamera, type LineMode,
+  LEVEL_PPM, SENSITIVITY_DEFAULTS, buildTerrainExtra, changedKeys, projectCameraToTerrain, readPlacement, readTerrainExtra, refineChoices, restoreMixedPtz, terrainToProjectCamera, type LineMode, type SensitivitySettings,
 } from "./terrainPersist";
 import { LegendSwatch } from "../components/LegendSwatch";
 import { levelName, levelsFor } from "../core/terrainLevels";
@@ -101,6 +102,7 @@ export default function Terrain() {
   const [band, setBand] = useState({ out: 40, in: 40 });
   const [covLayer, setCovLayer] = useState<CoverageLayer>("target");
   const [covLevel, setCovLevel] = useState<"plan" | TerrainLevel>("plan");
+  const [sens, setSens] = useState<SensitivitySettings>(SENSITIVITY_DEFAULTS);   // data-sensitivity panel (persisted)
   const [showFov, setShowFov] = useState(true);
   // live PTZ sweep: pictures from the core once, the map turns the cones
   const [play, setPlay] = useState<{ ptz: PlaybackPtz[]; tab: Tab; camera: string } | null>(null);
@@ -352,12 +354,12 @@ export default function Terrain() {
       terrain_extra: buildTerrainExtra({
         camera, tab, fence, plan, band, targetH, goal, reqLevel, area, mixedPtz, prices, scenarios,
         mapMode, useObstacles, focal: mount.focal, patrol, ptzReach, slide, panSearch, covLayer, covLevel, sweepLevel,
-        refine: info.refine_factor || 1,
+        refine: info.refine_factor || 1, sensitivity: sens,
       }),
     }, { touch: !restoring.current });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [setTerrainBlock, info, mount, weather, camera, tab, fence, plan, band, targetH, area, mixedPtz, prices, scenarios, goal, isThermal,
-    mapMode, useObstacles, patrol, ptzReach, slide, panSearch, covLayer, covLevel, sweepLevel]);
+    mapMode, useObstacles, patrol, ptzReach, slide, panSearch, covLayer, covLevel, sweepLevel, sens]);
 
   useEffect(() => {
     if (!loadedTerrain || state !== "ready") return;
@@ -411,6 +413,10 @@ export default function Terrain() {
       if (e.panSearch !== undefined) setPanSearch(e.panSearch);
       if (e.covLayer) setCovLayer(e.covLayer);
       if (e.covLevel) setCovLevel(e.covLevel);
+      if (e.sensitivity) {
+        const sv = e.sensitivity;
+        setSens((s) => ({ nRuns: sv.nRuns ?? s.nRuns, sigma: sv.sigma === undefined ? s.sigma : sv.sigma, corr: sv.corr === undefined ? s.corr : sv.corr }));
+      }
       if (e.sweepLevel) setSweepLevel(e.sweepLevel);
       // applyModel resets the focal to the lens end, so the saved focal goes back after it
       const restoreFocal = () => { if (e.focal !== undefined) setMount((m) => ({ ...m, focal: e.focal })); };
@@ -950,6 +956,11 @@ export default function Terrain() {
                 <Button className="mt-2 w-full" disabled={job.running} onClick={() => void runCoverage()}><Layers size={14} /> {t("Birleşik Kapsamayı Hesapla")}</Button>
                 {coverage && <CoverageSummary c={coverage} thermal={isThermal} busy={job.running} onRefine={(fc) => void refineAndRecompute(fc)} />}
                 </Panel>
+              )}
+              {planRes && (
+                <SensitivityPanel T={T} job={job} info={info} useObstacles={useObstacles} thermal={isThermal} level={covLevel} band={bandArgs()}
+                  resetKey={planVer} inputsKey={`${targetH}|${useObstacles}|${covLevel}|${band.out}|${band.in}|${info.refine_factor}`}
+                  value={sens} onChange={setSens} showing={mixedLayer?.kind === "sensitivity"} onLayer={setMixedLayer} />
               )}
               {planRes && (
                 <NightPanel resetKey={planVer} T={T} job={job} terrainId={info.terrain_id} useObstacles={useObstacles} camera={camera}

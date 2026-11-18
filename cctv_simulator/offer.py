@@ -27,7 +27,7 @@ LEVEL_NAMES = (("identify", "Teşhis"), ("recognize", "Tanıma"), ("observe", "G
 # ------------------------------------------------------------------ scenario summary
 def scenario_summary(plan, *, label: str = "", network=None, cost=None, band_share: Optional[Dict] = None,
                      night: Optional[Dict] = None, terrain: Optional[TerrainData] = None,
-                     camera_model: str = "") -> Dict[str, Any]:
+                     camera_model: str = "", sensitivity: Optional[Dict] = None) -> Dict[str, Any]:
     """A flat, JSON-able record of one design alternative (what the comparison table shows)."""
     fixed = list(plan.placed_cameras)
     ptz = list(getattr(plan, "ptz_cameras", []) or [])
@@ -59,6 +59,10 @@ def scenario_summary(plan, *, label: str = "", network=None, cost=None, band_sha
     if band_share:
         out["band_share"] = {k: (None if band_share.get(k) is None else round(float(band_share[k]), 4))
                              for k, _ in LEVEL_NAMES}
+    if sensitivity:          # present only when ``perimeter.sensitivity`` ran: other summaries are unchanged
+        out["sensitivity"] = {"certain": round(float(sensitivity["certain"]), 4),
+                              "uncertain": round(float(sensitivity["uncertain"]), 4),
+                              "n_runs": int(sensitivity["n_runs"]), "line": str(sensitivity["line"])}
     if night:
         out["night_band_share"] = {k: round(float(v), 4) for k, v in (night.get("band_share") or {}).items()}
         out["night_mode"] = str(night.get("mode_text", ""))
@@ -99,6 +103,8 @@ def comparison_rows(scenarios: Sequence[Dict]) -> List[List[str]]:
     for k, nm in LEVEL_NAMES:
         add(f"Bant {nm}", lambda s, k=k: _fmt((s.get("band_share") or {}).get(k), pct=True))
     add("Gece bant Algılama", lambda s: _fmt((s.get("night_band_share") or {}).get("detect"), pct=True))
+    if any(s.get("sensitivity") for s in scenarios):
+        add("Veriye bağlı pay", lambda s: _fmt((s.get("sensitivity") or {}).get("uncertain"), pct=True))
     add("PoE switch", lambda s: _fmt(s.get("switches")))
     add("Bant genişliği", lambda s: _fmt(s.get("bitrate_mbps"), 1, unit="Mbps"))
     add("Kayıt", lambda s: _fmt(s.get("storage_tb"), 1, unit="TB"))
@@ -288,6 +294,8 @@ def build_share_html(terrain: TerrainData, plan, *, title: str, network=None, co
                 ("Çit", _fmt(summary.get("fence_m"), 0, unit="m")),
                 ("Bant Algılama", _fmt(bs.get("detect"), pct=True)),
                 ("Bant Teşhis", _fmt(bs.get("identify"), pct=True)),
+                *([("Veriye bağlı pay", _fmt(summary["sensitivity"]["uncertain"], pct=True))]
+                  if summary.get("sensitivity") else []),
                 ("Kayıt", _fmt(summary.get("storage_tb"), 1, unit="TB")),
                 ("Maliyet", _cost_cell(summary))]
     fig_html = "".join(f"<div class=fig><b>{html.escape(v)}</b><span>{html.escape(k_)}</span></div>"
@@ -345,7 +353,8 @@ def build_offer_package(zip_path: str | Path, *, project_name: str, terrain: Ter
                         network=None, cost=None, coverage=None, band_share: Optional[Dict] = None,
                         night: Optional[Dict] = None, photo=None, spec_result: Optional[Dict] = None,
                         spec_kw: Optional[Dict] = None, scenarios: Sequence[Dict] = (), weather: str = "",
-                        plan_statement: Optional[str] = None, ptz_camera=None, progress=None) -> Dict[str, Any]:
+                        plan_statement: Optional[str] = None, ptz_camera=None, progress=None,
+                        sensitivity: Optional[Dict] = None) -> Dict[str, Any]:
     """Write the offer ZIP; returns {"path", "files": [names], "skipped": [reasons]}."""
     import tempfile
 
@@ -358,7 +367,8 @@ def build_offer_package(zip_path: str | Path, *, project_name: str, terrain: Ter
     files: Dict[str, bytes] = {}
     skipped: List[str] = []
     summary = scenario_summary(plan, label=project_name, network=network, cost=cost, band_share=band_share,
-                               night=night, terrain=terrain, camera_model=getattr(camera, "model_name", ""))
+                               night=night, terrain=terrain, camera_model=getattr(camera, "model_name", ""),
+                               sensitivity=sensitivity)
     measured_line = ("Arazi: ölçülmüş DEM" if terrain.is_measured
                      else "UYARI: arazi ölçülmüş değil (temsili) — kapsama sonuçları bağlayıcı değil")
     pre = [project_name, measured_line, terrain.source_note or ""]
@@ -388,6 +398,8 @@ def build_offer_package(zip_path: str | Path, *, project_name: str, terrain: Ter
         step(1, "Mühendislik raporu")
         kw = dict(project_name=project_name, terrain=terrain, camera=camera, weather=weather, perimeter=plan,
                   multi_viewshed=coverage)
+        if sensitivity:
+            kw["sensitivity"] = sensitivity
         try:
             exporters.export_engineering_report_pdf(str(tdp / "r.pdf"), **kw)
             files["04-muhendislik-raporu.pdf"] = (tdp / "r.pdf").read_bytes()

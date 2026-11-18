@@ -199,7 +199,7 @@ def _summary(entry, t, label: str):
     bs = entry.results.get("band_share")
     return scenario_summary(plan, label=label, network=entry.results.get("network"), cost=entry.results.get("cost"),
                             band_share=bs[1] if bs else None, night=entry.results.get("night"), terrain=t,
-                            camera_model=cam.model_name)
+                            camera_model=cam.model_name, sensitivity=entry.results.get("sensitivity"))
 
 
 def scenario_snapshot(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
@@ -275,7 +275,8 @@ def export_package(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
             network=entry.results.get("network"), cost=entry.results.get("cost"), coverage=entry.results.get("multi"),
             band_share=bs[1] if bs else None, night=entry.results.get("night"), photo=entry.photo,
             spec_result=spec, spec_kw=spec_kw, plan_statement=stmt[1] if stmt else None, ptz_camera=kw.get("ptz_camera"), scenarios=_scenarios(params, required=False),
-            weather=kw.get("weather", ""), progress=ctx.progress)
+            weather=kw.get("weather", ""), progress=ctx.progress,
+            sensitivity=entry.results.get("sensitivity"))
     except OSError as exc:
         raise RpcError(APP_ERROR, f"Paket yazılamadı: {exc}") from None
     return out
@@ -325,6 +326,7 @@ def _plan_statement(entry, t, params: Dict[str, Any]):
          if entry.target_height_m > 0 else "Hedef zemin noktasıdır (insan boyu modellenmedi)."),
     ]
     md = build_plan_statement(conf, plan=plan, camera=cam, conditions=conditions, measured=bool(t.is_measured),
+                              sensitivity=entry.results.get("sensitivity"),
                               project_name=str(params.get("project_name", "")), bidder=str(params.get("bidder", "")))
     return conf, md
 

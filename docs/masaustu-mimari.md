@@ -23,7 +23,7 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
 - **API v1** (`cctv_simulator/service/__init__.py: API_VERSION`). Yöntem
   eklemek / isteğe bağlı alan eklemek küçük sürüm; yeniden adlandırma ya da
   silme büyük sürüm. `system.describe` güncel listeyi verir.
-- Yöntemler (80; modül başına):
+- Yöntemler (81; modül başına):
   - `methods.py`: `system.info|ping|describe`, `catalog.get`,
     `library.list|get|camera`, `optics.calculate`, `project.load|save`
   - `library_methods.py`: `library.fields|record|auth|save|delete|set_password`
@@ -66,6 +66,16 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
     `export.plan_statement` (planın EN 62676-4 uygunluk beyanı: bölge × seviye × sonuç),
     `export.package` (teklif ZIP), `night.condition|timeline|coverage`,
     `scenario.snapshot|compare`
+  - `sensitivity_methods.py`: `perimeter.sensitivity` (veri belirsizliği: planın kapsamasını `n_runs` (4–32) bozulmuş
+    yükselti / bina yüksekliği kopyasında otoriter çok kameralı motordan yeniden geçirir; koşu 0 = veri olduğu gibi =
+    `perimeter.coverage` ile bit-aynı. Parametreler kapsamayla aynı (`level`, `band_m`, `band_in_m`, `use_obstacles`,
+    `max_px`) + `n_runs`, `seed`, isteğe bağlı `dem_sigma_m`, `dem_corr_m`, `obstacle_uncertainty` (çarpan, 0 = bina
+    yükseklikleri kesin). Yanıt: `certain` / `uncertain` / `never` (korunan alanın payı), `nominal`, `share_min|max|p10|p90`,
+    `levels` (seviye başına en az / nominal / en çok), `assumptions` (kullanılan σ, korelasyon, kaynak, bina yüksekliği
+    kaynağına göre nesne sayıları), `line` (raporların cümlesi), `overlay` + `legend` (KESİN / VERİYE BAĞLI / HİÇ).
+    Sonuç `results["sensitivity"]`'te durur ve plan değişince düşer; plan uygunluk beyanı, mühendislik raporu, senaryo
+    özeti ve paylaşım sayfası yalnız sonuç varsa satırını / bölümünü ekler. `terrain.*` özetlerinde
+    `sensitivity_defaults` (σ, korelasyon, dayanak) alanın yer tutucusudur)
 - Plandan türetilmiş sonuçlar (`multi`, `band_share`, `network`, `cost`,
   `night`, `mixed`, `approach`) yeni bir plan kurulunca düşer (`TerrainEntry.set_plan`):
   senaryo, KMZ ya da teklif paketi B planını A'nın kapsaması / maliyetiyle

@@ -74,7 +74,7 @@ desktop/                             yeni arayüz: Tauri 2 (Rust) + React/TS/Tai
 
 **Yeni masaüstü kabuğu.** `desktop/` Python çekirdeği (`python -m
 cctv_simulator.service`, yayında `cctv-core.exe`) alt süreç olarak başlatır,
-satır başına bir JSON-RPC nesnesi taşır (API v1, 80 yöntem; liste ve
+satır başına bir JSON-RPC nesnesi taşır (API v1, 81 yöntem; liste ve
 sözleşme `docs/masaustu-mimari.md`). Ekran fizik türetmez; her sayı bir API
 yönteminden gelir. Yeni özellik için: önce `service/*_methods.py`'ye yöntem +
 `tests/test_service_*.py`'ye motorla birebir eşlik testi, sonra
@@ -523,6 +523,10 @@ sayısıyla ağırlıklı, DORI metrikleri yalnız parse edilenler üzerinden). 
 - `test_geotiff_dem.py` — TM ters dönüşüm, rasterio'suz UTM DEM ölçülmüş +
   güney-yukarı + konumlu, coğrafi DEM kare metreye, döşemeli/sıkıştırılmış
   COG (tifffile), georeferanssız TIFF ölçülmemiş, başsız CLI `--viewshed`.
+- `test_sensitivity.py` / `test_service_sensitivity.py` — nesne etiketleme, ilintili alan, σ 0 ⇒ her koşu koşu 0 ve
+  kapsama ile birebir aynı, koşu 0 bit-aynı, tohum başına deterministik, düz arazide sınır, alçak duvar
+  belirsiz / yüksek duvar hiç / açık hücre kesin, varsayılan yükseklik etiketliden belirsiz, orijinal ızgarada hata
+  (1× vs 4×), iptal + ilerleme, rapor / beyan satırı yalnız sonuç varken, Türkçe doğrulama hataları.
 - `test_geo_export.py` / `test_night.py` / `test_service_delivery.py` —
   pusula kaması, KML konumu `calculate_bbox` çerçevesinde, KMZ katmanı, DXF
   R12 yapısı + Türkçe kaçış, projeksiyonlu georef tam; ay evreleri yayımlanmış
@@ -1084,6 +1088,39 @@ var) kabul eder; yüz ve gizlilik `>= Algılama` kümelerinden okur, izlemeden
 etkilenmez. `reject_monitor_level` şu an çağrılmıyor; bayrağı taşımayan yeni bir
 yöntem onu kullansın.
 
+## Veri hassasiyeti (`sensitivity.py`, `perimeter.sensitivity`)
+
+Kapsama payı verisi kadar güvenilirdir: indirilen DEM'in (~30 m, SRTM türevi) metrelerce hatası, OSM bina
+yüksekliklerinin çoğu sınıf varsayılanı. `coverage_sensitivity` her koşuda veriyi bozup **otoriter** çok kameralı
+motoru (`calculate_multi_camera_viewshed`, `perimeter.coverage`'in koştuğu yerleşimler) yeniden koşturur ve hücre
+başına "hedef kaç koşuda tutuyor" sayar: KESİN (hepsinde) / VERİYE BAĞLI (bazısında) / HİÇ (hiçbirinde). **Koşu 0
+bozulmamış veridir** (aynı arazi nesnesi → kapsama ile bit-aynı, pay aynı ifadeyle sayılır); `n_runs` onu içerir.
+Fizik türetilmez, yalnız motor çıktısı sayılır; test iddiaları motor sayısına değil ilişki / sınıra bağlıdır.
+- **Hata modeli bir VARSAYIMDIR, veri sayfası değeri değil** (`DEM_ASSUMPTIONS`, `OBSTACLE_SPREAD`; kodda yorumlu):
+  zemin = çıplak DEM + uzamsal ilintili Gauss alanı (std `dem_sigma_m`, ilinti uzunluğu `dem_corr_m`; beyaz gürültü
+  ayrılabilir Gauss ile yumuşatılır, çekirdeğin analitik kazancıyla birim varyansa bölünür; tohum başına deterministik).
+  Varsayılanlar: Terrarium 4 m / 90 m, Open-Elevation 6 m / 250 m, yerel GeoTIFF 1 m / 3 hücre (kullanıcıya sorulur),
+  prosedürel 3 m / 90 m (`measured=False`, çıktı "ölçülmüş değil" der), kaynağı bilinmeyen ölçülmüş 4 m / 90 m.
+  Bina / ağaç **nesnesi** başına (aynı tür + kaynak + yükseklikli 8-komşu bileşen) koşu başına TEK düzgün çekiliş:
+  `height` etiketli ×(1 ± %10), kat sayısından ±1,5 m, sınıf varsayılanı ×(1 ± %50), ölçülmüş nDSM/DSM ilintili alan
+  σ 1 m. Kaynak ızgarası yoksa her nesne "varsayılan" sayılır (muhafazakâr). `obstacle_scale` tüm yayılımları çarpar
+  (0 = kesin). Direk **bozulmuş zeminde** durur (`ground_elevation_at`): tüm saha hatayla birlikte kayar, önemli olan
+  göreli hatadır — bilinçli. Düz açık arazide bile eğim hatası uzun lensin sığ bakışını gizler (tele 12 mm, eğim −2°:
+  σ 1 m'de belirsiz pay %0,2, σ 4 m'de %26; geniş lensle σ 4 m'de %0,2).
+- **Hata alanı ORİJİNAL DEM ızgarasında** üretilir, `terrain.refine`'in aradeğerlemesiyle (`_upsample_bilinear`) analiz
+  ızgarasına taşınır (`refine_factor`): ilinti veriye aittir, analiz hücresine değil; 1× ve 4× arasında belirsiz pay
+  0,118 / 0,111 (ölçüldü). Servis kaynak ızgarasını `entry.obstacle_src`'teki OSM özelliklerini kaynak başına yeniden
+  rasterleyerek kurar (`_source_grid`), ölçülmüş raster hücreleri `KIND_SURFACE`'tan.
+- Servis `perimeter.sensitivity` kapsamayla **aynı** yardımcıları kullanır (`_plan_roi`, `_target_level`, `_band_params`,
+  `full_reach_placements`); `level="plan"` kapsamanın `target.held`'ini (px/m ≥ hedef ve görünür), adlı seviye
+  `band_share`'in `dori_grid >= z` tanımını sayar. Sonuç `results["sensitivity"]` (`PLAN_DERIVED`: yeni plan / hedef
+  boyu / ızgara inceltme düşürür); plan uygunluk beyanı, mühendislik raporu, senaryo özeti / karşılaştırma ve paylaşım
+  sayfası satırı **yalnız sonuç varsa** ekler. Masaüstü: Doğrula adımında "Veri hassasiyeti" paneli (koşu / σ / ilinti,
+  boş alan = çekirdeğin `sensitivity_defaults`'u; ayarlar `terrain_extra.sensitivity`'de saklanır, sonuç saklanmaz).
+  Ölçüldü (148 direklik çit, 2 km tepelik, 10 m, 4 MP 2,8–12 mm, 12 koşu): ~6,8 sn (kapsama 0,8 sn); Algılama
+  %78,06 nominal, %77,4 kesin, %1,2 veriye bağlı. Sentetik şehir (196 bina, %80 varsayılan yükseklik, düz zemin):
+  %41,7 nominal, %19,5 kesin, %34,6 veriye bağlı (yalnız bina %25,4, yalnız DEM %5,3), 5,4 sn.
+
 ## Çevre çiti boşluk analizi
 
 `generate_perimeter_plan` artık: (1) her kameraya menzilin ~%55'ine nişan alan
@@ -1327,6 +1364,17 @@ Modu" satırı.
   1e-3 hücre-yüksekliği düzeyinde ancak aşan sıyırma düğümleridir, sınıf
   sınırına ≤ 1 hücre (eskiden 2–3). Eşikler ölçülen değerlerin hemen üstündedir
   — gevşetmeden önce nedeni bul; kötüleşirse gevşetme, dur ve raporla.
+- **Sınır eşitliği yarı açıktır** (`viewshed_3d` "Boundary ties",
+  `in_horizontal_cone`): sınır çizgisi tam düğümlerden geçiyorsa (pan 0°,
+  hfov 90° → kenarlar köşegenlerde) o düğümler yarı sayılır — koni kenarında
+  uzaklık sırasına göre sol kenar çift, sağ kenar tek sıradakileri alır; menzil
+  çemberi, yakın sınır ve dikey kadraj kenarında kuzey yarı düzlemi
+  (`focal_optimizer.band_mask` ile aynı kural). Eşit olmayan düğüm (1e-9 rad /
+  1e-6 m dışı) eskisi gibi. Aynı kural `mount_visibility.view_layers/view_mask`,
+  `focal_optimizer._cone` (tarama alanları `view_mask` ile bit-eşit),
+  `area_planner` ve `compute_coverage_grid`'de. Ölçüldü: 90° kama 10 m hücrede
+  +%11–13 → +%0,06. Çit örnekleri (`perimeter_planner:590`), resim pikselleri,
+  PTZ animasyonu, ANPR sürekli geometridir, değişmedi. `tests/test_cone_ties.py`.
 - **Hücre düğümünde karar verilir** (`viewshed_3d._viewshed_core`): eğik
   mesafe, px/m, çerçeve (yatay koni, dikey kadraj — baş/zemin tanımları eskisi
   gibi), menzil ve DORI sınıfı düğümün KENDİ konumundan (`view_limits`,

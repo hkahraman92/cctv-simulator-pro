@@ -96,6 +96,8 @@ def report_engineering(params: Dict[str, Any], ctx: Context) -> Dict[str, Any]:
         raise RpcError(APP_ERROR, "Bu arazide henüz analiz yok: önce görüş alanı, çit planı ya da birleşik kapsama çalıştırın.")
     kw = dict(project_name=str(params.get("project_name") or stem), terrain=terrain, camera=camera,
               weather=str(params.get("weather", "")), viewshed=single, perimeter=plan, multi_viewshed=multi)
+    if entry.results.get("sensitivity") is not None:      # only when it was run: no new section otherwise
+        kw["sensitivity"] = entry.results["sensitivity"]
     written = []
     for i, fmt in enumerate(formats):
         ctx.progress(i, len(formats), f"{fmt.upper()} yazılıyor")

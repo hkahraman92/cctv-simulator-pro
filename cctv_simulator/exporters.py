@@ -1043,6 +1043,26 @@ _MIXED_LEVELS = (("detect", "Algılama (25 px/m)"), ("observe", "Gözlem (62,5 p
                  ("recog", "Tanıma (125 px/m)"), ("ident", "Teşhis (250 px/m)"))
 
 
+_SENS_LEVELS = (("detect", "Algılama"), ("observe", "Gözlem"), ("recognize", "Tanıma"), ("identify", "Teşhis"))
+
+
+def _sensitivity_rows(sens: dict) -> List[List[str]]:
+    """The data-sensitivity result a coverage report was followed by (``perimeter.sensitivity``): the
+    certain / data-dependent split of the protected area and the per-level range over the data draws."""
+    def pct(x):
+        return "%" + f"{x * 100:.1f}".replace(".", ",")
+
+    rows = [["Veri hassasiyeti", sens["line"]],
+            ["Hedef", f"{sens.get('label', '')} · {sens['n_runs']} koşu (ilki veri olduğu gibi)"],
+            ["Kesin / veriye bağlı / hiç tutmayan", f"{pct(sens['certain'])} / {pct(sens['uncertain'])} / {pct(sens['never'])}"],
+            ["Pay: nominal (aralık)", f"{pct(sens['nominal'])} ({pct(sens['share_min'])} – {pct(sens['share_max'])})"]]
+    for key, name in (("monitor", "İzleme"),) + _SENS_LEVELS:
+        lv = (sens.get("levels") or {}).get(key)
+        if lv:
+            rows.append([f"{name}: nominal (aralık)", f"{pct(lv['nominal'])} ({pct(lv['min'])} – {pct(lv['max'])})"])
+    return rows
+
+
 def _mixed_rows(mixed) -> List[List[str]]:
     """perimeter_ptz.MixedPerimeterResult: what the co-mounted PTZs add on top
     of the fixed poles (continuous vs patrol-only area per DORI level) and the
@@ -1167,7 +1187,7 @@ def _provenance_line(terrain) -> str:
 
 def export_engineering_report_csv(path: str, *, project_name: str, terrain, camera,
                                   weather: str, viewshed=None, coverage=None, perimeter=None,
-                                  multi_viewshed=None, ptz=None, mixed=None) -> None:
+                                  multi_viewshed=None, ptz=None, mixed=None, sensitivity=None) -> None:
     """Flat, sectioned CSV of the viewshed / coverage / perimeter engineering analysis."""
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         w = csv.writer(f, delimiter=";")
@@ -1219,11 +1239,16 @@ def export_engineering_report_csv(path: str, *, project_name: str, terrain, came
             w.writerow(["=== KARMA KAPSAMA: SABİT + PTZ ==="])
             for k, val in _mixed_rows(mixed):
                 w.writerow([k, val])
+        if sensitivity is not None:
+            w.writerow([])
+            w.writerow(["=== VERİ HASSASİYETİ (DEM / BİNA YÜKSEKLİĞİ BELİRSİZLİĞİ) ==="])
+            for k, val in _sensitivity_rows(sensitivity):
+                w.writerow([k, val])
 
 
 def export_engineering_report_pdf(path: str, *, project_name: str, terrain, camera,
                                   weather: str, viewshed=None, coverage=None, perimeter=None,
-                                  multi_viewshed=None, ptz=None, mixed=None) -> None:
+                                  multi_viewshed=None, ptz=None, mixed=None, sensitivity=None) -> None:
     """ASELSAN kurumsal formatında görüş alanı / kapsama mühendislik raporu.
 
     ReportLab yoksa düz metin PDF'e (write_simple_pdf) düşer.
@@ -1242,7 +1267,8 @@ def export_engineering_report_pdf(path: str, *, project_name: str, terrain, came
                            ("3. TEKİL GÖRÜŞ ALANI", viewshed is not None and _viewshed_rows(viewshed, terrain.cell_size_m)),
                            ("4. BİRLEŞİK KAPSAMA", coverage is not None and _coverage_rows(coverage)),
                            ("5. ÇEVRE ÇİTİ PLANI", perimeter is not None and _perimeter_rows(perimeter)),
-                           ("6. KARMA KAPSAMA: SABİT + PTZ", mixed is not None and _mixed_rows(mixed))):
+                           ("6. KARMA KAPSAMA: SABİT + PTZ", mixed is not None and _mixed_rows(mixed)),
+                           ("7. VERİ HASSASİYETİ", sensitivity is not None and _sensitivity_rows(sensitivity))):
             if rws:
                 lines.append(title)
                 lines.extend(f"  {k:<38} {val}" for k, val in rws)
@@ -1362,6 +1388,9 @@ def export_engineering_report_pdf(path: str, *, project_name: str, terrain, came
             story.append(Spacer(1, 6))
     if mixed is not None:
         _kv(f"{_sec_n}. KARMA KAPSAMA: SABİT + PTZ — DEVRİYE VE TESPİT → TEŞHİS", _mixed_rows(mixed))
+        _sec_n += 1
+    if sensitivity is not None:
+        _kv(f"{_sec_n}. VERİ HASSASİYETİ — DEM VE BİNA YÜKSEKLİĞİ BELİRSİZLİĞİ", _sensitivity_rows(sensitivity))
         _sec_n += 1
 
     _kv(f"{_sec_n}. GEÇERLİLİK VE STANDART REFERANSLARI", [

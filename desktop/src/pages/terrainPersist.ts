@@ -50,7 +50,13 @@ export interface ExtraState {
   sweepLevel: TerrainLevel;
   /** analysis-grid refinement of the loaded DEM (1 = its own cell) */
   refine: number;
+  sensitivity: SensitivitySettings;
 }
+
+/** Data-sensitivity panel settings. `sigma` / `corr` null = the core's documented default for the loaded DEM. */
+export interface SensitivitySettings { nRuns: number; sigma: number | null; corr: number | null }
+export const SENSITIVITY_DEFAULTS: SensitivitySettings = { nRuns: 12, sigma: null, corr: null };
+export const SENSITIVITY_LIMITS = { runs: [4, 32], sigma: [0, 100], corr: [1, 5000] } as const;
 
 export function buildTerrainExtra(s: ExtraState): Record<string, unknown> {
   return {
@@ -70,6 +76,7 @@ export function buildTerrainExtra(s: ExtraState): Record<string, unknown> {
     slide_poles: s.slide, pan_search: s.panSearch,
     coverage_view: { layer: s.covLayer, level: s.covLevel }, sweep_level: s.sweepLevel,
     analysis_refine: s.refine,
+    sensitivity: { n_runs: s.sensitivity.nRuns, dem_sigma_m: s.sensitivity.sigma, dem_corr_m: s.sensitivity.corr },
   };
 }
 
@@ -104,6 +111,8 @@ export interface ExtraRead {
   sweepLevel?: TerrainLevel;
   /** the saved analysis-grid refinement, an integer 2..16 (1 / absent / invalid: the DEM's own grid) */
   refine?: number;
+  /** the saved data-sensitivity settings; each field is read on its own, an invalid one is left out */
+  sensitivity?: { nRuns?: number; sigma?: number | null; corr?: number | null };
   /** the saved mixed fixed + PTZ choice: the model is only a NAME here (see `restoreMixedPtz`) */
   mixedPtz?: { model?: string; everyN?: number; span?: number };
 }
@@ -157,6 +166,24 @@ export function readTerrainExtra(raw: unknown): ExtraRead {
     sweepLevel: typeof x.sweep_level === "string" && LEVELS.includes(x.sweep_level) ? (x.sweep_level as TerrainLevel) : undefined,
     mixedPtz,
     refine: readRefine(x.analysis_refine),
+    sensitivity: readSensitivity(x.sensitivity),
+  };
+}
+
+const inRange = (v: unknown, [lo, hi]: readonly [number, number]): number | undefined => {
+  const n = num(v);
+  return n !== undefined && n >= lo && n <= hi ? n : undefined;
+};
+
+/** Saved sensitivity settings: runs an integer 4..32, sigma 0..100 m, correlation 1..5000 m (null / absent = the default). */
+export function readSensitivity(raw: unknown): ExtraRead["sensitivity"] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const r = raw as Record<string, unknown>;
+  const runs = inRange(r.n_runs, SENSITIVITY_LIMITS.runs);
+  return {
+    nRuns: runs !== undefined && Number.isInteger(runs) ? runs : undefined,
+    sigma: r.dem_sigma_m === null ? null : inRange(r.dem_sigma_m, SENSITIVITY_LIMITS.sigma),
+    corr: r.dem_corr_m === null ? null : inRange(r.dem_corr_m, SENSITIVITY_LIMITS.corr),
   };
 }
 

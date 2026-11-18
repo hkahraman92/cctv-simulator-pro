@@ -66,7 +66,8 @@ class TerrainEntry:
 
     # Results computed FROM a plan. A new plan drops them: a scenario snapshot,
     # KMZ or offer package must never pair plan B with plan A's coverage / cost.
-    PLAN_DERIVED = ("multi", "band_share", "network", "cost", "night", "mixed", "approach", "ptz_reach", "coverage_masks", "privacy")
+    PLAN_DERIVED = ("multi", "band_share", "network", "cost", "night", "mixed", "approach", "ptz_reach", "coverage_masks", "privacy",
+                    "sensitivity")
 
     def set_target_height(self, h: float) -> bool:
         """A new target height re-scores everything: plan-derived results are

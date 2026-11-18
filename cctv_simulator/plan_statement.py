@@ -131,7 +131,8 @@ def _num(v: float, nd: int = 0) -> str:
 
 
 def build_plan_statement(conf: Dict[str, Any], *, plan, camera, conditions: List[str], project_name: str = "",
-                         bidder: str = "", measured: bool = True, now: Optional[_dt.datetime] = None) -> str:
+                         bidder: str = "", measured: bool = True, now: Optional[_dt.datetime] = None,
+                         sensitivity: Optional[Dict[str, Any]] = None) -> str:
     """One markdown document. ``conditions``: the lines that say under what
     the numbers hold (terrain source, surface model, weather, target height)."""
     when = (now or _dt.datetime.now()).strftime("%d.%m.%Y %H:%M")
@@ -184,6 +185,19 @@ def build_plan_statement(conf: Dict[str, Any], *, plan, camera, conditions: List
               f"| Bölge | Sürekli algılama | Algılanıp ≤ {_num(a['max_s'])} sn'de {ppm} px/m | Sonuç |", "|---|---|---|---|"]
         for r in a["zones"]:
             L.append(f"| {r['name']} | {_pct(r['detect'])} | {_pct(r['assisted'])} | **{mark[r['verdict']]}** {r['verdict']} |")
+        L.append("")
+    if sensitivity:              # only when ``perimeter.sensitivity`` ran on this plan
+        L += ["## Veri hassasiyeti", "", sensitivity["line"] + ".", "",
+              f"Hedef: {sensitivity.get('label', '')}. Kesin: tüm veri koşullarında tutan pay; veriye bağlı: yalnız "
+              f"bazı koşullarda tutan pay (yükselti / bina yüksekliği hatasına duyarlı). Nominal pay "
+              f"{_pct(sensitivity['nominal'])}, {sensitivity['n_runs']} koşuda {_pct(sensitivity['share_min'])} – "
+              f"{_pct(sensitivity['share_max'])}.", "",
+              "| Seviye | Nominal | En az – en çok |", "|---|---|---|"]
+        for key, name in (("monitor", "İzleme"), ("detect", "Algılama"), ("observe", "Gözlem"),
+                          ("recognize", "Tanıma"), ("identify", "Teşhis")):
+            lv = (sensitivity.get("levels") or {}).get(key)
+            if lv:
+                L.append(f"| {name} | {_pct(lv['nominal'])} | {_pct(lv['min'])} – {_pct(lv['max'])} |")
         L.append("")
     L += ["## Geçerlilik koşulları", ""]
     L += [f"- {c}" for c in conditions if c]

@@ -40,6 +40,7 @@ export const TRANSLATED_FILES: string[] = [
   "components/PtzSweep.tsx",
   "components/MapView.tsx",
   "components/ApproachPanel.tsx",
+  "components/SensitivityPanel.tsx",
   "components/CityPanel.tsx",
   "components/charts.tsx",
   "components/LegendSwatch.tsx",

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_CAMERA } from "../core/api";
 import { isHatched } from "../components/LegendSwatch";
 import {
-  buildTerrainExtra, changedKeys, maxRefine, projectCameraToTerrain, readPlacement, readRefine, readTerrainExtra, refineChoices, restoreMixedPtz, terrainToProjectCamera, type ExtraState,
+  buildTerrainExtra, changedKeys, maxRefine, projectCameraToTerrain, readPlacement, readRefine, readSensitivity, readTerrainExtra, refineChoices, restoreMixedPtz, terrainToProjectCamera, type ExtraState,
 } from "./terrainPersist";
 
 const cam = { ...DEFAULT_CAMERA, name: "KAM-01", model_name: "Model X", focal_min_mm: 2.8, focal_max_mm: 12 };
@@ -14,6 +14,7 @@ const state: ExtraState = {
   mixedPtz: { camera: { ...cam, model_name: "PTZ Y" }, everyN: 5, span: 180 }, prices: { camera: 100 }, scenarios: [],
   mapMode: "satellite", useObstacles: false, focal: 7.5, patrol: { speed: 30, dwell: 4 }, ptzReach: true, slide: false, panSearch: true,
   covLayer: "dori", covLevel: "recognize", sweepLevel: "observe", refine: 4,
+  sensitivity: { nRuns: 20, sigma: 2.5, corr: null },
 };
 
 describe("terrain_extra save / load mapping", () => {
@@ -37,7 +38,7 @@ describe("terrain_extra save / load mapping", () => {
       area_goal: { level: "detect", goal_pct: 95, interior: true, per_pole: 2 }, scenarios: [{ x: 1 }],
     };
     const r = readTerrainExtra(old);
-    for (const k of ["mapMode", "useObstacles", "focal", "patrol", "ptzReach", "slide", "panSearch", "covLayer", "covLevel", "sweepLevel", "plannerMode", "refine"] as const)
+    for (const k of ["mapMode", "useObstacles", "focal", "patrol", "ptzReach", "slide", "panSearch", "covLayer", "covLevel", "sweepLevel", "plannerMode", "refine", "sensitivity"] as const)
       expect(r[k]).toBeUndefined();
     expect(r).toMatchObject({ closed: true, targetPpm: 40, goal: 95, lensMode: "min", backToBack: false, bandOut: 40, targetH: 1.8 });
     expect(r.scenarios).toHaveLength(1);
@@ -49,6 +50,16 @@ describe("terrain_extra save / load mapping", () => {
     expect(readTerrainExtra(null).lensMode).toBe("min");
     const r = readTerrainExtra({ map_mode: "weird", ptz_reach: "yes", focal_mm: "7", patrol: { speed_deg_s: 10 }, coverage_view: { layer: "x", level: "nope" }, sweep_level: "face" });
     for (const k of ["mapMode", "ptzReach", "focal", "patrol", "covLayer", "covLevel", "sweepLevel"] as const) expect(r[k]).toBeUndefined();
+  });
+
+  it("the data-sensitivity settings round-trip; null means the core's default and an invalid field is left out", () => {
+    const saved = buildTerrainExtra(state).sensitivity;
+    expect(saved).toEqual({ n_runs: 20, dem_sigma_m: 2.5, dem_corr_m: null });
+    expect(readTerrainExtra(JSON.parse(JSON.stringify(buildTerrainExtra(state)))).sensitivity).toEqual({ nRuns: 20, sigma: 2.5, corr: null });
+    expect(readSensitivity({ n_runs: 3, dem_sigma_m: -1, dem_corr_m: 6000 })).toEqual({ nRuns: undefined, sigma: undefined, corr: undefined });
+    expect(readSensitivity({ n_runs: 12.5, dem_sigma_m: 0, dem_corr_m: 1 })).toEqual({ nRuns: undefined, sigma: 0, corr: 1 });
+    expect(readSensitivity({ n_runs: 32, dem_sigma_m: "4", dem_corr_m: null })).toEqual({ nRuns: 32, sigma: undefined, corr: null });
+    for (const v of [undefined, null, 5, "x", [1]]) expect(readSensitivity(v)).toBeUndefined();
   });
 
   it("the analysis-grid refinement is an integer 2..16; 1, junk and absent all mean the DEM's own cell", () => {
