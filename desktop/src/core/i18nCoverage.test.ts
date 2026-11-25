@@ -15,6 +15,8 @@ export const TRANSLATED_FILES: string[] = [
   "components/dialogs.tsx",
   "components/ui.tsx",
   "components/JobBar.tsx",
+  "components/AllLevels.tsx",
+  "pages/allLevels.ts",
   "core/project.tsx",
   "core/CoreProvider.tsx",
   "pages/Terrain.tsx",

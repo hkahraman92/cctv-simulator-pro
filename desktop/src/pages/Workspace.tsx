@@ -4,6 +4,7 @@ import { isTauri } from "@tauri-apps/api/core";
 import { AlertTriangle, Camera, Crosshair, ImagePlus, Move, Plus, Trash2, X } from "lucide-react";
 import { DORI, type ModelSummary, type PPMLevel } from "../core/api";
 import LevelEditor from "../components/LevelEditor";
+import AllLevels from "../components/AllLevels";
 import { useProject } from "../core/project";
 import { useCoalesced, useCore } from "../core/CoreProvider";
 import { usePageActive } from "../core/pageActive";
@@ -174,6 +175,7 @@ export default function Workspace({ onStatus }: { onStatus: (s: string) => void 
             </div>
           ))}
         </div>
+        <AllLevels camera={c} levels={effLevels} r={r} active={active} />
         {r && DORI.some((d) => atGeomLimit(r, d.key)) && (
           <p className="mt-2 text-[11px] text-text-2">
             {t("▲ Kadrajın üst kenarı zemine {m} m'de iniyor; bu seviyeler lensle değil eğimle sınırlı. Daha uzağı görmek için eğimi azaltın.", { m: fmt(r.max_geom_dist_m) })}
