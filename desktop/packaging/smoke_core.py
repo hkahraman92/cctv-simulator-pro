@@ -31,7 +31,7 @@ def _cog(path: Path) -> bool:
     return True
 
 
-def main(exe: str) -> int:
+def main(cmd: list) -> int:
     out_dir = tempfile.mkdtemp(prefix="cctv-smoke-")
     cog = Path(out_dir) / "cog.tif"
     has_cog = _cog(cog)
@@ -55,12 +55,21 @@ def main(exe: str) -> int:
         ("scenario.snapshot", {"terrain_id": "t1", "label": "A"}),
         ("export.site", {"terrain_id": "t1", "path": str(Path(out_dir) / "duman.dxf")}),
         ("export.package", {"terrain_id": "t1", "path": str(Path(out_dir) / "duman.zip"), "project_name": "Duman"}),
+        # paths added after the first release: grid refinement, data sensitivity,
+        # site acceptance sheet, one-shot full analysis (+ its partial report)
+        ("terrain.refine", {"terrain_id": "t1", "factor": 2}),
+        ("perimeter.coverage", {"terrain_id": "t1", "max_px": 300}),
+        ("perimeter.sensitivity", {"terrain_id": "t1", "n_runs": 4, "max_px": 300}),
+        ("delivery.acceptance", {"terrain_id": "t1", "format": "pdf", "path": str(Path(out_dir) / "duman-kabul.pdf")}),
+        ("analysis.full", {"terrain_id": "t1", "camera": CAM, "out_dir": out_dir, "stem": "tam",
+                           "steps": {"sensitivity": {"n_runs": 4}}}),
+        ("analysis.full_partial", {"terrain_id": "t1"}),
     ]
     if has_cog:
         calls.append(("terrain.geotiff", {"path": str(cog)}))
     # one request at a time: the server works on two in parallel, and the
     # terrain calls depend on the terrain created by an earlier one
-    proc = subprocess.Popen([exe], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, encoding="utf-8", errors="replace")
     replies = {}
     for i, (m, p) in enumerate(calls):
@@ -76,7 +85,7 @@ def main(exe: str) -> int:
                 break
     proc.stdin.close()
     stderr = proc.stderr.read()
-    proc.wait(timeout=60)
+    proc.wait(timeout=120)
     bad = 0
     for i, (m, _p) in enumerate(calls):
         r = replies.get(i)
@@ -90,7 +99,8 @@ def main(exe: str) -> int:
         if not r.get("is_measured"):
             bad += 1
             print("FAIL terrain.geotiff: COG not read as a measured DEM")
-    for f in ("duman.pdf", "duman.xlsx", "duman.csv", "duman-gorusalani.pdf", "duman.dxf", "duman.zip"):
+    for f in ("duman.pdf", "duman.xlsx", "duman.csv", "duman-gorusalani.pdf", "duman.dxf", "duman.zip",
+              "duman-kabul.pdf", "analiz-ozeti.md", "tam-teklif.zip"):
         if not (Path(out_dir) / f).is_file():
             bad += 1
             print(f"FAIL file {f}")
@@ -100,4 +110,5 @@ def main(exe: str) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1]))
+    # the built exe, or any command that starts the core (e.g. py -3.13 -m cctv_simulator.service)
+    raise SystemExit(main(sys.argv[1:]))
