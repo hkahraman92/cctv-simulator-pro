@@ -23,9 +23,11 @@ optik motoru kullanır; hiçbir fizik hesabı arayüze kopyalanmaz (Kural 1).
 - **API v1** (`cctv_simulator/service/__init__.py: API_VERSION`). Yöntem
   eklemek / isteğe bağlı alan eklemek küçük sürüm; yeniden adlandırma ya da
   silme büyük sürüm. `system.describe` güncel listeyi verir.
-- Yöntemler (84; modül başına):
+- Yöntemler (85; modül başına):
   - `methods.py`: `system.info|ping|describe`, `catalog.get`,
     `library.list|get|camera`, `optics.calculate`, `project.load|save`
+  - `bitrate_methods.py`: `bitrate.estimate` (kamera başına bit hızı: codec / fps / sahne / GOP / kayıt düzeni,
+    broşür üst sınırı; tahmindir, ölçüm değil; `cameras[]` + `defaults`, kamera başına seçenek varsayılanı ezer)
   - `library_methods.py`: `library.fields|record|auth|save|delete|set_password`
     (her yazım yönetici şifresini denetler)
   - `terrain_methods.py`: `terrain.catalog|procedural|geotiff|download|image|settings|refine`

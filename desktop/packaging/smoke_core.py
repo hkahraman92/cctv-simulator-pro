@@ -39,6 +39,7 @@ def main(cmd: list) -> int:
         ("system.describe", {}),
         ("library.list", {}),
         ("optics.calculate", {"camera": CAM}),
+        ("bitrate.estimate", {"cameras": [{"camera": CAM}]}),
         ("terrain.procedural", {"preset": "canyon", "grid": 80, "width_m": 800}),
         ("terrain.image", {"terrain_id": "t1", "mode": "hybrid", "max_px": 300}),
         ("viewshed.single", {"terrain_id": "t1", "camera": CAM, "x_m": 400, "y_m": 400, "range_m": 300, "max_px": 300}),

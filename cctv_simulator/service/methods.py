@@ -253,3 +253,7 @@ METHODS.update(_SENSITIVITY_METHODS)
 from .full_methods import METHODS as _FULL_METHODS  # noqa: E402
 
 METHODS.update(_FULL_METHODS)
+
+from .bitrate_methods import METHODS as _BITRATE_METHODS  # noqa: E402
+
+METHODS.update(_BITRATE_METHODS)

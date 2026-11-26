@@ -4,12 +4,14 @@ import { RpcClient, type CoreState } from "./rpc";
 import { defaultTransport } from "./tauriTransport";
 import { terrainApi, type TerrainApi } from "./terrainApi";
 import { benchApi, type BenchApi } from "./benchApi";
+import { bitrateApi, type BitrateApi } from "./bitrateApi";
 import { reportApi, specApi, type ReportApi, type SpecApi } from "./specApi";
 
 interface CoreCtx {
   api: Api;
   terrain: TerrainApi;
   bench: BenchApi;
+  bitrate: BitrateApi;
   spec: SpecApi;
   report: ReportApi;
   rpc: RpcClient;
@@ -35,7 +37,7 @@ export function CoreProvider({ children }: { children: ReactNode }) {
     };
   }, [rpc]);
 
-  const apis = useMemo(() => ({ api: api(rpc), terrain: terrainApi(rpc), bench: benchApi(rpc), spec: specApi(rpc), report: reportApi(rpc) }), [rpc]);
+  const apis = useMemo(() => ({ api: api(rpc), terrain: terrainApi(rpc), bench: benchApi(rpc), bitrate: bitrateApi(rpc), spec: specApi(rpc), report: reportApi(rpc) }), [rpc]);
   const value = useMemo(() => ({ ...apis, rpc, state, logs }), [apis, rpc, state, logs]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

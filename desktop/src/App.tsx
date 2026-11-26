@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
-  Box, ClipboardCheck, Database, FileText, Mountain, RefreshCw, Settings as SettingsIcon, SlidersHorizontal, SquareDashedMousePointer, Video,
+  Box, ClipboardCheck, Database, FileText, Gauge, Mountain, RefreshCw, Settings as SettingsIcon, SlidersHorizontal, SquareDashedMousePointer, Video,
 } from "lucide-react";
 import { I18nProvider, t, useLang } from "./core/i18n";
 import { CoreProvider, useCore } from "./core/CoreProvider";
@@ -13,13 +13,14 @@ import ProjectBar from "./components/ProjectBar";
 import { PageActive } from "./core/pageActive";
 import Workspace from "./pages/Workspace";
 import Library from "./pages/Library";
+import Bitrate from "./pages/Bitrate";
 import Terrain from "./pages/Terrain";
 import Optics from "./pages/Optics";
 import View3D from "./pages/View3D";
 import Spec from "./pages/Spec";
 import Reports from "./pages/Reports";
 
-type Page = "workspace" | "optics" | "view3d" | "terrain" | "library" | "spec" | "reports";
+type Page = "workspace" | "optics" | "view3d" | "terrain" | "library" | "bitrate" | "spec" | "reports";
 
 // `label` is a function so the text follows the language live (a module-level t() would freeze it)
 const NAV: { id: Page; label: () => string; icon: typeof Video }[] = [
@@ -28,6 +29,7 @@ const NAV: { id: Page; label: () => string; icon: typeof Video }[] = [
   { id: "view3d", label: () => t("3B Kamera Görüşü"), icon: Box },
   { id: "terrain", label: () => t("Arazi & Görüş Alanı"), icon: Mountain },
   { id: "library", label: () => t("Kamera Kütüphanesi"), icon: Database },
+  { id: "bitrate", label: () => t("Bit Hızı"), icon: Gauge },
   { id: "spec", label: () => t("Şartname & Uyum"), icon: ClipboardCheck },
   { id: "reports", label: () => t("Raporlar"), icon: FileText },
 ];
@@ -57,7 +59,7 @@ function Shell() {
   const { resetNonce } = useProject();
   const [settings, setSettings] = useState(false);
   const go = (p: Page) => { setPage(p); setVisited((v) => (v.has(p) ? v : new Set(v).add(p))); };
-  // Ctrl+1 … Ctrl+7: the modules, in the order of the side bar
+  // Ctrl+1 … Ctrl+8: the modules, in the order of the side bar
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
@@ -73,6 +75,7 @@ function Shell() {
   const pages: Record<Page, ReactNode> = {
     workspace: <Workspace onStatus={setStatus} />,
     library: <Library />,
+    bitrate: <Bitrate />,
     terrain: <Terrain key={resetNonce} />,       // a new project starts the terrain page over
     optics: <Optics />,
     view3d: <View3D />,

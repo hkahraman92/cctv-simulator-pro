@@ -31,6 +31,7 @@ cctv_dual_view_simulator.py          giriş noktası
   geotiff_reader.py                  rasterio'suz GeoTIFF: etiketlerden georeferans, UTM/TUREF TM/WebMerc; yerel DEM → ölçülmüş arazi
   geo_export.py                      KML / KMZ (+ kapsama katmanı) ve DXF R12 yerleşim çıktısı
   night.py                           gece senaryosu: güneş + ay → ortam lux, IR / beyaz ışık menzil sınırı
+  bitrate.py                         kamera başına bit hızı önerisi: codec / fps / sahne / GOP / kayıt düzeni, broşür sınırı (tahmin)
   network_plan.py                    switch / bakır / fiber / PoE / NVR planı + maliyet
   model_selection.py                 kütüphane modellerini aynı çit hedefinde karşılaştırma
   offer.py                           senaryo özeti + karşılaştırma, paylaşım HTML'i, teklif paketi (ZIP)
@@ -74,7 +75,7 @@ desktop/                             yeni arayüz: Tauri 2 (Rust) + React/TS/Tai
 
 **Yeni masaüstü kabuğu.** `desktop/` Python çekirdeği (`python -m
 cctv_simulator.service`, yayında `cctv-core.exe`) alt süreç olarak başlatır,
-satır başına bir JSON-RPC nesnesi taşır (API v1, 84 yöntem; liste ve
+satır başına bir JSON-RPC nesnesi taşır (API v1, 85 yöntem; liste ve
 sözleşme `docs/masaustu-mimari.md`). Ekran fizik türetmez; her sayı bir API
 yönteminden gelir. Yeni özellik için: önce `service/*_methods.py`'ye yöntem +
 `tests/test_service_*.py`'ye motorla birebir eşlik testi, sonra
